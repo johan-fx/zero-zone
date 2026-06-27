@@ -1,0 +1,14 @@
+Por ejemplo, yo llego a un edificio que es Zona Cero y ahí yo creo una solicitud de apertura como en Pokémon GO, marico.
+Yo creo un centro de trabajo. Ese centro de trabajo se va a quedar en pendiente hasta que más de 10 personas que estén en la aplicación
+estén en ese mismo punto y se inscriben en ese centro de trabajo.
+Centro de trabajo quiere decir de minería, de sacar escombros o como personal médico o como personal logístico.
+Hasta que esas 10 personas no estén más de media hora en ese mismo punto sin moverse trabajando, ese centro de trabajo se va a quedar en pendiente.
+Luego de pendiente pasará el estatus de observación cuando más de 10 personas hayan estado ahí trabajando.
+Cuando más de 10 personas durante una hora estén ahí, ese punto quedará como activo.
+O sea que está activo, hay gente trabajando y automáticamente registrará las personas que están ahí trabajando.
+Como por ejemplo, si yo me registré como minero, como recolector de escombros, no sé cómo le pondremos, rescatista.
+Este, aparecerá a la izquierda en un menú cuántos rescatistas hay, cuánto personal médico registrado en ese centro de trabajo hay, cuántos voluntarios de logística hay, cosas así.
+Y así por cada centro de trabajo que la misma gente irá creando, irá registrando centro de trabajo.
+Así las demás, todas las personas que quieran ir a ayudar podrán no colapsar un solo centro de trabajo,
+sino podrán dirigirse a diferentes puntos donde haga falta la ayuda y no concentrarse todos en un solo o un mismo punto.
+No sé si me explico.

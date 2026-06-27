@@ -1,0 +1,25 @@
+en el que me salga el mapa no como te lo he dicho no me sale el mapa y a la izquierda me sale por
+ejemplo si yo le hago clic a una zona de zona cero es y zona cero va a salir un color específico no
+sé es que pensaremos después no tenemos que ser rápido y yo le hago clic y va a aparecer ahí
+cuántos cuántos usuarios hay por ejemplo echando pala o sea cuatro personas activas hay y ahí también
+va a aparecer qué es lo que falta falta porque los mismos usuarios son los que registran qué es
+lo que falta que falta personal médico no tiene que ser médico encima que tiene que ser nada más o
+gente que tenga que ver con la medicina para médicos o x y z y también puede registrar maquinaria y le
+hagan clic a maquinarias y haces clic y abajo te aparecen las pestañas maquinaria ligera maquinaria
+como por ejemplo los bumpers esos pequeñitos a boca pequeñitas a retroexcavadoras chiquitica o te va
+a aparecer te va a aparecer cero no hay ninguna te va a aparecer los grúas no hay ningún grúa y abajo
+te va a aparecer un campo camiones tampoco camiones pero como dibujito no tiene que ser todo textual
+tiene que sacar dibujitos y vaina súper sencillo que esté en menos en este en cero que sería rojo o
+en verde con el número que hay si aparece de igual manera en en un número 2 que hay dos camiones
+volteo pero no hay de retroexcavadoras hay una opción de retroexcavadoras cuántas hay pan cero
+maquinaria de retroexcavación hay cero entonces eso saldrá en en rojo si el resto hay dos retroexcavadoras
+pero hay un solo camión ese caso el solo camión es positivo porque sale hay uno pero está en rojo
+porque falta más lo mismo con el agua o primero con los alimentos no que aparezcan nada más líquidos
+o sea líquidos que están líquidos y sólidos aparece si hay si hay suficiente o no es suficiente pero son
+los mismos usuarios que tienen que registrar eso las personas están haciéndolo pero a través de las
+redes sociales difundiendo esas solicitudes por redes sociales vamos a hacer nosotros simplificarlo a una
+aplicación lo que yo no sé tengo poco conocimiento es lo de la geolocalización de por ejemplo el vídeo
+que te pasa que la familia está encerrada con internet pero no tienen como de demostrar exactamente
+dónde están y en qué en qué algoritmo pero algo en qué coordenada cardinal por ejemplo estamos a
+86 metros sobre el nivel del mar en tal ubicación me explico eso yo lo veo es necesario pero no sé
+cómo lo haríamos no sé cómo lo puedes hacer
