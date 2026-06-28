@@ -27,6 +27,7 @@ const toneStyles = {
 export type OperationalCardVariant = 'default' | 'elevated' | 'critical' | 'muted';
 export type ActionButtonTone = 'primary' | 'info' | 'success' | 'warning' | 'risk' | 'sos' | 'stale';
 export type ActionButtonState = 'default' | 'loading' | 'disabled';
+export type ActionButtonPriority = 'normal' | 'critical';
 
 const OperationalCardFrame = styled(Card, {
   name: 'OperationalCard',
@@ -41,22 +42,22 @@ const OperationalCardFrame = styled(Card, {
     variant: {
       default: {
         bg: '$surface',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.04,
-        shadowRadius: 6,
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.03,
+        shadowRadius: 4,
       },
       elevated: {
         bg: '$surfaceElevated',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.12,
-        shadowRadius: 18,
+        shadowOffset: { width: 0, height: 5 },
+        shadowOpacity: 0.09,
+        shadowRadius: 12,
       },
       critical: {
         bg: '$sos',
         borderColor: '$sos',
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.18,
-        shadowRadius: 22,
+        shadowOffset: { width: 0, height: 7 },
+        shadowOpacity: 0.14,
+        shadowRadius: 16,
       },
       muted: {
         bg: '$surfaceMuted',
@@ -125,8 +126,8 @@ export function StatusBadge({ tone, label = statusToneLabels[tone], detail, mark
       rounded="$pill"
       borderWidth={1}
       gap="$2"
-      minH={32}
-      px="$3">
+      minH="$badge"
+      px="$2">
       <Text color={style.color} fontSize="$xs" fontWeight="900">
         {resolvedMarker}
       </Text>
@@ -155,6 +156,7 @@ type ActionButtonProps = Omit<ButtonProps, 'disabled'> & {
   label: string;
   helper?: string;
   state?: ActionButtonState;
+  priority?: ActionButtonPriority;
   disabled?: boolean;
 };
 
@@ -168,7 +170,19 @@ const actionToneStyles = {
   stale: { background: '$staleSurface', foreground: '$stale', border: '$stale' },
 } as const satisfies Record<ActionButtonTone, { background: string; foreground: string; border: string }>;
 
-export function ActionButton({ tone = 'primary', label, helper, state = 'default', disabled, ...props }: ActionButtonProps) {
+export function resolveActionButtonMinHeight(tone: ActionButtonTone, priority?: ActionButtonPriority) {
+  if (priority === 'critical') {
+    return '$criticalAction';
+  }
+
+  if (priority === 'normal') {
+    return '$action';
+  }
+
+  return tone === 'primary' || tone === 'sos' ? '$criticalAction' : '$action';
+}
+
+export function ActionButton({ tone = 'primary', label, helper, state = 'default', priority, disabled, ...props }: ActionButtonProps) {
   const style = actionToneStyles[tone];
   const isUnavailable = disabled || state === 'disabled' || state === 'loading';
 
@@ -181,7 +195,7 @@ export function ActionButton({ tone = 'primary', label, helper, state = 'default
       color={style.foreground}
       disabled={isUnavailable}
       opacity={state === 'disabled' ? 0.48 : 1}
-      minH="$touch"
+      minH={resolveActionButtonMinHeight(tone, priority)}
       px="$4"
       pressStyle={{ opacity: 0.82 }}
       {...props}>

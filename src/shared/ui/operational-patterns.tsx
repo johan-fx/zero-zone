@@ -221,7 +221,7 @@ export function CenterSummaryCard({
   compact?: boolean;
 }>) {
   return (
-    <OperationalCard testID="compound-center-summary" p={compact ? '$3' : '$4'}>
+    <OperationalCard testID="compound-center-summary" p="$3">
       <YStack gap="$3">
         <XStack items="center" justify="space-between" gap="$3">
           <YStack gap="$1" grow={1}>
@@ -305,7 +305,7 @@ export function SyncStatePanel({
   actions: Array<{ label: string; tone: 'primary' | 'info' | 'success' | 'warning' | 'risk' | 'sos' | 'stale' }>;
 }) {
   return (
-    <OperationalCard testID="compound-sync-state" borderColor={toneBorder[status.tone]} p="$4">
+    <OperationalCard testID="compound-sync-state" borderColor={toneBorder[status.tone]} p="$3">
       <YStack gap="$3">
         <XStack items="center" justify="space-between" gap="$3">
           <YStack grow={1}>

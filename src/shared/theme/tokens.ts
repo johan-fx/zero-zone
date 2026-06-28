@@ -75,10 +75,16 @@ export const operationalThemePalettes = {
 } as const;
 
 export const operationalRadii = {
-  card: 24,
-  panel: 32,
-  control: 16,
+  card: 18,
+  panel: 24,
+  control: 12,
   pill: 999,
+} as const;
+
+export const operationalControlHeights = {
+  action: 44,
+  criticalAction: 48,
+  badge: 30,
 } as const;
 
 export const operationalFontSizes = {

@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import { resolveOperationalTheme } from './OperationalThemeProvider';
 
 describe('resolveOperationalTheme', () => {

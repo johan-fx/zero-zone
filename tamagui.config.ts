@@ -2,6 +2,7 @@ import { defaultConfig } from '@tamagui/config/v5';
 import { createFont, createTamagui, isWeb } from 'tamagui';
 
 import {
+  operationalControlHeights,
   operationalFontSizes,
   operationalLineHeights,
   operationalRadii,
@@ -105,6 +106,9 @@ export const tamaguiConfig = createTamagui({
     size: {
       ...defaultConfig.tokens.size,
       touch: 48,
+      action: operationalControlHeights.action,
+      criticalAction: operationalControlHeights.criticalAction,
+      badge: operationalControlHeights.badge,
       marker: 42,
       bottomSheetPeek: 88,
     },

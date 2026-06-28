@@ -26,6 +26,17 @@ pnpm typecheck
 
 This is only the app boilerplate. It includes Tamagui as the UI/design-system foundation, but intentionally does not implement the first technical spike: no RxDB, SQLite persistence, signed outbox, sync, MapLibre, or Meshtastic gateway logic yet.
 
+## Strict TDD loop
+
+Use Jest + jest-expo + React Native Testing Library for fast unit and component tests. Do not bypass failing tests with `--passWithNoTests`; the default scripts fail when the suite is missing or broken.
+
+```bash
+pnpm test:tdd      # watch changed tests during TDD
+pnpm test          # run the unit/component suite
+pnpm test:ci       # deterministic CI run
+pnpm test:strict   # typecheck + deterministic tests
+```
+
 ## Smoke tests
 
 This boilerplate includes a first Maestro smoke test for the Expo Go iOS flow.
