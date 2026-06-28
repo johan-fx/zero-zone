@@ -41,3 +41,6 @@ pnpm-debug.*
 
 # TypeScript
 *.tsbuildinfo
+
+docs/design-system-visual-regression/
+docs/design-system-visual-regression.md

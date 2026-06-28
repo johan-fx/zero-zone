@@ -2,13 +2,17 @@ import { ScrollView, Text, XStack, YStack } from 'tamagui';
 
 import {
   ActionButton,
+  AvailabilityPanel,
   CenterSummaryCard,
+  EmergencyActionRow,
   FreshnessBadge,
   MapShell,
   MetricTile,
   MockFaithfulBottomPanel,
   OperationalCard,
+  OperationalFilterTile,
   OperationalHeader,
+  OutboxSummaryPanel,
   RecommendationCard,
   ResourceNeedList,
   RiskLabel,
@@ -25,6 +29,14 @@ const operationalMarkers = [
   { id: 'sos', label: 'SOS', tone: 'sos', x: '42%', y: '48%' },
   { id: 'shortage', label: 'Shortage', tone: 'risk', x: '16%', y: '70%' },
   { id: 'danger', label: 'Danger', tone: 'warning', x: '64%', y: '70%' },
+] as const;
+
+const operationalFilters = [
+  { label: 'Critical', marker: '!', tone: 'risk' },
+  { label: 'My role', marker: 'ME', tone: 'info' },
+  { label: 'SOS', marker: 'SOS', tone: 'sos' },
+  { label: 'Stale', marker: 'STALE', tone: 'stale' },
+  { label: 'Resources', marker: 'BOX', tone: 'success' },
 ] as const;
 
 export function OperationalMapScreen() {
@@ -50,28 +62,11 @@ export function OperationalMapScreen() {
         </OperationalCard>
       </MapShell>
       <XStack flexWrap="wrap" gap="$2">
-        {(['Critical', 'My role', 'SOS', 'Stale', 'Resources'] as const).map((filter) => (
-          <OperationalCard key={filter} variant="default" px="$3" py="$2">
-            <Text color="$text" fontSize="$xs" fontWeight="800">
-              {filter}
-            </Text>
-          </OperationalCard>
+        {operationalFilters.map((filter) => (
+          <OperationalFilterTile key={filter.label} label={filter.label} marker={filter.marker} tone={filter.tone} />
         ))}
       </XStack>
-      <MockFaithfulBottomPanel>
-        <XStack items="center" gap="$3">
-          <YStack grow={1} gap="$1">
-            <Text color="$text" fontSize="$xl" fontWeight="900">
-              Available
-            </Text>
-            <StatusBadge tone="success" label="Tracking active" marker="ON" />
-          </YStack>
-          <YStack grow={1} gap="$2">
-            <ActionButton label="Create center" />
-            <ActionButton label="Change status" tone="info" />
-          </YStack>
-        </XStack>
-      </MockFaithfulBottomPanel>
+      <AvailabilityPanel status={{ tone: 'success', label: 'Tracking active', marker: 'ON' }} primaryAction="Create center" secondaryAction="Change status" />
     </YStack>
   );
 }
@@ -155,11 +150,14 @@ export function SosOutboxScreen() {
           </XStack>
         ))}
       </OperationalCard>
-      <XStack gap="$2">
-        <ActionButton grow={1} label="Cancel false alarm" tone="sos" />
-        <ActionButton grow={1} label="Mark in response" tone="warning" />
-        <ActionButton grow={1} label="View on map" />
-      </XStack>
+      <EmergencyActionRow
+        actions={[
+          { label: 'Cancel false alarm', tone: 'sos' },
+          { label: 'Mark in response', tone: 'warning' },
+          { label: 'View on map', tone: 'primary' },
+        ]}
+      />
+      <OutboxSummaryPanel pending="7 pending" conflict="1 conflict" />
     </YStack>
   );
 }

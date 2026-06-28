@@ -7,15 +7,19 @@ import {
   ActionButton,
   ActionButtonState,
   ActionButtonTone,
+  AvailabilityPanel,
   BottomActionPanel,
   CenterSummaryCard,
+  EmergencyActionRow,
   MapMarkerPill,
   MapShell,
   MetricTile,
   OperationalCard,
+  OperationalFilterTile,
   OperationalCardVariant,
   OperationalHeader,
   OutboxRow,
+  OutboxSummaryPanel,
   RecommendationCard,
   SectionSurface,
   StatusBadge,
@@ -111,6 +115,16 @@ export default function DesignSystemScreen() {
                 ]}
                 minH={260}
                 variant="operational"
+              />
+              <XStack flexWrap="wrap" gap="$2">
+                <OperationalFilterTile marker="!" label="Critical" tone="risk" />
+                <OperationalFilterTile marker="ME" label="My role" tone="info" />
+                <OperationalFilterTile marker="SOS" label="SOS" tone="sos" />
+              </XStack>
+              <AvailabilityPanel
+                status={{ tone: 'success', label: 'Tracking active', marker: 'ON' }}
+                primaryAction="Create center"
+                secondaryAction="Change status"
               />
               <CenterSummaryCard
                 name="Center summary"
@@ -212,11 +226,15 @@ export default function DesignSystemScreen() {
               <OutboxRow title="SOS propagation" detail="Mesh sent · server pending" tone="sos" status="SOS" />
             </SectionSurface>
             <BottomActionPanel>
-              <XStack gap="$2">
-                <ActionButton grow={1} label="Primary action" />
-                <ActionButton grow={1} label="Critical action" tone="sos" />
-              </XStack>
+              <EmergencyActionRow
+                actions={[
+                  { label: 'Cancel false alarm', tone: 'sos' },
+                  { label: 'Mark in response', tone: 'warning' },
+                  { label: 'View on map', tone: 'primary' },
+                ]}
+              />
             </BottomActionPanel>
+            <OutboxSummaryPanel pending="7 pending" conflict="1 conflict" />
           </PreviewSection>
 
         </YStack>

@@ -16,7 +16,10 @@
     "test:ci": "jest --ci --runInBand",
     "test:strict": "pnpm typecheck && pnpm test:ci",
     "maestro:smoke:ios": "maestro test .maestro/ios-smoke.yaml",
-    "ios:agent": "EXPO_UNSTABLE_HEADLESS=1 expo start --ios"
+    "visual:audit:check": "maestro test .maestro/ios-visual-audit.yaml",
+    "ios:agent": "EXPO_UNSTABLE_HEADLESS=1 expo start --ios",
+    "visual:audit:capture": "python3 scripts/capture_visual_regression.py",
+    "visual:audit:contact-sheet": "python3 scripts/build_visual_contact_sheets.py"
   },
   "dependencies": {
     "@tamagui/animations-react-native": "2.3.3",

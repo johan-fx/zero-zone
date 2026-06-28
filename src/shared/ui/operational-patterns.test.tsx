@@ -2,7 +2,7 @@
 import { TamaguiProvider } from 'tamagui';
 
 import { tamaguiConfig } from '../../../tamagui.config';
-import { CenterSummaryCard, RecommendationCard, SyncStatePanel } from './operational-patterns';
+import { AvailabilityPanel, CenterSummaryCard, OperationalFilterTile, RecommendationCard, SyncStatePanel } from './operational-patterns';
 
 const ReactTestRenderer = require('react-test-renderer');
 
@@ -86,5 +86,23 @@ describe('operational compound patterns', () => {
     );
 
     expect(texts).toEqual(expect.arrayContaining(['Sync conflict', 'Local operation', 'Network state', 'Coordinator review']));
+  });
+
+  it('renders operational filter tiles with marker and label', () => {
+    const texts = renderTexts(<OperationalFilterTile marker="!" label="Critical" tone="sos" />);
+
+    expect(texts).toEqual(expect.arrayContaining(['!', 'Critical']));
+  });
+
+  it('renders the availability bottom panel pattern used by the map mockup', () => {
+    const texts = renderTexts(
+      <AvailabilityPanel
+        status={{ tone: 'success', label: 'Tracking active', marker: 'ON' }}
+        primaryAction="Create center"
+        secondaryAction="Change status"
+      />,
+    );
+
+    expect(texts).toEqual(expect.arrayContaining(['Available', 'Tracking active', 'Create center', 'Change status']));
   });
 });

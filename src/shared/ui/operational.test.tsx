@@ -2,7 +2,7 @@
 import { TamaguiProvider } from 'tamagui';
 
 import { tamaguiConfig } from '../../../tamagui.config';
-import { ActionButton, StatusBadge, resolveActionButtonMinHeight } from './operational';
+import { ActionButton, StatusBadge, resolveActionButtonMinHeight, resolveDenseActionButtonProps } from './operational';
 
 const ReactTestRenderer = require('react-test-renderer');
 
@@ -64,5 +64,12 @@ describe('operational components visual contracts', () => {
     const texts = flattenText(renderTree(<ActionButton label="Save signed report" tone="success" />));
 
     expect(texts).toContain('Save signed report');
+  });
+
+  it('exposes dense-row safe layout props for action buttons', () => {
+    expect(resolveDenseActionButtonProps()).toEqual({
+      flexShrink: 1,
+      minWidth: 0,
+    });
   });
 });

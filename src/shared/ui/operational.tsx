@@ -53,7 +53,7 @@ const OperationalCardFrame = styled(Card, {
         shadowRadius: 12,
       },
       critical: {
-        bg: '$sos',
+        bg: '$criticalSurface',
         borderColor: '$sos',
         shadowOffset: { width: 0, height: 7 },
         shadowOpacity: 0.14,
@@ -182,6 +182,13 @@ export function resolveActionButtonMinHeight(tone: ActionButtonTone, priority?: 
   return tone === 'primary' || tone === 'sos' ? '$criticalAction' : '$action';
 }
 
+export function resolveDenseActionButtonProps() {
+  return {
+    flexShrink: 1,
+    minWidth: 0,
+  } as const;
+}
+
 export function ActionButton({ tone = 'primary', label, helper, state = 'default', priority, disabled, ...props }: ActionButtonProps) {
   const style = actionToneStyles[tone];
   const isUnavailable = disabled || state === 'disabled' || state === 'loading';
@@ -196,15 +203,16 @@ export function ActionButton({ tone = 'primary', label, helper, state = 'default
       disabled={isUnavailable}
       opacity={state === 'disabled' ? 0.48 : 1}
       minH={resolveActionButtonMinHeight(tone, priority)}
+      {...resolveDenseActionButtonProps()}
       px="$4"
       pressStyle={{ opacity: 0.82 }}
       {...props}>
       <YStack items="center" gap="$1">
-        <Text color={style.foreground} fontSize="$md" fontWeight="800">
+        <Text color={style.foreground} fontSize="$md" fontWeight="800" text="center" style={{ flexShrink: 1 }}>
           {state === 'loading' ? `… ${label}` : label}
         </Text>
         {helper ? (
-          <Text color={tone === 'primary' ? '$textInverse' : '$textMuted'} fontSize="$xs" fontWeight="600">
+          <Text color={tone === 'primary' ? '$textInverse' : '$textMuted'} fontSize="$xs" fontWeight="600" text="center" style={{ flexShrink: 1 }}>
             {helper}
           </Text>
         ) : null}

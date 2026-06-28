@@ -22,6 +22,7 @@ function ThemedAppShell() {
           }}>
           <Stack.Screen name="index" options={{ title: 'Zona Cero' }} />
           <Stack.Screen name="design-system" options={{ title: 'Design system' }} />
+          <Stack.Screen name="visual-audit" options={{ headerShown: false }} />
         </Stack>
         <StatusBar style={themeName === 'dark' ? 'light' : 'dark'} />
       </Theme>

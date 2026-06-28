@@ -1,0 +1,18 @@
+appId: host.exp.Exponent
+name: iOS visual audit route check
+tags:
+  - visual-audit
+  - ios
+---
+- openLink: "exp://127.0.0.1:8081/--/visual-audit?screen=operational-map&theme=day"
+- assertVisible: "Available"
+- openLink: "exp://127.0.0.1:8081/--/visual-audit?screen=operational-map&theme=night"
+- assertVisible: "Available"
+- openLink: "exp://127.0.0.1:8081/--/visual-audit?screen=selected-center&theme=day"
+- assertVisible: "Escuela Norte"
+- openLink: "exp://127.0.0.1:8081/--/visual-audit?screen=selected-center&theme=night"
+- assertVisible: "Escuela Norte"
+- openLink: "exp://127.0.0.1:8081/--/visual-audit?screen=sos-outbox&theme=day"
+- assertVisible: "SOS raised"
+- openLink: "exp://127.0.0.1:8081/--/visual-audit?screen=sos-outbox&theme=night"
+- assertVisible: "SOS raised"
