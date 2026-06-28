@@ -1,0 +1,10 @@
+appId: host.exp.Exponent
+name: iOS Expo Go smoke test
+tags:
+  - smoke
+  - ios
+---
+- openLink: exp://127.0.0.1:8081
+- assertVisible: Zona Cero
+- assertVisible: Tamagui smoke check
+- assertVisible: Prepared feature areas
