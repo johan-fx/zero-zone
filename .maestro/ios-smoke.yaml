@@ -7,4 +7,41 @@ tags:
 - openLink: exp://127.0.0.1:8081
 - assertVisible: Zona Cero
 - assertVisible: Tamagui smoke check
-- assertVisible: Prepared feature areas
+- assertVisible: Operational map
+- tapOn: Open design system
+- assertVisible: Design system preview
+- assertVisible: light theme
+- tapOn:
+    id: design-theme-night
+- assertVisible: dark theme
+- tapOn:
+    id: design-theme-day
+- assertVisible: light theme
+- scrollUntilVisible:
+    element:
+      text: Compound patterns
+    direction: DOWN
+    speed: 70
+    visibilityPercentage: 50
+- assertVisible: Compound patterns
+- scrollUntilVisible:
+    element:
+      text: Center summary
+    direction: DOWN
+    speed: 70
+    visibilityPercentage: 50
+- assertVisible: Center summary
+- scrollUntilVisible:
+    element:
+      text: Recommendation card
+    direction: DOWN
+    speed: 70
+    visibilityPercentage: 50
+- assertVisible: Recommendation card
+- scrollUntilVisible:
+    element:
+      text: Sync state
+    direction: DOWN
+    speed: 70
+    visibilityPercentage: 50
+- assertVisible: Sync state

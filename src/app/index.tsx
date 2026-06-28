@@ -1,73 +1,61 @@
+import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Button, Card, Paragraph, ScrollView, Text, XStack, YStack } from 'tamagui';
+import { Paragraph, Text, XStack, YStack } from 'tamagui';
 
-const productPillars = [
-  'Local-first mobile coordination',
-  'Incident and geo-cell operating model',
-  'Offline map shell prepared',
-  'Signed operations deferred to the technical spike',
-];
+import { OperationalScreensGallery } from '@/features/operations/screens';
+import { ThemePreference, useOperationalTheme } from '@/shared/theme';
+import { ActionButton, OperationalCard, StatusBadge } from '@/shared/ui';
 
-const plannedModules = [
-  'Incidents',
-  'Work centers',
-  'Presence',
-  'Resources',
-  'SOS',
-  'Sync',
-];
+const themeOptions: ThemePreference[] = ['system', 'day', 'night'];
 
 export default function HomeScreen() {
+  const router = useRouter();
+  const { preference, setPreference, themeName } = useOperationalTheme();
+
   return (
     <SafeAreaView style={{ flex: 1 }} edges={['bottom']}>
-      <ScrollView background="$background">
-        <YStack gap="$6" p="$4">
-          <Card borderWidth={1} borderColor="$borderColor" p="$6" borderRadius="$10" backgroundColor="$background">
-            <YStack gap="$3">
-              <Text color="#D9480F" fontSize={12} fontWeight="800" letterSpacing={1}>
-                MOBILE APP BOILERPLATE
-              </Text>
-              <Text color="$color" fontSize={38} fontWeight="800">
-                Zona Cero
-              </Text>
-              <Paragraph color="$color11" fontSize={17} lineHeight={24}>
-                A React Native foundation for local-first disaster coordination.
-              </Paragraph>
-              <Button testID="tamagui-smoke-button" accessibilityLabel="Tamagui smoke check" size="$4">
-                Tamagui smoke check
-              </Button>
-            </YStack>
-          </Card>
-
+      <YStack bg="$background" grow={1}>
+        <OperationalCard rounded={0} variant="default" px="$4" py="$3">
           <YStack gap="$3">
-            <Text color="$color" fontSize={20} fontWeight="700">
-              Product direction
-            </Text>
-            {productPillars.map((item) => (
-              <Card key={item} borderWidth={1} borderColor="$borderColor" p="$4" borderRadius="$8" backgroundColor="$background">
-                <Text color="$color" fontSize={16} fontWeight="600">
-                  {item}
+            <XStack items="center" justify="space-between">
+              <YStack grow={1} gap="$1">
+                <Text color="$text" fontSize={28} fontWeight="900">
+                  Zona Cero
                 </Text>
-              </Card>
-            ))}
-          </YStack>
+                <Paragraph color="$textMuted" fontSize={14} lineHeight={19}>
+                  Tamagui operational design system preview
+                </Paragraph>
+              </YStack>
+              <StatusBadge tone={themeName === 'dark' ? 'info' : 'success'} label={`${themeName} theme`} />
+            </XStack>
 
-          <YStack gap="$3">
-            <Text color="$color" fontSize={20} fontWeight="700">
-              Prepared feature areas
-            </Text>
             <XStack flexWrap="wrap" gap="$2">
-              {plannedModules.map((module) => (
-                <Card key={module} borderWidth={1} borderColor="$borderColor" px="$3" py="$2" borderRadius="$10">
-                  <Text color="$color" fontSize={14} fontWeight="700">
-                    {module}
-                  </Text>
-                </Card>
+              {themeOptions.map((option) => (
+                <ActionButton
+                  key={option}
+                  accessibilityLabel={`Set ${option} theme`}
+                  label={option}
+                  onPress={() => setPreference(option)}
+                  size="$3"
+                  testID={`theme-${option}`}
+                  tone={preference === option ? 'primary' : 'info'}
+                />
               ))}
             </XStack>
+
+            <ActionButton testID="tamagui-smoke-button" accessibilityLabel="Tamagui smoke check" label="Tamagui smoke check" />
+            <ActionButton
+              testID="open-design-system"
+              accessibilityLabel="Open design system"
+              label="Open design system"
+              onPress={() => router.push('/design-system')}
+              tone="success"
+            />
           </YStack>
-        </YStack>
-      </ScrollView>
+        </OperationalCard>
+
+        <OperationalScreensGallery />
+      </YStack>
     </SafeAreaView>
   );
 }
