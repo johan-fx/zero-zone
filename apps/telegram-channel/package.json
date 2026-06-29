@@ -1,0 +1,31 @@
+{
+  "name": "@zona-cero/telegram-channel",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:integration": "vitest run src/channel.integration.test.ts",
+    "test:strict": "pnpm typecheck && pnpm test",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@zona-cero/contracts": "workspace:*",
+    "grammy": "^1.43.0"
+  },
+  "devDependencies": {
+    "@zona-cero/config": "workspace:*",
+    "@zona-cero/testing": "workspace:*",
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.0"
+  }
+}
