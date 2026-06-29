@@ -47,12 +47,12 @@ Corrective Slice A rerun note: RxDB `addCollections`/repository coverage, durabl
 
 ## Phase 3: Slice B RED — Operational UI Contracts
 
-- [ ] 3.1 RED: add RNTL tests for `src/features/operations/**` incident entry, offline incident/center creation, pending state, false-activation prevention, and selected-center fields.
-- [ ] 3.2 RED: add tests proving `src/app/design-system.tsx`, `src/app/visual-audit.tsx`, preview components, and `src/features/operations/mockData.ts` remain mock-backed.
+- [x] 3.1 RED: add RNTL tests for `src/features/operations/**` incident entry, offline incident/center creation, pending state, false-activation prevention, and selected-center fields.
+- [x] 3.2 RED: add tests proving `src/app/design-system.tsx`, `src/app/visual-audit.tsx`, preview components, and `src/features/operations/mockData.ts` remain mock-backed.
 
 ## Phase 4: Slice B GREEN/REFACTOR — Live Operational Wiring
 
-- [ ] 4.1 Wire `src/features/operations/**` hooks/commands/screens to local DB/outbox and MapLibre state while keeping previews stable.
-- [ ] 4.2 Update `src/app/_layout.tsx`, `src/app/index.tsx`, `src/app/visual-audit.tsx`, and `src/app/design-system.tsx` to separate live operational entry from preview/audit routes.
-- [ ] 4.3 Add Maestro/dev-build smoke coverage for pending/offline indicators and preserved visual-audit access; document device signing/native checks.
-- [ ] 4.4 REFACTOR and commit Slice B as UI flow, preview preservation, and E2E/docs work units; keep backend sync, real Meshtastic hardware, recommendations, logistics, SOS full UI, and reunification out of scope.
+- [x] 4.1 Wire `src/features/operations/**` hooks/commands/screens to local DB/outbox and MapLibre state while keeping previews stable.
+- [x] 4.2 Update `src/app/_layout.tsx`, `src/app/index.tsx`, `src/app/visual-audit.tsx`, and `src/app/design-system.tsx` to separate live operational entry from preview/audit routes.
+- [x] 4.3 Add Maestro/dev-build smoke coverage for pending/offline indicators and preserved visual-audit access; document device signing/native checks.
+- [x] 4.4 REFACTOR and commit Slice B as UI flow, preview preservation, and E2E/docs work units; keep backend sync, real Meshtastic hardware, recommendations, logistics, SOS full UI, and reunification out of scope.

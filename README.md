@@ -1,6 +1,6 @@
 # Zona Cero Mobile App
 
-Expo + React Native boilerplate for Zona Cero.
+Expo + React Native app foundations for Zona Cero.
 
 ## Stack
 
@@ -9,6 +9,9 @@ Expo + React Native boilerplate for Zona Cero.
 - TypeScript
 - Expo Router
 - Tamagui
+- RxDB + Expo SQLite trial storage seam
+- Signed local operation outbox
+- MapLibre offline pack seam
 - pnpm
 
 ## Commands
@@ -24,7 +27,9 @@ pnpm typecheck
 
 ## Scope
 
-This is only the app boilerplate. It includes Tamagui as the UI/design-system foundation, but intentionally does not implement the first technical spike: no RxDB, SQLite persistence, signed outbox, sync, MapLibre, or Meshtastic gateway logic yet.
+This branch includes the offline-first work-center spike foundations: Tamagui UI, a signed local operation outbox, RxDB/Expo SQLite local-store seams, MapLibre offline-pack seams, and a live operational spike route. Backend sync, real Meshtastic hardware, recommendations/logistics, full SOS UI, and reunification remain out of scope.
+
+The current home route is explicitly a spike/dev entry backed by an in-memory local database. Durable RxDB-backed production routing remains blocked until the RxDB SQLite `getRxStorageSQLiteTrial` dependency is replaced or accepted as a production risk.
 
 ## Strict TDD loop
 
@@ -39,14 +44,15 @@ pnpm test:strict   # typecheck + deterministic tests
 
 ## Smoke tests
 
-This boilerplate includes a first Maestro smoke test for the Expo Go iOS flow.
+Smoke flows target the iOS development build (`app.zonacero.mobile`) because MapLibre and SQLite native modules are not available in Expo Go.
 
 ```bash
-pnpm ios
 pnpm maestro:smoke:ios
+pnpm maestro:offline-spike:ios
+pnpm visual:audit:check
 ```
 
-The iOS smoke flow opens `exp://127.0.0.1:8081`, then verifies the initial Zona Cero screen and the Tamagui smoke button.
+The iOS smoke flow verifies the live offline-first spike, mock-backed design-system/visual-audit routes, and deterministic operational E2E scenarios.
 
 Install Maestro locally before running the flow:
 
