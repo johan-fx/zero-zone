@@ -20,8 +20,8 @@ function ThemedAppShell() {
             headerTitleStyle: { fontWeight: '700' },
             contentStyle: { backgroundColor: colors.background },
           }}>
-          <Stack.Screen name="index" options={{ title: 'Zona Cero' }} />
-          <Stack.Screen name="design-system" options={{ title: 'Design system' }} />
+          <Stack.Screen name="index" options={{ title: 'Live operations' }} />
+          <Stack.Screen name="design-system" options={{ title: 'Design system preview' }} />
           <Stack.Screen name="visual-audit" options={{ headerShown: false }} />
         </Stack>
         <StatusBar style={themeName === 'dark' ? 'light' : 'dark'} />
