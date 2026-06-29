@@ -22,6 +22,7 @@ export type WorkCenterMaterializedView = {
   risk?: string;
   surplus?: string;
   roleCount?: number;
+  staleFields?: string[];
   location?: { latitude: number; longitude: number };
   status: 'pending';
   activationState: 'requires_evidence';
@@ -126,6 +127,7 @@ export function materializeOperations(operations: readonly SignedOperation[]): M
           risk: stringValue(payload.risk, 'precaution'),
           surplus: stringValue(payload.surplus, 'none reported'),
           roleCount: numberValue(payload.roleCount, 0),
+          staleFields: stringArrayValue(payload.staleFields),
           location: locationValue(payload.location),
           status: 'pending',
           activationState: 'requires_evidence',
@@ -263,6 +265,16 @@ function stringValue(value: unknown, fallback: string): string {
 
 function numberValue(value: unknown, fallback: number): number {
   return typeof value === 'number' ? value : fallback;
+}
+
+function stringArrayValue(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const strings = value.filter((item): item is string => typeof item === 'string');
+
+  return strings.length > 0 ? strings : undefined;
 }
 
 function locationValue(value: unknown): { latitude: number; longitude: number } | undefined {

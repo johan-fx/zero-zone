@@ -34,6 +34,21 @@ export type MapRenderState = {
 
 export type OperationFreshness = 'fresh' | 'degraded' | 'stale' | 'missing';
 
+export type MapPreparationUnavailablePack = {
+  incidentId: string;
+  cellId: string;
+  state: MapPackLifecycleState;
+  reason: string;
+};
+
+export type MapPreparationCoverage = {
+  availableLocalPacks: MapPackMetadata[];
+  unavailablePacks: MapPreparationUnavailablePack[];
+  canContinue: boolean;
+  continueCellIds: string[];
+  explanation: string;
+};
+
 export type MapPackRepository = {
   upsert(pack: MapPackMetadata): Promise<void>;
   findByPackId(packId: string): Promise<MapPackMetadata | null>;
@@ -184,6 +199,39 @@ export class OfflineMapPackService {
     return { deleted: true, requiresConfirmation: false };
   }
 
+  async resolvePreparationCoverage(input: { incidentId: string; requestedCellIds: string[]; networkAvailable: boolean }): Promise<MapPreparationCoverage> {
+    const packs = await this.repository.findByIncident(input.incidentId);
+    const packsByCell = new Map(packs.map((pack) => [pack.cellId, pack]));
+    const availableLocalPacks: MapPackMetadata[] = [];
+    const unavailablePacks: MapPreparationUnavailablePack[] = [];
+
+    for (const cellId of input.requestedCellIds) {
+      const pack = packsByCell.get(cellId);
+
+      if (pack && isLocallyUsablePack(pack)) {
+        availableLocalPacks.push(pack);
+        continue;
+      }
+
+      unavailablePacks.push({
+        incidentId: input.incidentId,
+        cellId,
+        state: pack?.state ?? 'not_available',
+        reason: input.networkAvailable ? 'Download required.' : 'Network unavailable and no usable local coverage exists.',
+      });
+    }
+
+    const continueCellIds = input.networkAvailable ? input.requestedCellIds : availableLocalPacks.map((pack) => pack.cellId);
+
+    return {
+      availableLocalPacks,
+      unavailablePacks,
+      canContinue: continueCellIds.length > 0,
+      continueCellIds,
+      explanation: resolvePreparationExplanation(input.networkAvailable, continueCellIds),
+    };
+  }
+
   private async requirePack(packId: string): Promise<MapPackMetadata> {
     const pack = await this.repository.findByPackId(packId);
 
@@ -231,4 +279,20 @@ function createPackId(incidentId: string, cellId: string): string {
 
 function isNativePackWithId(pack: unknown, packId: string): boolean {
   return Boolean(pack && typeof pack === 'object' && 'packId' in pack && pack.packId === packId);
+}
+
+function isLocallyUsablePack(pack: MapPackMetadata): boolean {
+  return pack.state === 'downloaded' || pack.state === 'partial' || pack.downloadedBytes > 0 || pack.progress > 0;
+}
+
+function resolvePreparationExplanation(networkAvailable: boolean, continueCellIds: string[]): string {
+  if (networkAvailable) {
+    return 'Network available. Missing packs can be downloaded before continuing.';
+  }
+
+  if (continueCellIds.length === 0) {
+    return 'Network unavailable. No local map coverage is available for the requested cells.';
+  }
+
+  return `Network unavailable. Continue only with locally available coverage: ${continueCellIds.join(', ')}.`;
 }

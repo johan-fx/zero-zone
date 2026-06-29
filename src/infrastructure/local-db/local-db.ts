@@ -98,6 +98,7 @@ export type WorkCenterView = {
   risk?: string;
   surplus?: string;
   roleCount?: number;
+  staleFields?: string[];
   activationState?: string;
   location?: { latitude: number; longitude: number };
   status: string;

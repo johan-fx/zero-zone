@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
 import { Paragraph, ScrollView, Text, XStack, YStack } from 'tamagui';
 
-import { createInMemoryLocalOperationDatabase, type LocalOperationDatabase, type WorkCenterView } from '@/infrastructure/local-db/local-db';
+import { createInMemoryLocalOperationDatabase, type LocalOperationDatabase, type PresenceLocalView, type WorkCenterView } from '@/infrastructure/local-db/local-db';
 import { resolveMapRenderState, type MapPackMetadata } from '@/infrastructure/maps';
 import { appendSignedOperationAndMaterialize } from '@/infrastructure/oplog/outbox-service';
 import { FakeOperationSigner, type OperationSigner } from '@/infrastructure/security';
@@ -14,6 +14,7 @@ const DEFAULT_CELL_ID = 'cell-a7';
 const DEFAULT_INCIDENT_ID = 'incident-local';
 const DEFAULT_CENTER_ID = 'center-local-1';
 const DEFAULT_TIMESTAMP = '2026-06-29T09:00:00.000Z';
+const DEFAULT_PRESENCE_ID = `presence-${DEFAULT_ACTOR_KEY_ID}`;
 
 export type LiveOperationalEntryScreenProps = {
   database?: LocalOperationDatabase;
@@ -26,6 +27,7 @@ type LiveOperationalState = {
   incident: Awaited<ReturnType<LocalOperationDatabase['views']['incidents']['findById']>>;
   centers: WorkCenterView[];
   selectedCenter: WorkCenterView | null;
+  selectedPresence: PresenceLocalView | null;
   mapPack: MapPackMetadata | null;
   pendingOperations: number;
 };
@@ -40,8 +42,11 @@ type WorkCenterPayload = {
   risk: string;
   surplus: string;
   roleCount: number;
+  staleFields: string[];
   location: { latitude: number; longitude: number };
 };
+
+type PresenceAction = 'check_in' | 'pause' | 'check_out';
 
 export async function createOfflineIncident(input: {
   database: LocalOperationDatabase;
@@ -98,20 +103,44 @@ export async function createOfflineWorkCenter(input: {
   });
 }
 
+export async function createPresenceOperation(input: { database: LocalOperationDatabase; signer: OperationSigner; incidentId: string; cellId: string; centerId: string; action: PresenceAction }) {
+  const opType = `presence.${input.action}` as const;
+  const sequence = input.action === 'check_in' ? '0003' : input.action === 'pause' ? '0004' : '0005';
+
+  return appendSignedOperationAndMaterialize({
+    database: input.database,
+    signer: input.signer,
+    input: {
+      actorKeyId: DEFAULT_ACTOR_KEY_ID,
+      deviceId: DEFAULT_DEVICE_ID,
+      incidentId: input.incidentId,
+      cellId: input.cellId,
+      entityId: `${DEFAULT_PRESENCE_ID}-${input.centerId}`,
+      opType,
+      payload: { actorId: DEFAULT_ACTOR_KEY_ID, centerId: input.centerId, role: 'volunteer' },
+      hlc: `${DEFAULT_TIMESTAMP}-${sequence}-${DEFAULT_DEVICE_ID}`,
+      createdAtDevice: DEFAULT_TIMESTAMP,
+    },
+  });
+}
+
 export async function loadLiveOperationalState(database: LocalOperationDatabase, incidentId: string): Promise<LiveOperationalState> {
   const incident = await database.views.incidents.findById(incidentId);
   const cellId = incident?.cellId ?? DEFAULT_CELL_ID;
-  const [centers, mapPack, operations] = await Promise.all([
+  const [centers, mapPack, operations, presenceSessions] = await Promise.all([
     database.views.workCenters.findByIncident(incidentId),
     database.views.mapPacks.findById(`${incidentId}:${cellId}`),
     database.syncOps.findByIncident(incidentId),
+    database.views.presence.findByIncident(incidentId),
   ]);
   const pendingOperations = operations.filter((operation) => 'syncState' in operation && operation.syncState === 'pending').length;
+  const selectedCenter = centers[centers.length - 1] ?? null;
 
   return {
     incident,
     centers,
-    selectedCenter: centers[centers.length - 1] ?? null,
+    selectedCenter,
+    selectedPresence: selectedCenter ? presenceSessions.find((session) => session.centerId === selectedCenter.centerId) ?? null : null,
     mapPack,
     pendingOperations,
   };
@@ -169,7 +198,25 @@ export function LiveOperationalEntryScreen({
     }
   }, [database, refresh, signer, state?.incident]);
 
+  const handlePresenceAction = useCallback(
+    async (action: PresenceAction) => {
+      if (!state?.incident || !state.selectedCenter) {
+        return;
+      }
+
+      setError(null);
+      try {
+        await createPresenceOperation({ database, signer, incidentId: state.incident.incidentId, cellId: state.incident.cellId, centerId: state.selectedCenter.centerId, action });
+        await refresh(state.incident.incidentId);
+      } catch (caughtError) {
+        setError(caughtError instanceof Error ? caughtError.message : 'Unable to update presence tracking');
+      }
+    },
+    [database, refresh, signer, state?.incident, state?.selectedCenter],
+  );
+
   const mapState = resolveMapRenderState({ pack: state?.mapPack ?? null, networkAvailable });
+  const missingRequestedIncident = Boolean(activeIncidentId && state && !state.incident);
 
   return (
     <ScrollView bg="$background" testID="live-operational-entry">
@@ -206,6 +253,13 @@ export function LiveOperationalEntryScreen({
                   Operational data is local pending
                 </Text>
               </YStack>
+            ) : missingRequestedIncident ? (
+              <YStack gap="$2">
+                <StatusBadge tone="stale" label={`Incident ${activeIncidentId} is not available locally for offline use.`} />
+                <Text color="$textMuted" fontSize="$sm" fontWeight="700">
+                  Prepare this incident and cell before deployment or reconnect to fetch it.
+                </Text>
+              </YStack>
             ) : (
               <Text color="$textMuted" fontSize="$sm" fontWeight="700">
                 No local incident selected.
@@ -223,7 +277,7 @@ export function LiveOperationalEntryScreen({
 
         <LiveMapLibreSurface centers={state?.centers ?? []} indicator={mapState.indicator} />
 
-        {state?.selectedCenter ? <LiveSelectedCenterPanel center={state.selectedCenter} /> : null}
+        {state?.selectedCenter ? <LiveSelectedCenterPanel center={state.selectedCenter} onPresenceAction={handlePresenceAction} presence={state.selectedPresence} /> : null}
       </YStack>
     </ScrollView>
   );
@@ -253,8 +307,12 @@ function LiveMapLibreSurface({ centers, indicator }: { centers: WorkCenterView[]
   );
 }
 
-function LiveSelectedCenterPanel({ center }: { center: WorkCenterView }) {
+function LiveSelectedCenterPanel({ center, onPresenceAction, presence }: { center: WorkCenterView; onPresenceAction: (action: PresenceAction) => void; presence: PresenceLocalView | null }) {
   const centerRecord = center as WorkCenterView & Partial<WorkCenterPayload> & { activationState?: string };
+  const staleFields = centerRecord.staleFields ?? [];
+  const hasStaleFields = staleFields.length > 0;
+  const trackingLabel = presence?.status === 'active' ? 'Tracking: active' : presence?.status === 'paused' ? 'Tracking: paused' : presence?.status === 'checked_out' ? 'Tracking: stopped' : 'Tracking: stopped';
+  const roleSummary = resolveRoleSummary(centerRecord.roleCount ?? 0, presence);
 
   return (
     <OperationalCard testID="live-selected-center-panel">
@@ -272,30 +330,40 @@ function LiveSelectedCenterPanel({ center }: { center: WorkCenterView }) {
         </XStack>
 
         <StatusBadge tone="pending" label="Activation requires sufficient evidence" />
+        {hasStaleFields ? <StatusBadge tone="stale" label={`Stale center data: ${staleFields.join(', ')} need verification before action`} /> : null}
+        <StatusBadge tone={presence?.status === 'active' ? 'success' : presence?.status === 'paused' ? 'warning' : 'stale'} label={trackingLabel} />
         <Text color="$text" fontSize="$sm" fontWeight="800">
           State: {center.status}
         </Text>
         <Text color="$text" fontSize="$sm" fontWeight="800">
-          Confidence: {centerRecord.confidence ?? 'local estimate'}
+          {formatMaybeStaleField('Confidence', centerRecord.confidence ?? 'local estimate', staleFields.includes('confidence'))}
         </Text>
-        <Text color="$text" fontSize="$sm" fontWeight="800">
-          Freshness: local pending
-        </Text>
+        {hasStaleFields ? (
+          <Text color="$stale" fontSize="$sm" fontWeight="800">
+            Freshness: stale fields require verification
+          </Text>
+        ) : (
+          <Text color="$text" fontSize="$sm" fontWeight="800">
+            Freshness: local pending
+          </Text>
+        )}
         <Text color="$text" fontSize="$sm" fontWeight="800">
           Risk: {centerRecord.risk ?? 'precaution'}
         </Text>
         <Text color="$text" fontSize="$sm" fontWeight="800">
-          Need: {centerRecord.initialNeed ?? 'Water'}
+          {formatMaybeStaleField('Need', centerRecord.initialNeed ?? 'Water', staleFields.includes('need'))}
         </Text>
         <Text color="$text" fontSize="$sm" fontWeight="800">
-          Surplus: {centerRecord.surplus ?? 'none reported'}
+          {formatMaybeStaleField('Surplus', centerRecord.surplus ?? 'none reported', staleFields.includes('surplus'))}
         </Text>
         <Text color="$text" fontSize="$sm" fontWeight="800">
-          Roles: {centerRecord.roleCount ?? 0} active
+          {formatMaybeStaleField('Roles', roleSummary.value, staleFields.includes('roles') || roleSummary.isStale)}
         </Text>
 
         <XStack flexWrap="wrap" gap="$2">
-          <ActionButton label="Check in" tone="success" />
+          <ActionButton label="Check in" onPress={() => onPresenceAction('check_in')} tone="success" />
+          <ActionButton disabled={presence?.status !== 'active'} label="Pause tracking" onPress={() => onPresenceAction('pause')} tone="warning" />
+          <ActionButton disabled={!presence || presence.status === 'checked_out'} label="Check out" onPress={() => onPresenceAction('check_out')} tone="stale" />
           <ActionButton label="Report need" tone="warning" />
           <ActionButton label="Report surplus" tone="info" />
         </XStack>
@@ -315,7 +383,28 @@ function createDefaultWorkCenterPayload(overrides: Partial<WorkCenterPayload> = 
     risk: 'precaution',
     surplus: 'none reported',
     roleCount: 0,
+    staleFields: [],
     location: { latitude: 41.38, longitude: 2.17 },
     ...overrides,
   };
+}
+
+function formatMaybeStaleField(label: string, value: string, isStale: boolean): string {
+  return `${label}: ${value}${isStale ? ' — stale, verify before acting' : ''}`;
+}
+
+function resolveRoleSummary(baseRoleCount: number, presence: PresenceLocalView | null): { value: string; isStale: boolean } {
+  if (presence?.status === 'active') {
+    return { value: '1 active', isStale: false };
+  }
+
+  if (presence?.status === 'paused') {
+    return { value: '1 paused', isStale: true };
+  }
+
+  if (presence?.status === 'checked_out') {
+    return { value: '0 active', isStale: false };
+  }
+
+  return { value: `${baseRoleCount} active`, isStale: false };
 }

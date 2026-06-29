@@ -9,6 +9,7 @@
 - Remaining tasks: None for the assigned Slice B work-unit; ready for SDD verify/orchestrator review.
 - Corrective rerun: Slice A gatekeeper gaps closed for RxDB collection creation/repositories, durable signed outbox ordering, MapLibre adapter integration, and repository-seam migration/reset tests.
 - Slice B rerun: live operational entry now creates local incident/work-center operations through the signed outbox/materializer seam, renders pending/offline state, prevents false activation, and preserves mock-backed design-system/visual-audit preview surfaces.
+- Verification remediation: five critical verify gaps are now covered by strict-TDD corrective tests and implementation for presence check-in/pause/check-out, stale selected-center degradation, missing-local-data offline explanation, and offline map-preparation local-vs-unavailable pack separation.
 
 ## TDD Cycle Evidence
 
@@ -31,6 +32,10 @@
 | 4.2 | `src/app/_layout.tsx`, `src/app/index.tsx`, `src/app/visual-audit.tsx`, `src/app/design-system.tsx` | Route integration | ✅ Existing route/preview tests passed before production edits | ✅ RED coverage from 3.2 expected explicit mock-backed route separation | ✅ Focused Slice B run passed | ✅ Home is live operational entry; design-system and visual-audit expose mock-backed labels and content | ✅ Route titles and buttons separate live operational flow from previews/audit |
 | 4.3 | `.maestro/ios-smoke.yaml`, `.maestro/ios-visual-audit.yaml`, `dev-build-smoke.md` | E2E smoke/docs | ✅ Config smoke from Slice A passed before edits | ✅ Smoke coverage defined for pending/offline indicators and visual-audit access before native execution | ⚠️ Maestro attempted but device lacked installed `app.zonacero.mobile` dev build | ✅ Smoke flows cover incident pending, center pending, false activation, design preview, and all visual-audit capture targets | ✅ Documented dev-build signing/native checks and environment limitation |
 | 4.4 | All Slice B files and OpenSpec artifacts | Refactor/validation | ✅ Focused suite green before final validation | ➖ Validation/refactor task; no new behavior beyond Slice B contracts | ✅ `pnpm test`: 12 suites / 50 tests passed; `pnpm typecheck`: passed | ➖ Structural validation task | ✅ No commits created per executor instructions; out-of-scope items preserved |
+| Corrective 3.1/4.1 presence controls | `src/features/operations/liveOperations.test.tsx` | RNTL integration | ✅ Baseline before edits: 2 suites / 10 tests passed | ✅ Written first; failed on missing tracking labels and no signed presence actions from `Check in`; triangulation RED failed on missing active/paused role-count degradation | ✅ Focused corrective run passed: 2 suites / 15 tests | ✅ 2 cases cover signed `presence.check_in`, `presence.pause`, and `presence.check_out`, materialized presence status, active role count, paused degradation, and check-out removal | ✅ Reused signed outbox/materializer seam; no backend sync or identity exposure added |
+| Corrective 3.1/4.1 stale selected-center data | `src/features/operations/liveOperations.test.tsx` | RNTL integration | ✅ Baseline before edits: 2 suites / 10 tests passed | ✅ Written first; failed on missing stale center warning and stale field labels | ✅ Focused corrective run passed | ✅ 1 stale multi-field case covers role, need, surplus, and confidence textual degradation | ✅ Added minimal `staleFields` metadata through materialized center views |
+| Corrective local-operation-store missing data | `src/features/operations/liveOperations.test.tsx` | RNTL integration | ✅ Baseline before edits: 2 suites / 10 tests passed | ✅ Written first; failed because offline requested incident still said no local incident selected | ✅ Focused corrective run passed | ✅ Missing requested incident case asserts explicit not-available-local guidance and no fresh/local-pending implication | ✅ Kept behavior scoped to live route and local state only |
+| Corrective offline-map-packs preparation | `src/infrastructure/maps/offline-map-packs.test.ts` | Unit/service | ✅ Baseline before edits: 2 suites / 10 tests passed | ✅ Written first; failed on missing `resolvePreparationCoverage()` | ✅ Focused corrective run passed | ✅ Offline preparation case separates downloaded/partial local packs from failed/missing unavailable packs and restricts continuation to local coverage | ✅ Added pure service method; no native MapLibre behavior changed |
 
 ## Tests Run
 
@@ -56,6 +61,15 @@
 | `pnpm test` | ✅ Slice B full validation | 12 suites / 50 tests passed. |
 | `pnpm expo config --type public` | ✅ Slice B config smoke | Public Expo config still resolves app id, SQLite, and MapLibre plugin. |
 | `pnpm maestro:smoke:ios` | ⚠️ Environment-limited | Maestro 2.6.1 found simulator, but failed because `app.zonacero.mobile` dev build is not installed (`Failed to get app binary directory for bundle app.zonacero.mobile`). |
+| `pnpm test -- src/features/operations/liveOperations.test.tsx src/infrastructure/maps/offline-map-packs.test.ts --runInBand` | ✅ Corrective safety net | Baseline before verification remediation: 2 suites / 10 tests passed. |
+| `pnpm test -- src/features/operations/liveOperations.test.tsx src/infrastructure/maps/offline-map-packs.test.ts --runInBand` | ❌ Expected corrective RED | Failed on missing `resolvePreparationCoverage()`, missing presence tracking state/actions, missing stale field degradation, and missing not-available-local explanation. |
+| `pnpm test -- src/features/operations/liveOperations.test.tsx src/infrastructure/maps/offline-map-packs.test.ts --runInBand` | ✅ Corrective GREEN | 2 suites / 15 tests passed after remediation. |
+| `pnpm test -- src/features/operations/liveOperations.test.tsx --runInBand` | ❌ Expected triangulation RED | Failed because presence role counts did not yet show `Roles: 1 active` or paused degradation after tracking actions. |
+| `pnpm test -- src/features/operations/liveOperations.test.tsx src/infrastructure/maps/offline-map-packs.test.ts --runInBand` | ✅ Corrective triangulation GREEN | 2 suites / 15 tests passed after deriving active/paused/checked-out role labels from materialized presence state. |
+| `pnpm test -- src/features/operations/liveOperations.test.tsx src/infrastructure/maps/offline-map-packs.test.ts src/infrastructure/oplog/materializer.test.ts src/infrastructure/oplog/outbox-service.test.ts src/infrastructure/local-db/local-db.test.ts --runInBand` | ✅ Corrective focused regression | 5 suites / 28 tests passed. |
+| `pnpm typecheck` | ✅ Corrective validation | Passed after adding presence controls, `staleFields`, and map-preparation coverage types. |
+| `pnpm test` | ✅ Corrective full validation | 12 suites / 55 tests passed. |
+| `pnpm expo config --type public` | ✅ Corrective config smoke | Public Expo config still resolves app id, SQLite, and MapLibre plugin. |
 
 ## Implementation Notes
 
@@ -74,6 +88,10 @@
 - Work center materialized views now preserve minimal selected-center fields needed for the live panel: type, description, priority, initial need, confidence, risk, surplus, role count, activation state, and approximate location.
 - Home (`/`) is now the live operational entry; `design-system` and `visual-audit` remain explicitly mock-backed preview/audit routes.
 - Maestro smoke coverage now targets the dev-build bundle id `app.zonacero.mobile` and covers pending/offline indicators plus preserved visual-audit access.
+- Verification remediation added live presence controls that append signed `presence.check_in`, `presence.pause`, and `presence.check_out` operations through `appendSignedOperationAndMaterialize()` and reflect active/paused/stopped tracking in the selected-center panel.
+- Verification remediation added stale selected-center field degradation using materialized `staleFields` metadata, with role, need, surplus, and confidence labels marked as stale and non-actionable until verified.
+- Verification remediation added explicit offline missing-local-data messaging when a requested incident/cell is not available locally, without implying fresh or locally pending operational data exists.
+- Verification remediation added offline map-preparation planning that separates downloaded/partial local packs from failed/missing unavailable packs and restricts continuation to locally available coverage while offline.
 
 ## Deviations
 

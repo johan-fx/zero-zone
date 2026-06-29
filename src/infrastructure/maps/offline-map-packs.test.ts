@@ -109,4 +109,39 @@ describe('offline map pack foundation', () => {
       operationFreshnessLabel: 'Operational data is stale',
     });
   });
+
+  it('separates local and unavailable packs when map preparation opens offline', async () => {
+    const repository = new InMemoryMapPackRepository([
+      downloadedPack,
+      {
+        ...downloadedPack,
+        packId: 'incident-1:cell-b',
+        cellId: 'cell-b',
+        state: 'partial',
+        progress: 0.35,
+        downloadedBytes: 14700,
+      },
+      {
+        ...downloadedPack,
+        packId: 'incident-1:cell-c',
+        cellId: 'cell-c',
+        state: 'failed',
+        progress: 0,
+        downloadedBytes: 0,
+      },
+    ]);
+    const service = new OfflineMapPackService(repository);
+
+    const preparation = await service.resolvePreparationCoverage({
+      incidentId: 'incident-1',
+      requestedCellIds: ['cell-a', 'cell-b', 'cell-c', 'cell-d'],
+      networkAvailable: false,
+    });
+
+    expect(preparation.availableLocalPacks.map((pack) => pack.cellId)).toEqual(['cell-a', 'cell-b']);
+    expect(preparation.unavailablePacks.map((pack) => pack.cellId)).toEqual(['cell-c', 'cell-d']);
+    expect(preparation.canContinue).toBe(true);
+    expect(preparation.continueCellIds).toEqual(['cell-a', 'cell-b']);
+    expect(preparation.explanation).toBe('Network unavailable. Continue only with locally available coverage: cell-a, cell-b.');
+  });
 });

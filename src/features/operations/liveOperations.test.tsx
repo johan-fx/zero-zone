@@ -136,4 +136,104 @@ describe('live operational flow wiring', () => {
     expect(screen.getByText('Check in')).toBeTruthy();
     expect(screen.queryByText('volunteer-1')).toBeNull();
   });
+
+  it('checks in to a selected center by creating a signed presence operation', async () => {
+    const { screen, database } = await renderLiveOperations();
+
+    await pressAndFlush(screen.getByText('Create local incident'));
+    await waitFor(() => expect(screen.getByText('Incident: Local flood response')).toBeTruthy());
+    await pressAndFlush(screen.getByText('Create pending center'));
+    await waitFor(() => expect(screen.getByText('Check in')).toBeTruthy());
+
+    await pressAndFlush(screen.getByText('Check in'));
+
+    await waitFor(() => expect(screen.getByText('Tracking: active')).toBeTruthy());
+
+    const operations = await database.syncOps.findByIncident('incident-local');
+    expect(operations.map((operation) => operation.opType)).toEqual(['incident.create', 'work_center.create', 'presence.check_in']);
+    expect(operations[2]).toEqual(expect.objectContaining({ opType: 'presence.check_in', entityType: 'presence', syncState: 'pending', signature: expect.stringContaining('fake-signature') }));
+    expect(await database.views.presence.findByIncident('incident-local')).toEqual([
+      expect.objectContaining({ centerId: 'center-local-1', role: 'volunteer', status: 'active' }),
+    ]);
+    expect(screen.getByText('Outbox: 3 pending')).toBeTruthy();
+  });
+
+  it('pauses and checks out an active presence session with signed operations', async () => {
+    const { screen, database } = await renderLiveOperations();
+
+    await pressAndFlush(screen.getByText('Create local incident'));
+    await waitFor(() => expect(screen.getByText('Incident: Local flood response')).toBeTruthy());
+    await pressAndFlush(screen.getByText('Create pending center'));
+    await waitFor(() => expect(screen.getByText('Check in')).toBeTruthy());
+    await pressAndFlush(screen.getByText('Check in'));
+    await waitFor(() => expect(screen.getByText('Tracking: active')).toBeTruthy());
+    expect(screen.getByText('Roles: 1 active')).toBeTruthy();
+
+    await pressAndFlush(screen.getByText('Pause tracking'));
+    await waitFor(() => expect(screen.getByText('Tracking: paused')).toBeTruthy());
+    expect(screen.getByText('Roles: 1 paused — stale, verify before acting')).toBeTruthy();
+
+    await pressAndFlush(screen.getByText('Check out'));
+    await waitFor(() => expect(screen.getByText('Tracking: stopped')).toBeTruthy());
+
+    const operations = await database.syncOps.findByIncident('incident-local');
+    expect(operations.map((operation) => operation.opType)).toEqual(['incident.create', 'work_center.create', 'presence.check_in', 'presence.pause', 'presence.check_out']);
+    expect(operations.slice(2)).toEqual([
+      expect.objectContaining({ opType: 'presence.check_in', signature: expect.stringContaining('fake-signature') }),
+      expect.objectContaining({ opType: 'presence.pause', signature: expect.stringContaining('fake-signature') }),
+      expect.objectContaining({ opType: 'presence.check_out', signature: expect.stringContaining('fake-signature') }),
+    ]);
+    expect(await database.views.presence.findByIncident('incident-local')).toEqual([
+      expect.objectContaining({ centerId: 'center-local-1', role: 'volunteer', status: 'checked_out' }),
+    ]);
+    expect(screen.getByText('Roles: 0 active')).toBeTruthy();
+  });
+
+  it('degrades stale selected-center role, need, surplus, and confidence data textually', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    await seedPreparedIncident(database);
+    await appendSignedOperationAndMaterialize({
+      database,
+      signer: new FakeOperationSigner('stale-center-tests'),
+      input: {
+        actorKeyId: 'actor-key-1',
+        deviceId: 'device-1',
+        incidentId: 'incident-prepared',
+        cellId: 'cell-a7',
+        entityId: 'center-stale-1',
+        opType: 'work_center.create',
+        payload: {
+          name: 'Stale logistics point',
+          centerType: 'Supply point',
+          initialNeed: 'Water',
+          confidence: 'local estimate',
+          surplus: 'blankets reported',
+          roleCount: 3,
+          staleFields: ['confidence', 'roles', 'need', 'surplus'],
+        },
+        hlc: '2026-06-29T09:02:00.000Z-0002-device-1',
+        createdAtDevice: '2026-06-29T09:02:00.000Z',
+      },
+    });
+
+    const { screen } = await renderLiveOperations({ database, initialIncidentId: 'incident-prepared' });
+
+    await waitFor(() => expect(screen.getByText('Stale center data: confidence, roles, need, surplus need verification before action')).toBeTruthy());
+
+    expect(screen.getByText('Confidence: local estimate — stale, verify before acting')).toBeTruthy();
+    expect(screen.getByText('Need: Water — stale, verify before acting')).toBeTruthy();
+    expect(screen.getByText('Surplus: blankets reported — stale, verify before acting')).toBeTruthy();
+    expect(screen.getByText('Roles: 3 active — stale, verify before acting')).toBeTruthy();
+    expect(screen.queryByText('Freshness: local pending')).toBeNull();
+  });
+
+  it('explains when a requested incident is not available locally while offline', async () => {
+    const { screen } = await renderLiveOperations({ initialIncidentId: 'incident-missing' });
+
+    await waitFor(() => expect(screen.getByText('Incident incident-missing is not available locally for offline use.')).toBeTruthy());
+
+    expect(screen.getByText('Prepare this incident and cell before deployment or reconnect to fetch it.')).toBeTruthy();
+    expect(screen.queryByText('Operational data is local pending')).toBeNull();
+    expect(screen.queryByText('Operational data is fresh')).toBeNull();
+  });
 });
