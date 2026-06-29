@@ -3,12 +3,12 @@
 import { render } from '@testing-library/react-native';
 import { Theme, TamaguiProvider } from 'tamagui';
 
-import { OperationalScreensGallery } from '@/features/operations/screens';
-import { centerSummary, recommendationRows } from '@/features/operations/mockData';
+import DesignSystemScreen from '@/app/design-system';
+import VisualAuditRoute from '@/app/visual-audit';
 import { OperationalThemeProvider } from '@/shared/theme';
-import { tamaguiConfig } from '../../tamagui.config';
-import DesignSystemScreen from './design-system';
-import VisualAuditRoute from './visual-audit';
+import { tamaguiConfig } from '../../../tamagui.config';
+import { centerSummary, recommendationRows } from './mockData';
+import { OperationalScreensGallery } from './screens';
 
 jest.mock('expo-router', () => ({
   useLocalSearchParams: () => ({ screen: 'selected-center', theme: 'day' }),
