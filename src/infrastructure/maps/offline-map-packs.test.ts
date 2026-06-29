@@ -75,6 +75,19 @@ describe('offline map pack foundation', () => {
     expect((await repository.findByIncident('incident-1')).map((pack) => pack.packId).sort()).toEqual(['incident-1:cell-a', 'incident-1:cell-b']);
   });
 
+  it('recreates native MapLibre packs when retrying a failed pack', async () => {
+    const repository = new InMemoryMapPackRepository();
+    const adapter = { createPack: jest.fn().mockResolvedValue(undefined), listPacks: jest.fn(), deletePack: jest.fn() };
+    const service = new OfflineMapPackService(repository, { adapter, styleURL: 'maplibre://style/retry', minZoom: 8, maxZoom: 13 });
+    const failed = await service.queuePack({ incidentId: 'incident-1', cellId: 'cell-b', bounds: downloadedPack.bounds, estimatedBytes: 20000 });
+    adapter.createPack.mockClear();
+
+    await service.markFailed(failed.packId, 'network lost');
+    await service.retryPack(failed.packId);
+
+    expect(adapter.createPack).toHaveBeenCalledWith({ packId: 'incident-1:cell-b', styleURL: 'maplibre://style/retry', bounds: downloadedPack.bounds, minZoom: 8, maxZoom: 13 });
+  });
+
   it('protects the active operational pack from accidental cleanup', async () => {
     const repository = new InMemoryMapPackRepository([downloadedPack, { ...downloadedPack, packId: 'incident-2:cell-a', incidentId: 'incident-2' }]);
     const service = new OfflineMapPackService(repository, { activeIncidentId: 'incident-1', activeCellId: 'cell-a' });
@@ -101,6 +114,7 @@ describe('offline map pack foundation', () => {
 
   it('resolves offline rendering coverage separately from operational data freshness', () => {
     expect(resolveMapRenderState({ pack: downloadedPack, networkAvailable: false })).toEqual({ coverage: 'offline', indicator: 'Offline map available' });
+    expect(resolveMapRenderState({ pack: { ...downloadedPack, state: 'update_recommended' }, networkAvailable: false })).toEqual({ coverage: 'offline', indicator: 'Offline map available — update recommended' });
     expect(resolveMapRenderState({ pack: { ...downloadedPack, state: 'partial', progress: 0.4 }, networkAvailable: false })).toEqual({ coverage: 'partial', indicator: 'Partial offline map coverage' });
     expect(resolveMapAndOperationFreshness({ pack: downloadedPack, operationFreshness: 'stale', networkAvailable: false })).toEqual({
       mapCoverage: 'offline',
@@ -108,5 +122,59 @@ describe('offline map pack foundation', () => {
       operationFreshness: 'stale',
       operationFreshnessLabel: 'Operational data is stale',
     });
+  });
+
+  it('separates local and unavailable packs when map preparation opens offline', async () => {
+    const repository = new InMemoryMapPackRepository([
+      downloadedPack,
+      {
+        ...downloadedPack,
+        packId: 'incident-1:cell-b',
+        cellId: 'cell-b',
+        state: 'partial',
+        progress: 0.35,
+        downloadedBytes: 14700,
+      },
+      {
+        ...downloadedPack,
+        packId: 'incident-1:cell-c',
+        cellId: 'cell-c',
+        state: 'failed',
+        progress: 0,
+        downloadedBytes: 0,
+      },
+    ]);
+    const service = new OfflineMapPackService(repository);
+
+    const preparation = await service.resolvePreparationCoverage({
+      incidentId: 'incident-1',
+      requestedCellIds: ['cell-a', 'cell-b', 'cell-c', 'cell-d'],
+      networkAvailable: false,
+    });
+
+    expect(preparation.availableLocalPacks.map((pack) => pack.cellId)).toEqual(['cell-a', 'cell-b']);
+    expect(preparation.unavailablePacks.map((pack) => pack.cellId)).toEqual(['cell-c', 'cell-d']);
+    expect(preparation.canContinue).toBe(true);
+    expect(preparation.continueCellIds).toEqual(['cell-a', 'cell-b']);
+    expect(preparation.explanation).toBe('Network unavailable. Continue only with locally available coverage: cell-a, cell-b.');
+  });
+
+  it('does not treat failed or unavailable packs as usable local coverage because stale counters remain', async () => {
+    const repository = new InMemoryMapPackRepository([
+      { ...downloadedPack, packId: 'incident-1:cell-failed', cellId: 'cell-failed', state: 'failed', progress: 0.9, downloadedBytes: 36000 },
+      { ...downloadedPack, packId: 'incident-1:cell-missing', cellId: 'cell-missing', state: 'not_available', progress: 1, downloadedBytes: 42000 },
+      { ...downloadedPack, packId: 'incident-1:cell-update', cellId: 'cell-update', state: 'update_recommended', progress: 1, downloadedBytes: 42000 },
+    ]);
+    const service = new OfflineMapPackService(repository);
+
+    const preparation = await service.resolvePreparationCoverage({
+      incidentId: 'incident-1',
+      requestedCellIds: ['cell-failed', 'cell-missing', 'cell-update'],
+      networkAvailable: false,
+    });
+
+    expect(preparation.availableLocalPacks.map((pack) => pack.cellId)).toEqual(['cell-update']);
+    expect(preparation.unavailablePacks.map((pack) => pack.cellId)).toEqual(['cell-failed', 'cell-missing']);
+    expect(preparation.continueCellIds).toEqual(['cell-update']);
   });
 });

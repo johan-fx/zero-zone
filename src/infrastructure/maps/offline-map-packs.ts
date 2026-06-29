@@ -34,6 +34,21 @@ export type MapRenderState = {
 
 export type OperationFreshness = 'fresh' | 'degraded' | 'stale' | 'missing';
 
+export type MapPreparationUnavailablePack = {
+  incidentId: string;
+  cellId: string;
+  state: MapPackLifecycleState;
+  reason: string;
+};
+
+export type MapPreparationCoverage = {
+  availableLocalPacks: MapPackMetadata[];
+  unavailablePacks: MapPreparationUnavailablePack[];
+  canContinue: boolean;
+  continueCellIds: string[];
+  explanation: string;
+};
+
 export type MapPackRepository = {
   upsert(pack: MapPackMetadata): Promise<void>;
   findByPackId(packId: string): Promise<MapPackMetadata | null>;
@@ -157,6 +172,13 @@ export class OfflineMapPackService {
     };
 
     await this.repository.upsert(nextPack);
+    await this.options.adapter?.createPack({
+      packId: nextPack.packId,
+      styleURL: this.options.styleURL ?? 'maplibre://offline-pack',
+      bounds: nextPack.bounds,
+      minZoom: this.options.minZoom ?? 0,
+      maxZoom: this.options.maxZoom ?? 16,
+    });
 
     return nextPack;
   }
@@ -184,6 +206,12 @@ export class OfflineMapPackService {
     return { deleted: true, requiresConfirmation: false };
   }
 
+  async resolvePreparationCoverage(input: { incidentId: string; requestedCellIds: string[]; networkAvailable: boolean }): Promise<MapPreparationCoverage> {
+    const packs = await this.repository.findByIncident(input.incidentId);
+
+    return resolveMapPreparationCoverage({ ...input, packs });
+  }
+
   private async requirePack(packId: string): Promise<MapPackMetadata> {
     const pack = await this.repository.findByPackId(packId);
 
@@ -196,7 +224,11 @@ export class OfflineMapPackService {
 }
 
 export function resolveMapRenderState(input: { pack: MapPackMetadata | null; networkAvailable: boolean }): MapRenderState {
-  if (input.pack?.state === 'downloaded') {
+  if (input.pack?.state === 'downloaded' || input.pack?.state === 'update_recommended') {
+    if (input.pack.state === 'update_recommended') {
+      return { coverage: input.networkAvailable ? 'online' : 'offline', indicator: input.networkAvailable ? 'Online map available — update recommended' : 'Offline map available — update recommended' };
+    }
+
     return { coverage: input.networkAvailable ? 'online' : 'offline', indicator: input.networkAvailable ? 'Online map available' : 'Offline map available' };
   }
 
@@ -231,4 +263,52 @@ function createPackId(incidentId: string, cellId: string): string {
 
 function isNativePackWithId(pack: unknown, packId: string): boolean {
   return Boolean(pack && typeof pack === 'object' && 'packId' in pack && pack.packId === packId);
+}
+
+export function isLocallyUsableMapPack(pack: MapPackMetadata): boolean {
+  return pack.state === 'downloaded' || pack.state === 'partial' || pack.state === 'update_recommended';
+}
+
+export function resolveMapPreparationCoverage(input: { incidentId: string; packs: readonly MapPackMetadata[]; requestedCellIds: string[]; networkAvailable: boolean }): MapPreparationCoverage {
+  const packsByCell = new Map(input.packs.map((pack) => [pack.cellId, pack]));
+  const availableLocalPacks: MapPackMetadata[] = [];
+  const unavailablePacks: MapPreparationUnavailablePack[] = [];
+
+  for (const cellId of input.requestedCellIds) {
+    const pack = packsByCell.get(cellId);
+
+    if (pack && isLocallyUsableMapPack(pack)) {
+      availableLocalPacks.push(pack);
+      continue;
+    }
+
+    unavailablePacks.push({
+      incidentId: input.incidentId,
+      cellId,
+      state: pack?.state ?? 'not_available',
+      reason: input.networkAvailable ? 'Download required.' : 'Network unavailable and no usable local coverage exists.',
+    });
+  }
+
+  const continueCellIds = input.networkAvailable ? input.requestedCellIds : availableLocalPacks.map((pack) => pack.cellId);
+
+  return {
+    availableLocalPacks,
+    unavailablePacks,
+    canContinue: continueCellIds.length > 0,
+    continueCellIds,
+    explanation: resolvePreparationExplanation(input.networkAvailable, continueCellIds),
+  };
+}
+
+function resolvePreparationExplanation(networkAvailable: boolean, continueCellIds: string[]): string {
+  if (networkAvailable) {
+    return 'Network available. Missing packs can be downloaded before continuing.';
+  }
+
+  if (continueCellIds.length === 0) {
+    return 'Network unavailable. No local map coverage is available for the requested cells.';
+  }
+
+  return `Network unavailable. Continue only with locally available coverage: ${continueCellIds.join(', ')}.`;
 }

@@ -14,6 +14,16 @@ export type WorkCenterMaterializedView = {
   incidentId: string;
   cellId: string;
   name: string;
+  centerType?: string;
+  description?: string;
+  priority?: string;
+  initialNeed?: string;
+  confidence?: string;
+  risk?: string;
+  surplus?: string;
+  roleCount?: number;
+  staleFields?: string[];
+  location?: { latitude: number; longitude: number };
   status: 'pending';
   activationState: 'requires_evidence';
   syncState: string;
@@ -109,6 +119,16 @@ export function materializeOperations(operations: readonly SignedOperation[]): M
           incidentId: operation.incidentId,
           cellId: operation.cellId,
           name: stringValue(payload.name, 'Pending work center'),
+          centerType: stringValue(payload.centerType, 'Work center'),
+          description: stringValue(payload.description, ''),
+          priority: stringValue(payload.priority, 'normal'),
+          initialNeed: stringValue(payload.initialNeed, 'Water'),
+          confidence: stringValue(payload.confidence, 'local estimate'),
+          risk: stringValue(payload.risk, 'precaution'),
+          surplus: stringValue(payload.surplus, 'none reported'),
+          roleCount: numberValue(payload.roleCount, 0),
+          staleFields: stringArrayValue(payload.staleFields),
+          location: locationValue(payload.location),
           status: 'pending',
           activationState: 'requires_evidence',
           syncState: operation.syncState,
@@ -117,18 +137,20 @@ export function materializeOperations(operations: readonly SignedOperation[]): M
         break;
       case 'presence.check_in':
       case 'presence.pause':
-      case 'presence.check_out':
+      case 'presence.check_out': {
+        const existing = presence.get(operation.entityId);
         presence.set(operation.entityId, {
           presenceId: operation.entityId,
           incidentId: operation.incidentId,
           cellId: operation.cellId,
-          actorId: stringValue(payload.actorId, operation.actorKeyId),
-          role: stringValue(payload.role, 'volunteer'),
-          centerId: stringValue(payload.centerId, ''),
+          actorId: stringValue(payload.actorId, existing?.actorId ?? operation.actorKeyId),
+          role: stringValue(payload.role, existing?.role ?? 'volunteer'),
+          centerId: stringValue(payload.centerId, existing?.centerId ?? ''),
           status: resolvePresenceStatus(operation.opType),
           updatedAt: operation.createdAtDevice,
         });
         break;
+      }
       case 'resource_report.create':
         resourceReports.set(operation.entityId, {
           reportId: operation.entityId,
@@ -179,7 +201,7 @@ export function materializeOperations(operations: readonly SignedOperation[]): M
     }
   }
 
-  const firstOperation = acceptedOperations[0];
+  const summaries = createLocalSummaries(acceptedOperations, Array.from(presence.values()));
 
   return {
     incidents: Array.from(incidents.values()),
@@ -188,19 +210,32 @@ export function materializeOperations(operations: readonly SignedOperation[]): M
     resourceReports: Array.from(resourceReports.values()),
     dispatchEvents: Array.from(dispatchEvents.values()),
     sosSignals: Array.from(sosSignals.values()),
-    localSummaries: firstOperation
-      ? [
-          {
-            summaryId: `${firstOperation.incidentId}:${firstOperation.cellId}`,
-            incidentId: firstOperation.incidentId,
-            cellId: firstOperation.cellId,
-            operationFreshness: 'local_pending',
-            pendingOperations: acceptedOperations.filter((operation) => operation.syncState === 'pending').length,
-            roleCounts: countRoles(Array.from(presence.values())),
-          },
-        ]
-      : [],
+    localSummaries: summaries,
   };
+}
+
+function createLocalSummaries(operations: readonly SignedOperation[], presence: PresenceView[]): LocalSummaryView[] {
+  const summaries = new Map<string, LocalSummaryView>();
+
+  for (const operation of operations) {
+    const summaryId = `${operation.incidentId}:${operation.cellId}`;
+    const existing = summaries.get(summaryId);
+
+    summaries.set(summaryId, {
+      summaryId,
+      incidentId: operation.incidentId,
+      cellId: operation.cellId,
+      operationFreshness: 'local_pending',
+      pendingOperations: (existing?.pendingOperations ?? 0) + (operation.syncState === 'pending' ? 1 : 0),
+      roleCounts: existing?.roleCounts ?? {},
+    });
+  }
+
+  for (const summary of summaries.values()) {
+    summary.roleCounts = countRoles(presence.filter((session) => session.incidentId === summary.incidentId && session.cellId === summary.cellId));
+  }
+
+  return Array.from(summaries.values());
 }
 
 function dedupeByOpId(operations: readonly SignedOperation[]): SignedOperation[] {
@@ -245,4 +280,22 @@ function stringValue(value: unknown, fallback: string): string {
 
 function numberValue(value: unknown, fallback: number): number {
   return typeof value === 'number' ? value : fallback;
+}
+
+function stringArrayValue(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const strings = value.filter((item): item is string => typeof item === 'string');
+
+  return strings.length > 0 ? strings : undefined;
+}
+
+function locationValue(value: unknown): { latitude: number; longitude: number } | undefined {
+  const record = asRecord(value);
+  const latitude = record.latitude ?? record.lat;
+  const longitude = record.longitude ?? record.lng;
+
+  return typeof latitude === 'number' && typeof longitude === 'number' ? { latitude, longitude } : undefined;
 }

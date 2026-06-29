@@ -1,7 +1,7 @@
 import { useLocalSearchParams } from 'expo-router';
 import { useEffect } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ScrollView, YStack } from 'tamagui';
+import { ScrollView, Text, YStack } from 'tamagui';
 
 import { resolveVisualAuditScreenId, resolveVisualAuditThemeId, visualAuditScreenConfigs } from '@/features/operations/visualAudit';
 import { useOperationalTheme } from '@/shared/theme';
@@ -22,6 +22,9 @@ export default function VisualAuditRoute() {
     <SafeAreaView edges={['top', 'bottom']} style={{ backgroundColor: colors.background, flex: 1 }}>
       <ScrollView bg="$background" testID={`visual-audit-${screenId}-${theme}`}>
         <YStack bg="$background" minH="100%" p="$4">
+          <Text color="$primary" fontSize="$sm" fontWeight="900">
+            Visual audit: mock-backed {screenId}
+          </Text>
           {themeName === expectedThemeName ? screenConfig.render() : null}
         </YStack>
       </ScrollView>
