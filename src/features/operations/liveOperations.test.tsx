@@ -12,7 +12,9 @@ import { LiveOperationalEntryScreen } from './liveOperations';
 
 async function renderLiveOperations(input: {
   database?: ReturnType<typeof createInMemoryLocalOperationDatabase>;
+  devScenario?: 'missing-local-data' | 'stale-center-data' | 'map-preparation';
   initialIncidentId?: string;
+  networkAvailable?: boolean;
   signingKey?: string;
 } = {}) {
   const database = input.database ?? createInMemoryLocalOperationDatabase();
@@ -22,7 +24,7 @@ async function renderLiveOperations(input: {
     <OperationalThemeProvider>
       <TamaguiProvider config={tamaguiConfig} defaultTheme="light">
         <Theme name="light">
-          <LiveOperationalEntryScreen database={database} initialIncidentId={input.initialIncidentId} signer={signer} />
+          <LiveOperationalEntryScreen database={database} devScenario={input.devScenario} initialIncidentId={input.initialIncidentId} networkAvailable={input.networkAvailable} signer={signer} />
         </Theme>
       </TamaguiProvider>
     </OperationalThemeProvider>,
@@ -83,6 +85,7 @@ describe('live operational flow wiring', () => {
     expect(screen.getByText('Offline map available')).toBeTruthy();
     expect(screen.getByText('Operational data is local pending')).toBeTruthy();
     expect(screen.getByText('Outbox: 1 pending')).toBeTruthy();
+    expect(screen.getByText('Local outbox: 1 pending')).toBeTruthy();
   });
 
   it('creates an unverified offline incident as a pending signed outbox operation', async () => {
@@ -96,6 +99,7 @@ describe('live operational flow wiring', () => {
     expect(operations).toEqual([expect.objectContaining({ opType: 'incident.create', syncState: 'pending', signature: expect.stringContaining('fake-signature') })]);
     expect(screen.getByText('Status: unverified')).toBeTruthy();
     expect(screen.getByText('Outbox: 1 pending')).toBeTruthy();
+    expect(screen.getByText('Local outbox: 1 pending')).toBeTruthy();
   });
 
   it('creates an offline work center with immediate pending map and selected-panel visibility', async () => {
@@ -164,16 +168,16 @@ describe('live operational flow wiring', () => {
     await pressAndFlush(screen.getByText('Create local incident'));
     await waitFor(() => expect(screen.getByText('Incident: Local flood response')).toBeTruthy());
     await pressAndFlush(screen.getByText('Create pending center'));
-    await waitFor(() => expect(screen.getByText('Check in')).toBeTruthy());
-    await pressAndFlush(screen.getByText('Check in'));
+    await waitFor(() => expect(screen.getByTestId('presence_check_in_button')).toBeTruthy());
+    await pressAndFlush(screen.getByTestId('presence_check_in_button'));
     await waitFor(() => expect(screen.getByText('Tracking: active')).toBeTruthy());
     expect(screen.getByText('Roles: 1 active')).toBeTruthy();
 
-    await pressAndFlush(screen.getByText('Pause tracking'));
+    await pressAndFlush(screen.getByTestId('presence_pause_button'));
     await waitFor(() => expect(screen.getByText('Tracking: paused')).toBeTruthy());
     expect(screen.getByText('Roles: 1 paused — stale, verify before acting')).toBeTruthy();
 
-    await pressAndFlush(screen.getByText('Check out'));
+    await pressAndFlush(screen.getByTestId('presence_check_out_button'));
     await waitFor(() => expect(screen.getByText('Tracking: stopped')).toBeTruthy());
 
     const operations = await database.syncOps.findByIncident('incident-local');
@@ -227,6 +231,20 @@ describe('live operational flow wiring', () => {
     expect(screen.queryByText('Freshness: local pending')).toBeNull();
   });
 
+  it('seeds a stale-center dev scenario for deterministic E2E coverage', async () => {
+    const { screen } = await renderLiveOperations({ devScenario: 'stale-center-data' });
+
+    await waitFor(() => expect(screen.getByText('Incident: Prepared stale response')).toBeTruthy());
+
+    expect(screen.getAllByText('Stale logistics point')).toHaveLength(2);
+    expect(screen.getByText('State: pending')).toBeTruthy();
+    expect(screen.getByText('Stale center data: confidence, roles, need, surplus need verification before action')).toBeTruthy();
+    expect(screen.getByText('Confidence: local estimate — stale, verify before acting')).toBeTruthy();
+    expect(screen.getByText('Need: Water — stale, verify before acting')).toBeTruthy();
+    expect(screen.getByText('Surplus: blankets reported — stale, verify before acting')).toBeTruthy();
+    expect(screen.getByText('Roles: 3 active — stale, verify before acting')).toBeTruthy();
+  });
+
   it('explains when a requested incident is not available locally while offline', async () => {
     const { screen } = await renderLiveOperations({ initialIncidentId: 'incident-missing' });
 
@@ -235,5 +253,27 @@ describe('live operational flow wiring', () => {
     expect(screen.getByText('Prepare this incident and cell before deployment or reconnect to fetch it.')).toBeTruthy();
     expect(screen.queryByText('Operational data is local pending')).toBeNull();
     expect(screen.queryByText('Operational data is fresh')).toBeNull();
+  });
+
+  it('seeds a missing-local-data dev scenario for deterministic E2E coverage', async () => {
+    const { screen } = await renderLiveOperations({ devScenario: 'missing-local-data' });
+
+    await waitFor(() => expect(screen.getByText('Incident incident-missing is not available locally for offline use.')).toBeTruthy());
+
+    expect(screen.getByText('Prepare this incident and cell before deployment or reconnect to fetch it.')).toBeTruthy();
+    expect(screen.queryByText('Operational data is local pending')).toBeNull();
+  });
+
+  it('shows offline map-preparation packs separately and allows continuing only with local coverage', async () => {
+    const { screen } = await renderLiveOperations({ devScenario: 'map-preparation', networkAvailable: false });
+
+    await waitFor(() => expect(screen.getByText('Incident: Map preparation drill')).toBeTruthy());
+
+    expect(screen.getByTestId('map_preparation_panel')).toBeTruthy();
+    expect(screen.getByText('Local available packs: cell-a7, cell-a8')).toBeTruthy();
+    expect(screen.getByText('Unavailable packs: cell-a9, cell-b1')).toBeTruthy();
+    expect(screen.getByText('Network unavailable. Continue only with locally available coverage: cell-a7, cell-a8.')).toBeTruthy();
+    expect(screen.getByTestId('continue_with_local_coverage_button')).toBeEnabled();
+    expect(screen.getByText('Continuing cells: cell-a7, cell-a8')).toBeTruthy();
   });
 });

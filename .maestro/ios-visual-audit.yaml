@@ -1,8 +1,22 @@
 appId: app.zonacero.mobile
 name: Visual audit access smoke
 ---
-- launchApp:
-    clearState: true
+- launchApp
+- runFlow:
+    when:
+      visible: "DEVELOPMENT SERVERS"
+    commands:
+      - tapOn:
+          point: "50%,22%"
+- runFlow:
+    when:
+      visible: "Close"
+    commands:
+      - tapOn: "Close"
+- extendedWaitUntil:
+    visible:
+      id: "live-operational-entry"
+    timeout: 30000
 - assertVisible: "Live operational entry"
 - tapOn:
     id: "open-visual-audit"

@@ -1,9 +1,9 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMemo } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Paragraph, Text, XStack, YStack } from 'tamagui';
+import { Paragraph, ScrollView, Text, XStack, YStack } from 'tamagui';
 
-import { LiveOperationalEntryScreen } from '@/features/operations/liveOperations';
+import { LiveOperationalEntryScreen, resolveLiveOperationsDevScenario } from '@/features/operations/liveOperations';
 import { createInMemoryLocalOperationDatabase } from '@/infrastructure/local-db/local-db';
 import { ThemePreference, useOperationalTheme } from '@/shared/theme';
 import { ActionButton, OperationalCard, StatusBadge } from '@/shared/ui';
@@ -11,13 +11,16 @@ import { ActionButton, OperationalCard, StatusBadge } from '@/shared/ui';
 const themeOptions: ThemePreference[] = ['system', 'day', 'night'];
 
 export default function HomeScreen() {
+  const params = useLocalSearchParams<{ scenario?: string }>();
   const router = useRouter();
   const database = useMemo(() => createInMemoryLocalOperationDatabase(), []);
+  const devScenario = resolveLiveOperationsDevScenario(params.scenario);
   const { preference, setPreference, themeName } = useOperationalTheme();
 
   return (
     <SafeAreaView style={{ flex: 1 }} edges={['bottom']}>
-      <YStack bg="$background" grow={1}>
+      <ScrollView bg="$background" testID="home-scroll">
+      <YStack bg="$background" grow={1} pb="$6">
         <OperationalCard rounded={0} variant="default" px="$4" py="$3">
           <YStack gap="$3">
             <XStack items="center" justify="space-between">
@@ -64,8 +67,9 @@ export default function HomeScreen() {
           </YStack>
         </OperationalCard>
 
-        <LiveOperationalEntryScreen database={database} />
+        <LiveOperationalEntryScreen database={database} devScenario={devScenario} />
       </YStack>
+      </ScrollView>
     </SafeAreaView>
   );
 }

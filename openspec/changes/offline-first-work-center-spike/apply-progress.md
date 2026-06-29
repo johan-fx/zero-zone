@@ -10,6 +10,7 @@
 - Corrective rerun: Slice A gatekeeper gaps closed for RxDB collection creation/repositories, durable signed outbox ordering, MapLibre adapter integration, and repository-seam migration/reset tests.
 - Slice B rerun: live operational entry now creates local incident/work-center operations through the signed outbox/materializer seam, renders pending/offline state, prevents false activation, and preserves mock-backed design-system/visual-audit preview surfaces.
 - Verification remediation: five critical verify gaps are now covered by strict-TDD corrective tests and implementation for presence check-in/pause/check-out, stale selected-center degradation, missing-local-data offline explanation, and offline map-preparation local-vs-unavailable pack separation.
+- Dev-build E2E remediation: Maestro now runs against `app.zonacero.mobile` on the installed iOS dev build and covers the offline-first work-center spike end to end via stable testIDs plus a dedicated `operational-e2e` route for deterministic missing/stale/map-preparation scenarios.
 
 ## TDD Cycle Evidence
 
@@ -36,6 +37,8 @@
 | Corrective 3.1/4.1 stale selected-center data | `src/features/operations/liveOperations.test.tsx` | RNTL integration | ✅ Baseline before edits: 2 suites / 10 tests passed | ✅ Written first; failed on missing stale center warning and stale field labels | ✅ Focused corrective run passed | ✅ 1 stale multi-field case covers role, need, surplus, and confidence textual degradation | ✅ Added minimal `staleFields` metadata through materialized center views |
 | Corrective local-operation-store missing data | `src/features/operations/liveOperations.test.tsx` | RNTL integration | ✅ Baseline before edits: 2 suites / 10 tests passed | ✅ Written first; failed because offline requested incident still said no local incident selected | ✅ Focused corrective run passed | ✅ Missing requested incident case asserts explicit not-available-local guidance and no fresh/local-pending implication | ✅ Kept behavior scoped to live route and local state only |
 | Corrective offline-map-packs preparation | `src/infrastructure/maps/offline-map-packs.test.ts` | Unit/service | ✅ Baseline before edits: 2 suites / 10 tests passed | ✅ Written first; failed on missing `resolvePreparationCoverage()` | ✅ Focused corrective run passed | ✅ Offline preparation case separates downloaded/partial local packs from failed/missing unavailable packs and restricts continuation to local coverage | ✅ Added pure service method; no native MapLibre behavior changed |
+| Corrective Maestro E2E scenario route | `src/features/operations/operationalE2eRoute.test.tsx` | RNTL route integration | ✅ Baseline before edits: `liveOperations` focused tests passed | ✅ Written first; failed on missing `src/app/operational-e2e.tsx` | ✅ Focused route test passed | ✅ Route bridges deep-link `scenario` params to missing-local-data/stale-center/map-preparation support UI | ✅ Kept route dev/spike-only and reused live local operation seams |
+| Corrective Maestro offline spike flow | `.maestro/ios-smoke.yaml`, `.maestro/ios-visual-audit.yaml` | iOS dev-build E2E | ✅ Real dev build `app.zonacero.mobile` installed in booted simulator | ✅ Initial Maestro runs failed on dev-client launcher handling, stale smoke scope, and clipped/non-scrollable live content | ✅ `pnpm maestro:smoke:ios`, `pnpm maestro:offline-spike:ios`, and `pnpm visual:audit:check` passed | ✅ Covers launch/live entry, incident, center, presence, missing data, stale data, map prep, design-system, and visual-audit separation | ✅ Changed home/live layout to a single scrollable route surface and used stable testIDs/deep links |
 
 ## Tests Run
 
@@ -70,6 +73,18 @@
 | `pnpm typecheck` | ✅ Corrective validation | Passed after adding presence controls, `staleFields`, and map-preparation coverage types. |
 | `pnpm test` | ✅ Corrective full validation | 12 suites / 55 tests passed. |
 | `pnpm expo config --type public` | ✅ Corrective config smoke | Public Expo config still resolves app id, SQLite, and MapLibre plugin. |
+| `pnpm test -- src/features/operations/liveOperations.test.tsx --runInBand` | ❌ Expected E2E support RED | Failed on missing presence button testIDs, missing dev scenarios, and missing map-preparation panel support. |
+| `pnpm test -- src/features/operations/liveOperations.test.tsx --runInBand` | ✅ E2E support GREEN | 1 suite / 11 tests passed after dev scenarios, stable presence testIDs, and map-preparation panel. |
+| `pnpm test -- src/features/operations/operationalE2eRoute.test.tsx --runInBand` | ❌ Expected route RED | Failed because `@/app/operational-e2e` did not exist. |
+| `pnpm test -- src/features/operations/operationalE2eRoute.test.tsx --runInBand` | ✅ Route GREEN | 1 suite / 1 test passed after adding the deterministic E2E route. |
+| `pnpm test -- src/features/operations/liveOperations.test.tsx src/features/operations/previewRoutes.test.tsx --runInBand` | ✅ Focused route/UI regression | 2 suites / 15 tests passed after making home/live content scrollable. |
+| `pnpm test` | ✅ Full validation | 13 suites / 59 tests passed. |
+| `pnpm typecheck` | ✅ Full validation | Passed. |
+| `pnpm expo config --type public` | ✅ Config validation | Public config still resolves bundle id `app.zonacero.mobile`, SQLite, and MapLibre plugin. |
+| `pnpm maestro:smoke:ios` | ❌ Expected E2E REDs during remediation | Exposed dev-client launcher handling, non-scrollable home/live layout, clipped assertions, and root deep-link limitations. |
+| `pnpm maestro:smoke:ios` | ✅ E2E GREEN | Passed against booted iOS simulator/dev build `app.zonacero.mobile`; covers all required offline-first spike scenarios. |
+| `pnpm maestro:offline-spike:ios` | ✅ E2E GREEN | Alias script passed against the same `.maestro/ios-smoke.yaml` flow. |
+| `pnpm visual:audit:check` | ✅ E2E GREEN | Passed visual-audit mock-backed route coverage after preserving dev-client cached server state. |
 
 ## Implementation Notes
 
@@ -92,16 +107,17 @@
 - Verification remediation added stale selected-center field degradation using materialized `staleFields` metadata, with role, need, surplus, and confidence labels marked as stale and non-actionable until verified.
 - Verification remediation added explicit offline missing-local-data messaging when a requested incident/cell is not available locally, without implying fresh or locally pending operational data exists.
 - Verification remediation added offline map-preparation planning that separates downloaded/partial local packs from failed/missing unavailable packs and restricts continuation to locally available coverage while offline.
+- E2E remediation added `src/app/operational-e2e.tsx` so Maestro can deep-link directly into deterministic live local-data scenarios without backend sync or hardware dependencies.
+- E2E remediation changed home/live layout to one scrollable route surface, added stable presence/control testIDs, and made visible local outbox text assertable on iOS.
+- Maestro flows now account for Expo dev-client launcher behavior: smoke can tap a listed development server when present, close the dev menu, and then deep-link into the operational E2E route; visual-audit avoids clearing dev-client cached server state.
 
 ## Deviations
 
 - RxDB v17 exposes `getRxStorageSQLiteTrial` in the installed package instead of the documented `getRxStorageSQLite`; Slice A uses the installed API with Expo SQLite async basics. This should be revisited before production hardening if a non-trial SQLite storage package is selected.
-- No real native dev build was executed in this apply phase; `pnpm expo config --type public` is the dev-build smoke note available in this environment. Real device/simulator validation remains for the orchestrator/verify phase.
-- Corrective rerun still did not execute a real dev-build/device smoke because this executor has no confirmed booted simulator/device or EAS credentials in the launch context; native validation remains environment-limited and must be performed by verify/orchestrator on a configured dev-build target.
+- Real iOS dev-build Maestro validation was executed against the booted simulator with bundle id `app.zonacero.mobile`; flows require a running/cached Expo dev-client server and may show the launcher if the cached server is cleared.
 - No commits were created despite task 2.4 mentioning commit units, because the executor launch explicitly reserved commit/push/PR work for the orchestrator.
 - `docs/zona_cero_telegram_web_ui_matrix.md` remains unrelated untracked work and was not modified for PR #1.
-- Slice B does not execute a real native dev-build smoke in this environment because the simulator does not have the `app.zonacero.mobile` dev build installed; the Maestro failure is environment/setup, not a Jest/typecheck failure.
-- `MapLibreOperationalMap` is represented by a live MapLibre state surface/testID and render-state indicator in JS; real native MapLibre rendering still requires the documented dev-build smoke.
+- `MapLibreOperationalMap` remains represented by a live MapLibre state surface/testID and render-state indicator in JS; backend sync and real map tile download remain out of scope for this spike.
 
 ## Out of Scope Preserved
 

@@ -14,8 +14,17 @@ These checks cover Slice B live operational entry, pending/offline indicators, p
 ```bash
 pnpm expo config --type public
 pnpm maestro:smoke:ios
+pnpm maestro:offline-spike:ios
 pnpm visual:audit:check
 ```
+
+## Current Maestro evidence
+
+- 2026-06-29: `pnpm maestro:smoke:ios` ✅ passed on booted iOS simulator `iPhone 17 - iOS 26.5` against bundle id `app.zonacero.mobile`.
+- 2026-06-29: `pnpm maestro:offline-spike:ios` ✅ passed; this is an explicit alias for the offline-first spike coverage flow.
+- 2026-06-29: `pnpm visual:audit:check` ✅ passed on the same dev build.
+
+Covered scenarios: live entry launch, local incident creation, pending work center creation without false activation, aggregate/no-identity selected-center details, presence check-in/pause/check-out, missing local data explanation, stale center degradation, offline map-preparation local-vs-unavailable packs, design-system mock separation, and visual-audit mock separation.
 
 ## Manual native checks for verify/orchestrator
 
@@ -28,4 +37,4 @@ pnpm visual:audit:check
 
 ## Environment-limited note
 
-This executor cannot complete real device signing/native smoke without a booted simulator/device and installed dev build. The Maestro flows are committed as executable smoke coverage for a configured dev-build target.
+The iOS dev build is now installed and Maestro can run against it. The flows account for Expo dev-client launcher behavior by using cached development-server state and operational deep links; if the dev-client cache is cleared and no development server is listed, start Metro/dev-client again before running Maestro.
