@@ -35,7 +35,9 @@
           "resizeMode": "contain",
           "backgroundColor": "#07111F"
         }
-      ]
+      ],
+      "expo-sqlite",
+      "@maplibre/maplibre-react-native"
     ],
     "experiments": {
       "typedRoutes": true,
