@@ -1,5 +1,12 @@
 # Infrastructure
 
-Adapters for local storage, sync transport, maps, security, and native services will live here.
+Adapters for local storage, map packs, signed operations, security, sync transport, and native services live here.
 
-No RxDB, SQLite, MapLibre, Meshtastic, or backend client code is included in the boilerplate.
+Implemented foundations:
+
+- `security/` — signed operation contracts and signer seams.
+- `local-db/` — local operation/view repositories and RxDB SQLite storage factory.
+- `oplog/` — append-before-materialize outbox and idempotent materializers.
+- `maps/` — MapLibre offline pack metadata, lifecycle, and adapter seams.
+
+Backend sync transport, Meshtastic hardware integration, and full operational UI wiring are intentionally outside the Slice A foundation.

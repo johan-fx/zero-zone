@@ -3,11 +3,14 @@
 ## Status
 
 - Mode: Strict TDD
-- Current work unit: Slice A — native/offline foundation
-- PR boundary: PR #1 from `feature/offline-first-work-center-spike-slice-a` into tracker branch `feature/offline-first-work-center-spike`
-- Completed assigned tasks: 1.1, 1.2, 1.3, 1.4, 2.1, 2.2, 2.3, 2.4
-- Remaining tasks: Slice B tasks 3.1 through 4.4 remain untouched.
+- Current work unit: Slice B — operational flow wiring
+- PR boundary: PR #5 / Slice B from `feat/offline-first-operational-ui` into parent branch `feat/offline-first-map-packs` (feature-branch-chain)
+- Completed assigned tasks: 1.1, 1.2, 1.3, 1.4, 2.1, 2.2, 2.3, 2.4, 3.1, 3.2, 4.1, 4.2, 4.3, 4.4
+- Remaining tasks: None for the assigned Slice B work-unit; ready for SDD verify/orchestrator review.
 - Corrective rerun: Slice A gatekeeper gaps closed for RxDB collection creation/repositories, durable signed outbox ordering, MapLibre adapter integration, and repository-seam migration/reset tests.
+- Slice B rerun: live operational entry now creates local incident/work-center operations through the signed outbox/materializer seam, renders pending/offline state, prevents false activation, and preserves mock-backed design-system/visual-audit preview surfaces.
+- Verification remediation: five critical verify gaps are now covered by strict-TDD corrective tests and implementation for presence check-in/pause/check-out, stale selected-center degradation, missing-local-data offline explanation, and offline map-preparation local-vs-unavailable pack separation.
+- Dev-build E2E remediation: Maestro now runs against `app.zonacero.mobile` on the installed iOS dev build and covers the offline-first work-center spike end to end via stable testIDs plus a dedicated `operational-e2e` route for deterministic missing/stale/map-preparation scenarios.
 
 ## TDD Cycle Evidence
 
@@ -24,6 +27,18 @@
 | Corrective 1.2/2.2 | `src/infrastructure/local-db/local-db.test.ts` | Unit/repository seam | ✅ Baseline before edits: 4 infra suites / 16 tests passed | ✅ Written first; failed on missing `map_packs`, missing `createRxdbLocalDatabase`, and missing `createRxdbLocalOperationDatabase` | ✅ Focused corrective run passed | ✅ 4 added cases cover RxDB `addCollections`, RxDB-backed `sync_ops`/`incidents`/`work_centers`/`map_packs`, reset, and migration through repository seam | ✅ Kept RxDB imports lazy so Jest does not parse ESM-only RxDB dependencies during unit tests |
 | Corrective 2.2 | `src/infrastructure/oplog/outbox-service.test.ts` | Unit/repository seam | N/A (new service) | ✅ Written first; failed on missing `./outbox-service` | ✅ Focused corrective run passed | ✅ 2 cases prove signed append to `sync_ops` happens before materializing views and signing-unavailable blocks all writes | ✅ Service persists materialized views through the `LocalOperationDatabase` seam, not raw arrays |
 | Corrective 2.3 | `src/infrastructure/maps/offline-map-packs.test.ts` | Unit/adapter seam | ✅ Baseline before edits: 4 infra suites / 16 tests passed | ✅ Written first; failed on missing native adapter calls/status method | ✅ Focused corrective run passed | ✅ 2 added cases prove `createPack`, `deletePack`, and native status listing integration | ✅ Adapter remains optional so pure metadata tests stay deterministic |
+| 3.1 | `src/features/operations/liveOperations.test.tsx` | RNTL integration | ✅ Baseline before edits: 8 suites / 36 tests passed | ✅ Written first; failed on missing `./liveOperations` | ✅ Focused Slice B run passed | ✅ 4 cases: prepared incident entry, offline incident creation, offline center creation, false-activation/selected-center fields | ✅ Extracted command/state loaders and kept assertions user-visible |
+| 3.2 | `src/app/previewRoutes.test.tsx` | RNTL integration | ✅ Baseline before edits: 8 suites / 36 tests passed | ✅ Written first; failed on missing explicit mock-backed preview labels | ✅ Focused Slice B run passed | ✅ 4 cases: design-system mock label, visual-audit mock fixture, gallery mock data, mockData separation | ✅ Preview route labels make live vs mock separation explicit |
+| 4.1 | `src/features/operations/liveOperations.tsx`, materializer/local DB extensions | Integration/unit | ✅ Existing Slice A + preview baseline passed before production edits | ✅ RED coverage from 3.1 referenced missing live commands/screens | ✅ Focused Slice B run passed | ✅ Incident and center creation both append signed pending operations and materialize views; prepared incident reads local map pack state | ✅ `LiveOperationalEntryScreen` uses local DB/outbox seams and MapLibre render-state indicator while preserving preview components |
+| 4.2 | `src/app/_layout.tsx`, `src/app/index.tsx`, `src/app/visual-audit.tsx`, `src/app/design-system.tsx` | Route integration | ✅ Existing route/preview tests passed before production edits | ✅ RED coverage from 3.2 expected explicit mock-backed route separation | ✅ Focused Slice B run passed | ✅ Home is live operational entry; design-system and visual-audit expose mock-backed labels and content | ✅ Route titles and buttons separate live operational flow from previews/audit |
+| 4.3 | `.maestro/ios-smoke.yaml`, `.maestro/ios-visual-audit.yaml`, `dev-build-smoke.md` | E2E smoke/docs | ✅ Config smoke from Slice A passed before edits | ✅ Smoke coverage defined for pending/offline indicators and visual-audit access before native execution | ⚠️ Maestro attempted but device lacked installed `app.zonacero.mobile` dev build | ✅ Smoke flows cover incident pending, center pending, false activation, design preview, and all visual-audit capture targets | ✅ Documented dev-build signing/native checks and environment limitation |
+| 4.4 | All Slice B files and OpenSpec artifacts | Refactor/validation | ✅ Focused suite green before final validation | ➖ Validation/refactor task; no new behavior beyond Slice B contracts | ✅ `pnpm test`: 12 suites / 50 tests passed; `pnpm typecheck`: passed | ➖ Structural validation task | ✅ No commits created per executor instructions; out-of-scope items preserved |
+| Corrective 3.1/4.1 presence controls | `src/features/operations/liveOperations.test.tsx` | RNTL integration | ✅ Baseline before edits: 2 suites / 10 tests passed | ✅ Written first; failed on missing tracking labels and no signed presence actions from `Check in`; triangulation RED failed on missing active/paused role-count degradation | ✅ Focused corrective run passed: 2 suites / 15 tests | ✅ 2 cases cover signed `presence.check_in`, `presence.pause`, and `presence.check_out`, materialized presence status, active role count, paused degradation, and check-out removal | ✅ Reused signed outbox/materializer seam; no backend sync or identity exposure added |
+| Corrective 3.1/4.1 stale selected-center data | `src/features/operations/liveOperations.test.tsx` | RNTL integration | ✅ Baseline before edits: 2 suites / 10 tests passed | ✅ Written first; failed on missing stale center warning and stale field labels | ✅ Focused corrective run passed | ✅ 1 stale multi-field case covers role, need, surplus, and confidence textual degradation | ✅ Added minimal `staleFields` metadata through materialized center views |
+| Corrective local-operation-store missing data | `src/features/operations/liveOperations.test.tsx` | RNTL integration | ✅ Baseline before edits: 2 suites / 10 tests passed | ✅ Written first; failed because offline requested incident still said no local incident selected | ✅ Focused corrective run passed | ✅ Missing requested incident case asserts explicit not-available-local guidance and no fresh/local-pending implication | ✅ Kept behavior scoped to live route and local state only |
+| Corrective offline-map-packs preparation | `src/infrastructure/maps/offline-map-packs.test.ts` | Unit/service | ✅ Baseline before edits: 2 suites / 10 tests passed | ✅ Written first; failed on missing `resolvePreparationCoverage()` | ✅ Focused corrective run passed | ✅ Offline preparation case separates downloaded/partial local packs from failed/missing unavailable packs and restricts continuation to local coverage | ✅ Added pure service method; no native MapLibre behavior changed |
+| Corrective Maestro E2E scenario route | `src/features/operations/operationalE2eRoute.test.tsx` | RNTL route integration | ✅ Baseline before edits: `liveOperations` focused tests passed | ✅ Written first; failed on missing `src/app/operational-e2e.tsx` | ✅ Focused route test passed | ✅ Route bridges deep-link `scenario` params to missing-local-data/stale-center/map-preparation support UI | ✅ Kept route dev/spike-only and reused live local operation seams |
+| Corrective Maestro offline spike flow | `.maestro/ios-smoke.yaml`, `.maestro/ios-visual-audit.yaml` | iOS dev-build E2E | ✅ Real dev build `app.zonacero.mobile` installed in booted simulator | ✅ Initial Maestro runs failed on dev-client launcher handling, stale smoke scope, and clipped/non-scrollable live content | ✅ `pnpm maestro:smoke:ios`, `pnpm maestro:offline-spike:ios`, and `pnpm visual:audit:check` passed | ✅ Covers launch/live entry, incident, center, presence, missing data, stale data, map prep, design-system, and visual-audit separation | ✅ Changed home/live layout to a single scrollable route surface and used stable testIDs/deep links |
 
 ## Tests Run
 
@@ -42,6 +57,42 @@
 | `pnpm test -- src/infrastructure/security/operation-signer.test.ts src/infrastructure/local-db/local-db.test.ts src/infrastructure/oplog/materializer.test.ts src/infrastructure/oplog/outbox-service.test.ts src/infrastructure/maps/offline-map-packs.test.ts --runInBand` | ✅ Corrective focused validation | 5 suites / 23 tests passed. |
 | `pnpm test` | ✅ Corrective full validation | 10 suites / 42 tests passed. |
 | `pnpm expo config --type public` | ✅ Corrective config smoke | Public Expo config still resolves `expo-sqlite` and `@maplibre/maplibre-react-native` plugins. |
+| `pnpm test -- src/features/operations/liveOperations.test.tsx src/app/previewRoutes.test.tsx --runInBand` | ❌ Expected Slice B RED | Failed on missing `./liveOperations` and missing explicit mock-backed preview labels. |
+| `pnpm test -- src/features/operations/liveOperations.test.tsx src/app/previewRoutes.test.tsx --runInBand` | ✅ Slice B GREEN | 2 suites / 8 tests passed after live route and preview-preservation implementation. |
+| `pnpm test -- src/features/operations/liveOperations.test.tsx src/app/previewRoutes.test.tsx src/features/operations/visualAudit.test.tsx src/shared/ui/operational.test.tsx src/shared/ui/operational-patterns.test.tsx src/infrastructure/oplog/materializer.test.ts src/infrastructure/oplog/outbox-service.test.ts src/infrastructure/local-db/local-db.test.ts --runInBand` | ✅ Focused regression | 8 suites / 34 tests passed. |
+| `pnpm typecheck` | ✅ Slice B validation | Passed. |
+| `pnpm test` | ✅ Slice B full validation | 12 suites / 50 tests passed. |
+| `pnpm expo config --type public` | ✅ Slice B config smoke | Public Expo config still resolves app id, SQLite, and MapLibre plugin. |
+| `pnpm maestro:smoke:ios` | ⚠️ Environment-limited | Maestro 2.6.1 found simulator, but failed because `app.zonacero.mobile` dev build is not installed (`Failed to get app binary directory for bundle app.zonacero.mobile`). |
+| `pnpm test -- src/features/operations/liveOperations.test.tsx src/infrastructure/maps/offline-map-packs.test.ts --runInBand` | ✅ Corrective safety net | Baseline before verification remediation: 2 suites / 10 tests passed. |
+| `pnpm test -- src/features/operations/liveOperations.test.tsx src/infrastructure/maps/offline-map-packs.test.ts --runInBand` | ❌ Expected corrective RED | Failed on missing `resolvePreparationCoverage()`, missing presence tracking state/actions, missing stale field degradation, and missing not-available-local explanation. |
+| `pnpm test -- src/features/operations/liveOperations.test.tsx src/infrastructure/maps/offline-map-packs.test.ts --runInBand` | ✅ Corrective GREEN | 2 suites / 15 tests passed after remediation. |
+| `pnpm test -- src/features/operations/liveOperations.test.tsx --runInBand` | ❌ Expected triangulation RED | Failed because presence role counts did not yet show `Roles: 1 active` or paused degradation after tracking actions. |
+| `pnpm test -- src/features/operations/liveOperations.test.tsx src/infrastructure/maps/offline-map-packs.test.ts --runInBand` | ✅ Corrective triangulation GREEN | 2 suites / 15 tests passed after deriving active/paused/checked-out role labels from materialized presence state. |
+| `pnpm test -- src/features/operations/liveOperations.test.tsx src/infrastructure/maps/offline-map-packs.test.ts src/infrastructure/oplog/materializer.test.ts src/infrastructure/oplog/outbox-service.test.ts src/infrastructure/local-db/local-db.test.ts --runInBand` | ✅ Corrective focused regression | 5 suites / 28 tests passed. |
+| `pnpm typecheck` | ✅ Corrective validation | Passed after adding presence controls, `staleFields`, and map-preparation coverage types. |
+| `pnpm test` | ✅ Corrective full validation | 12 suites / 55 tests passed. |
+| `pnpm expo config --type public` | ✅ Corrective config smoke | Public Expo config still resolves app id, SQLite, and MapLibre plugin. |
+| `pnpm test -- src/features/operations/liveOperations.test.tsx --runInBand` | ❌ Expected E2E support RED | Failed on missing presence button testIDs, missing dev scenarios, and missing map-preparation panel support. |
+| `pnpm test -- src/features/operations/liveOperations.test.tsx --runInBand` | ✅ E2E support GREEN | 1 suite / 11 tests passed after dev scenarios, stable presence testIDs, and map-preparation panel. |
+| `pnpm test -- src/features/operations/operationalE2eRoute.test.tsx --runInBand` | ❌ Expected route RED | Failed because `@/app/operational-e2e` did not exist. |
+| `pnpm test -- src/features/operations/operationalE2eRoute.test.tsx --runInBand` | ✅ Route GREEN | 1 suite / 1 test passed after adding the deterministic E2E route. |
+| `pnpm test -- src/features/operations/liveOperations.test.tsx src/features/operations/previewRoutes.test.tsx --runInBand` | ✅ Focused route/UI regression | 2 suites / 15 tests passed after making home/live content scrollable. |
+| `pnpm test` | ✅ Full validation | 13 suites / 59 tests passed. |
+| `pnpm typecheck` | ✅ Full validation | Passed. |
+| `pnpm expo config --type public` | ✅ Config validation | Public config still resolves bundle id `app.zonacero.mobile`, SQLite, and MapLibre plugin. |
+| `pnpm maestro:smoke:ios` | ❌ Expected E2E REDs during remediation | Exposed dev-client launcher handling, non-scrollable home/live layout, clipped assertions, and root deep-link limitations. |
+| `pnpm maestro:smoke:ios` | ✅ E2E GREEN | Passed against booted iOS simulator/dev build `app.zonacero.mobile`; covers all required offline-first spike scenarios. |
+| `pnpm maestro:offline-spike:ios` | ✅ E2E GREEN | Alias script passed against the same `.maestro/ios-smoke.yaml` flow. |
+| `pnpm visual:audit:check` | ✅ E2E GREEN | Passed visual-audit mock-backed route coverage after preserving dev-client cached server state. |
+| `pnpm test -- src/infrastructure/security/operation-signer.test.ts src/infrastructure/oplog/materializer.test.ts src/infrastructure/local-db/local-db.test.ts src/infrastructure/maps/offline-map-packs.test.ts src/infrastructure/maps/maplibre-adapter.test.ts src/features/operations/liveOperations.test.tsx --runInBand` | ❌ Expected cubic review RED | Failed on the newly added assertions for SHA-256 operation IDs, JSON-only canonical payloads, partial presence preservation, grouped summaries, full schemas, MapLibre retry/adapter errors, unique local center IDs, monotonic presence re-check-in, merged role summaries, map-prep gating, and unavailable report actions. |
+| `pnpm test -- src/infrastructure/security/operation-signer.test.ts src/infrastructure/oplog/materializer.test.ts src/infrastructure/local-db/local-db.test.ts src/infrastructure/maps/offline-map-packs.test.ts src/infrastructure/maps/maplibre-adapter.test.ts src/features/operations/liveOperations.test.tsx --runInBand` | ✅ Cubic review GREEN | 6 suites / 44 tests passed after implementation. |
+| `pnpm test` | ✅ Cubic review full validation | 14 suites / 70 tests passed. |
+| `pnpm typecheck` | ✅ Cubic review validation | Passed after storage rename, ScrollView content container fix, and map-prep helper reuse. |
+| `pnpm expo config --type public` | ✅ Cubic review config smoke | Public config still resolves bundle id `app.zonacero.mobile`, SQLite, and MapLibre plugin. |
+| `pnpm maestro:smoke:ios` | ✅ Cubic review E2E | Passed against booted iOS simulator/dev build `app.zonacero.mobile`. |
+| `pnpm maestro:offline-spike:ios` | ⚠️ Retry required, then passed | First rerun hit Maestro iOS driver startup timeout, second rerun failed transiently while scrolling, third rerun with `MAESTRO_DRIVER_STARTUP_TIMEOUT=60000` passed. |
+| `pnpm visual:audit:check` | ✅ Cubic review E2E | Passed visual-audit mock-backed route coverage. |
 
 ## Implementation Notes
 
@@ -56,18 +107,30 @@
 - Corrective rerun added an RxDB-backed `LocalOperationDatabase` repository seam plus reset/migration evidence through that seam.
 - Corrective rerun added `appendSignedOperationAndMaterialize()` so critical mutations sign first, persist to durable `sync_ops`, then materialize views in order; signing errors block both persistence and materialization.
 - Corrective rerun wired `OfflineMapPackService` to the optional MapLibre native adapter for pack creation, native status lookup, and confirmed deletion.
+- Slice B added `LiveOperationalEntryScreen` plus `createOfflineIncident`, `createOfflineWorkCenter`, and `loadLiveOperationalState` so the home route can create/read incident-scoped pending local state through the Slice A outbox/database seams.
+- Work center materialized views now preserve minimal selected-center fields needed for the live panel: type, description, priority, initial need, confidence, risk, surplus, role count, activation state, and approximate location.
+- Home (`/`) is now the live operational entry; `design-system` and `visual-audit` remain explicitly mock-backed preview/audit routes.
+- Maestro smoke coverage now targets the dev-build bundle id `app.zonacero.mobile` and covers pending/offline indicators plus preserved visual-audit access.
+- Verification remediation added live presence controls that append signed `presence.check_in`, `presence.pause`, and `presence.check_out` operations through `appendSignedOperationAndMaterialize()` and reflect active/paused/stopped tracking in the selected-center panel.
+- Verification remediation added stale selected-center field degradation using materialized `staleFields` metadata, with role, need, surplus, and confidence labels marked as stale and non-actionable until verified.
+- Verification remediation added explicit offline missing-local-data messaging when a requested incident/cell is not available locally, without implying fresh or locally pending operational data exists.
+- Verification remediation added offline map-preparation planning that separates downloaded/partial local packs from failed/missing unavailable packs and restricts continuation to locally available coverage while offline.
+- E2E remediation added `src/app/operational-e2e.tsx` so Maestro can deep-link directly into deterministic live local-data scenarios without backend sync or hardware dependencies.
+- E2E remediation changed home/live layout to one scrollable route surface, added stable presence/control testIDs, and made visible local outbox text assertable on iOS.
+- Cubic review remediation fixed valid security/oplog, local DB schema, map-pack, README, and live operations UI findings with strict-TDD tests: SHA-256 operation IDs, JSON-only canonical payloads, partial presence preservation, per incident/cell summaries, full RxDB schemas, explicit trial storage naming/risk notes, real MapLibre retry, native adapter hard failures, unique local center IDs, monotonic presence operations, role-count merging, reusable map-prep coverage, map-prep gating, unavailable report-action labels, and ScrollView content-container cleanup.
+- Maestro flows now account for Expo dev-client launcher behavior: smoke can tap a listed development server when present, close the dev menu, and then deep-link into the operational E2E route; visual-audit avoids clearing dev-client cached server state.
 
 ## Deviations
 
-- RxDB v17 exposes `getRxStorageSQLiteTrial` in the installed package instead of the documented `getRxStorageSQLite`; Slice A uses the installed API with Expo SQLite async basics. This should be revisited before production hardening if a non-trial SQLite storage package is selected.
-- No real native dev build was executed in this apply phase; `pnpm expo config --type public` is the dev-build smoke note available in this environment. Real device/simulator validation remains for the orchestrator/verify phase.
-- Corrective rerun still did not execute a real dev-build/device smoke because this executor has no confirmed booted simulator/device or EAS credentials in the launch context; native validation remains environment-limited and must be performed by verify/orchestrator on a configured dev-build target.
+- RxDB v17 exposes `getRxStorageSQLiteTrial` in the installed package instead of the documented `getRxStorageSQLite`; Slice A now names this seam `createTrialRxdbSQLiteStorage`, documents the risk, and keeps durable production routing blocked until a non-trial storage package is selected or the risk is formally accepted.
+- Real iOS dev-build Maestro validation was executed against the booted simulator with bundle id `app.zonacero.mobile`; flows require a running/cached Expo dev-client server and may show the launcher if the cached server is cleared.
 - No commits were created despite task 2.4 mentioning commit units, because the executor launch explicitly reserved commit/push/PR work for the orchestrator.
 - `docs/zona_cero_telegram_web_ui_matrix.md` remains unrelated untracked work and was not modified for PR #1.
+- `MapLibreOperationalMap` remains represented by a live MapLibre state surface/testID and render-state indicator in JS; backend sync and real map tile download remain out of scope for this spike.
 
 ## Out of Scope Preserved
 
 - No backend sync transport was implemented.
 - No real Meshtastic hardware integration was implemented.
-- No Slice B operational UI wiring was implemented.
-- Resource report, dispatch event, and SOS are schema-compatible outbox/materializer placeholders only.
+- Resource report, dispatch event, and SOS remain schema-compatible outbox/materializer placeholders only.
+- Recommendations, logistics, SOS full UI, reunification, backend sync, and real Meshtastic hardware remain out of scope for Slice B.

@@ -66,6 +66,47 @@ describe('operation materializer', () => {
     expect(views.localSummaries[0].roleCounts).toEqual({ medic: 1 });
   });
 
+  it('preserves previous presence actor, role, and center when transition payloads are partial', async () => {
+    const checkIn = await op('presence.check_in', 'presence-1', { actorId: 'volunteer-1', role: 'medic', centerId: 'center-1' });
+    const pause = await op('presence.pause', 'presence-1', {});
+    const checkOut = await op('presence.check_out', 'presence-1', {});
+
+    const pausedViews = materializeOperations([checkIn, pause]);
+    const checkedOutViews = materializeOperations([checkIn, pause, checkOut]);
+
+    expect(pausedViews.presence).toEqual([
+      expect.objectContaining({ actorId: 'volunteer-1', role: 'medic', centerId: 'center-1', status: 'paused' }),
+    ]);
+    expect(checkedOutViews.presence).toEqual([
+      expect.objectContaining({ actorId: 'volunteer-1', role: 'medic', centerId: 'center-1', status: 'checked_out' }),
+    ]);
+  });
+
+  it('groups local summaries by incident and cell instead of the first operation only', async () => {
+    const incidentOnePresence = await op('presence.check_in', 'presence-1', { actorId: 'volunteer-1', role: 'medic', centerId: 'center-1' });
+    const incidentTwoCenter = await createSignedOperation(
+      {
+        actorKeyId: 'actor-key-1',
+        deviceId: 'device-1',
+        incidentId: 'incident-2',
+        cellId: 'cell-b',
+        entityId: 'center-2',
+        opType: 'work_center.create',
+        payload: { name: 'South school' },
+        hlc: '2026-06-29T09:00:01.000Z-center-2-device-1',
+        createdAtDevice: '2026-06-29T09:00:01.000Z',
+      },
+      signer,
+    );
+
+    const views = materializeOperations([incidentOnePresence, incidentTwoCenter]);
+
+    expect(views.localSummaries).toEqual([
+      expect.objectContaining({ summaryId: 'incident-1:cell-a', pendingOperations: 1, roleCounts: { medic: 1 } }),
+      expect.objectContaining({ summaryId: 'incident-2:cell-b', pendingOperations: 1, roleCounts: {} }),
+    ]);
+  });
+
   it('keeps resource report, dispatch event, and SOS placeholder views schema-compatible', async () => {
     const resource = await op('resource_report.create', 'report-1', { resource: 'Blankets', quantity: 12, state: 'surplus' });
     const dispatchCreate = await op('dispatch_event.create', 'dispatch-1', { eventType: 'assignment', status: 'open' });
