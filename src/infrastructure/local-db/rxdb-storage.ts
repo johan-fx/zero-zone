@@ -1,9 +1,9 @@
 import * as ExpoSQLite from 'expo-sqlite';
 import { getRxStorageSQLiteTrial, getSQLiteBasicsExpoSQLiteAsync } from 'rxdb/plugins/storage-sqlite';
 
-export const zeroZoneSpikeDbName = 'zero_zone_offline_spike';
+import { zeroZoneSpikeDbName } from './local-db';
 
-export function createRxdbSQLiteStorage() {
+export function createTrialRxdbSQLiteStorage() {
   return getRxStorageSQLiteTrial({
     sqliteBasics: getSQLiteBasicsExpoSQLiteAsync(ExpoSQLite.openDatabaseAsync),
   });
@@ -12,5 +12,5 @@ export function createRxdbSQLiteStorage() {
 export async function createRxdbLocalDatabase(name = zeroZoneSpikeDbName) {
   const { createRxdbLocalDatabase: createConfiguredRxdbLocalDatabase } = await import('./local-db');
 
-  return createConfiguredRxdbLocalDatabase({ name, storage: createRxdbSQLiteStorage() });
+  return createConfiguredRxdbLocalDatabase({ name, storage: createTrialRxdbSQLiteStorage() });
 }

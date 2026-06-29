@@ -85,6 +85,14 @@
 | `pnpm maestro:smoke:ios` | ✅ E2E GREEN | Passed against booted iOS simulator/dev build `app.zonacero.mobile`; covers all required offline-first spike scenarios. |
 | `pnpm maestro:offline-spike:ios` | ✅ E2E GREEN | Alias script passed against the same `.maestro/ios-smoke.yaml` flow. |
 | `pnpm visual:audit:check` | ✅ E2E GREEN | Passed visual-audit mock-backed route coverage after preserving dev-client cached server state. |
+| `pnpm test -- src/infrastructure/security/operation-signer.test.ts src/infrastructure/oplog/materializer.test.ts src/infrastructure/local-db/local-db.test.ts src/infrastructure/maps/offline-map-packs.test.ts src/infrastructure/maps/maplibre-adapter.test.ts src/features/operations/liveOperations.test.tsx --runInBand` | ❌ Expected cubic review RED | Failed on the newly added assertions for SHA-256 operation IDs, JSON-only canonical payloads, partial presence preservation, grouped summaries, full schemas, MapLibre retry/adapter errors, unique local center IDs, monotonic presence re-check-in, merged role summaries, map-prep gating, and unavailable report actions. |
+| `pnpm test -- src/infrastructure/security/operation-signer.test.ts src/infrastructure/oplog/materializer.test.ts src/infrastructure/local-db/local-db.test.ts src/infrastructure/maps/offline-map-packs.test.ts src/infrastructure/maps/maplibre-adapter.test.ts src/features/operations/liveOperations.test.tsx --runInBand` | ✅ Cubic review GREEN | 6 suites / 44 tests passed after implementation. |
+| `pnpm test` | ✅ Cubic review full validation | 14 suites / 70 tests passed. |
+| `pnpm typecheck` | ✅ Cubic review validation | Passed after storage rename, ScrollView content container fix, and map-prep helper reuse. |
+| `pnpm expo config --type public` | ✅ Cubic review config smoke | Public config still resolves bundle id `app.zonacero.mobile`, SQLite, and MapLibre plugin. |
+| `pnpm maestro:smoke:ios` | ✅ Cubic review E2E | Passed against booted iOS simulator/dev build `app.zonacero.mobile`. |
+| `pnpm maestro:offline-spike:ios` | ⚠️ Retry required, then passed | First rerun hit Maestro iOS driver startup timeout, second rerun failed transiently while scrolling, third rerun with `MAESTRO_DRIVER_STARTUP_TIMEOUT=60000` passed. |
+| `pnpm visual:audit:check` | ✅ Cubic review E2E | Passed visual-audit mock-backed route coverage. |
 
 ## Implementation Notes
 
@@ -109,11 +117,12 @@
 - Verification remediation added offline map-preparation planning that separates downloaded/partial local packs from failed/missing unavailable packs and restricts continuation to locally available coverage while offline.
 - E2E remediation added `src/app/operational-e2e.tsx` so Maestro can deep-link directly into deterministic live local-data scenarios without backend sync or hardware dependencies.
 - E2E remediation changed home/live layout to one scrollable route surface, added stable presence/control testIDs, and made visible local outbox text assertable on iOS.
+- Cubic review remediation fixed valid security/oplog, local DB schema, map-pack, README, and live operations UI findings with strict-TDD tests: SHA-256 operation IDs, JSON-only canonical payloads, partial presence preservation, per incident/cell summaries, full RxDB schemas, explicit trial storage naming/risk notes, real MapLibre retry, native adapter hard failures, unique local center IDs, monotonic presence operations, role-count merging, reusable map-prep coverage, map-prep gating, unavailable report-action labels, and ScrollView content-container cleanup.
 - Maestro flows now account for Expo dev-client launcher behavior: smoke can tap a listed development server when present, close the dev menu, and then deep-link into the operational E2E route; visual-audit avoids clearing dev-client cached server state.
 
 ## Deviations
 
-- RxDB v17 exposes `getRxStorageSQLiteTrial` in the installed package instead of the documented `getRxStorageSQLite`; Slice A uses the installed API with Expo SQLite async basics. This should be revisited before production hardening if a non-trial SQLite storage package is selected.
+- RxDB v17 exposes `getRxStorageSQLiteTrial` in the installed package instead of the documented `getRxStorageSQLite`; Slice A now names this seam `createTrialRxdbSQLiteStorage`, documents the risk, and keeps durable production routing blocked until a non-trial storage package is selected or the risk is formally accepted.
 - Real iOS dev-build Maestro validation was executed against the booted simulator with bundle id `app.zonacero.mobile`; flows require a running/cached Expo dev-client server and may show the launcher if the cached server is cleared.
 - No commits were created despite task 2.4 mentioning commit units, because the executor launch explicitly reserved commit/push/PR work for the orchestrator.
 - `docs/zona_cero_telegram_web_ui_matrix.md` remains unrelated untracked work and was not modified for PR #1.

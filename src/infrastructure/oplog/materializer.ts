@@ -137,18 +137,20 @@ export function materializeOperations(operations: readonly SignedOperation[]): M
         break;
       case 'presence.check_in':
       case 'presence.pause':
-      case 'presence.check_out':
+      case 'presence.check_out': {
+        const existing = presence.get(operation.entityId);
         presence.set(operation.entityId, {
           presenceId: operation.entityId,
           incidentId: operation.incidentId,
           cellId: operation.cellId,
-          actorId: stringValue(payload.actorId, operation.actorKeyId),
-          role: stringValue(payload.role, 'volunteer'),
-          centerId: stringValue(payload.centerId, ''),
+          actorId: stringValue(payload.actorId, existing?.actorId ?? operation.actorKeyId),
+          role: stringValue(payload.role, existing?.role ?? 'volunteer'),
+          centerId: stringValue(payload.centerId, existing?.centerId ?? ''),
           status: resolvePresenceStatus(operation.opType),
           updatedAt: operation.createdAtDevice,
         });
         break;
+      }
       case 'resource_report.create':
         resourceReports.set(operation.entityId, {
           reportId: operation.entityId,
@@ -199,7 +201,7 @@ export function materializeOperations(operations: readonly SignedOperation[]): M
     }
   }
 
-  const firstOperation = acceptedOperations[0];
+  const summaries = createLocalSummaries(acceptedOperations, Array.from(presence.values()));
 
   return {
     incidents: Array.from(incidents.values()),
@@ -208,19 +210,32 @@ export function materializeOperations(operations: readonly SignedOperation[]): M
     resourceReports: Array.from(resourceReports.values()),
     dispatchEvents: Array.from(dispatchEvents.values()),
     sosSignals: Array.from(sosSignals.values()),
-    localSummaries: firstOperation
-      ? [
-          {
-            summaryId: `${firstOperation.incidentId}:${firstOperation.cellId}`,
-            incidentId: firstOperation.incidentId,
-            cellId: firstOperation.cellId,
-            operationFreshness: 'local_pending',
-            pendingOperations: acceptedOperations.filter((operation) => operation.syncState === 'pending').length,
-            roleCounts: countRoles(Array.from(presence.values())),
-          },
-        ]
-      : [],
+    localSummaries: summaries,
   };
+}
+
+function createLocalSummaries(operations: readonly SignedOperation[], presence: PresenceView[]): LocalSummaryView[] {
+  const summaries = new Map<string, LocalSummaryView>();
+
+  for (const operation of operations) {
+    const summaryId = `${operation.incidentId}:${operation.cellId}`;
+    const existing = summaries.get(summaryId);
+
+    summaries.set(summaryId, {
+      summaryId,
+      incidentId: operation.incidentId,
+      cellId: operation.cellId,
+      operationFreshness: 'local_pending',
+      pendingOperations: (existing?.pendingOperations ?? 0) + (operation.syncState === 'pending' ? 1 : 0),
+      roleCounts: existing?.roleCounts ?? {},
+    });
+  }
+
+  for (const summary of summaries.values()) {
+    summary.roleCounts = countRoles(presence.filter((session) => session.incidentId === summary.incidentId && session.cellId === summary.cellId));
+  }
+
+  return Array.from(summaries.values());
 }
 
 function dedupeByOpId(operations: readonly SignedOperation[]): SignedOperation[] {

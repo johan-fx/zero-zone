@@ -50,6 +50,16 @@ describe('local operation database contract', () => {
     expect(localDbSchemas.work_centers.primaryKey).toBe('centerId');
     expect(localDbSchemas.map_packs.primaryKey).toBe('packId');
     expect(localDbSchemas.local_summaries.required).toEqual(expect.arrayContaining(['incidentId', 'cellId', 'operationFreshness']));
+    expect(localDbSchemas.sync_ops.required).toEqual(
+      expect.arrayContaining(['opId', 'version', 'actorKeyId', 'deviceId', 'incidentId', 'cellId', 'entityType', 'entityId', 'opType', 'payload', 'hlc', 'createdAtDevice', 'signature', 'syncState']),
+    );
+    expect(Object.keys(localDbSchemas.work_centers.properties)).toEqual(expect.arrayContaining(['centerType', 'description', 'priority', 'initialNeed', 'confidence', 'risk', 'surplus', 'roleCount', 'staleFields', 'activationState', 'location']));
+    expect(Object.keys(localDbSchemas.presence.properties)).toEqual(expect.arrayContaining(['actorId', 'role', 'centerId']));
+    expect(Object.keys(localDbSchemas.resource_reports.properties)).toEqual(expect.arrayContaining(['quantity', 'syncState']));
+    expect(Object.keys(localDbSchemas.dispatch_events.properties)).toEqual(expect.arrayContaining(['eventType']));
+    expect(Object.keys(localDbSchemas.sos_signals.properties)).toEqual(expect.arrayContaining(['severity', 'message']));
+    expect(Object.keys(localDbSchemas.local_summaries.properties)).toEqual(expect.arrayContaining(['roleCounts']));
+    expect(Object.keys(localDbSchemas.map_packs.properties)).toEqual(expect.arrayContaining(['failureReason']));
   });
 
   it('creates RxDB collections with schemas and migration strategies', async () => {

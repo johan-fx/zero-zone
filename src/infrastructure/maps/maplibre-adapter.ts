@@ -25,13 +25,32 @@ export type MapLibreOfflineAdapter = {
 export function createMapLibreOfflineAdapter(nativeModule: MapLibreOfflineNativeModule): MapLibreOfflineAdapter {
   return {
     async createPack(request) {
-      await nativeModule.offlineManager?.createPack?.(request);
+      const createPack = requireOfflineMethod(nativeModule, 'createPack');
+
+      await createPack(request);
     },
     async listPacks() {
-      return nativeModule.offlineManager?.getPacks?.() ?? [];
+      const getPacks = requireOfflineMethod(nativeModule, 'getPacks');
+
+      return getPacks();
     },
     async deletePack(packId) {
-      await nativeModule.offlineManager?.deletePack?.(packId);
+      const deletePack = requireOfflineMethod(nativeModule, 'deletePack');
+
+      await deletePack(packId);
     },
   };
+}
+
+function requireOfflineMethod<TName extends keyof NonNullable<MapLibreOfflineNativeModule['offlineManager']>>(
+  nativeModule: MapLibreOfflineNativeModule,
+  methodName: TName,
+): NonNullable<NonNullable<MapLibreOfflineNativeModule['offlineManager']>[TName]> {
+  const method = nativeModule.offlineManager?.[methodName];
+
+  if (typeof method !== 'function') {
+    throw new Error(`MapLibre offline native method unavailable: ${methodName}`);
+  }
+
+  return method as NonNullable<NonNullable<MapLibreOfflineNativeModule['offlineManager']>[TName]>;
 }

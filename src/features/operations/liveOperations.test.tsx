@@ -119,6 +119,21 @@ describe('live operational flow wiring', () => {
     ]);
     expect(screen.getAllByText('Pending sync').length).toBeGreaterThan(0);
     expect(screen.getByText('Activation requires sufficient evidence')).toBeTruthy();
+    expect(screen.getByText('Dev spike storage: in-memory route only')).toBeTruthy();
+  });
+
+  it('generates unique local work center ids when no center id is provided', async () => {
+    const { screen, database } = await renderLiveOperations();
+
+    await pressAndFlush(screen.getByText('Create local incident'));
+    await waitFor(() => expect(screen.getByText('Incident: Local flood response')).toBeTruthy());
+    await pressAndFlush(screen.getByText('Create pending center'));
+    await pressAndFlush(screen.getByText('Create pending center'));
+
+    await waitFor(async () => expect(await database.views.workCenters.findByIncident('incident-local')).toHaveLength(2));
+
+    const centers = await database.views.workCenters.findByIncident('incident-local');
+    expect(new Set(centers.map((center) => center.centerId)).size).toBe(2);
   });
 
   it('prevents false activation and exposes selected-center fields without volunteer identities', async () => {
@@ -191,6 +206,52 @@ describe('live operational flow wiring', () => {
       expect.objectContaining({ centerId: 'center-local-1', role: 'volunteer', status: 'checked_out' }),
     ]);
     expect(screen.getByText('Roles: 0 active')).toBeTruthy();
+  });
+
+  it('creates a new monotonic presence operation when checking in again after checkout', async () => {
+    const { screen, database } = await renderLiveOperations();
+
+    await pressAndFlush(screen.getByText('Create local incident'));
+    await waitFor(() => expect(screen.getByText('Incident: Local flood response')).toBeTruthy());
+    await pressAndFlush(screen.getByText('Create pending center'));
+    await waitFor(() => expect(screen.getByTestId('presence_check_in_button')).toBeTruthy());
+    await pressAndFlush(screen.getByTestId('presence_check_in_button'));
+    await waitFor(() => expect(screen.getByText('Tracking: active')).toBeTruthy());
+    await pressAndFlush(screen.getByTestId('presence_check_out_button'));
+    await waitFor(() => expect(screen.getByText('Tracking: stopped')).toBeTruthy());
+    await pressAndFlush(screen.getByTestId('presence_check_in_button'));
+    await waitFor(() => expect(screen.getByText('Outbox: 5 pending')).toBeTruthy());
+
+    const presenceOperations = (await database.syncOps.findByIncident('incident-local')).filter((operation) => operation.opType.startsWith('presence.'));
+    expect(presenceOperations.map((operation) => operation.opType)).toEqual(['presence.check_in', 'presence.check_out', 'presence.check_in']);
+    expect(new Set(presenceOperations.map((operation) => operation.opId)).size).toBe(3);
+    expect(presenceOperations.map((operation) => operation.hlc)).toEqual([...presenceOperations.map((operation) => operation.hlc)].sort());
+  });
+
+  it('adds local active presence to the base role count instead of replacing it', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    await seedPreparedIncident(database);
+    await appendSignedOperationAndMaterialize({
+      database,
+      signer: new FakeOperationSigner('role-summary-tests'),
+      input: {
+        actorKeyId: 'actor-key-1',
+        deviceId: 'device-1',
+        incidentId: 'incident-prepared',
+        cellId: 'cell-a7',
+        entityId: 'center-role-1',
+        opType: 'work_center.create',
+        payload: { name: 'Role summary point', roleCount: 3 },
+        hlc: '2026-06-29T09:02:00.000Z-0002-device-1',
+        createdAtDevice: '2026-06-29T09:02:00.000Z',
+      },
+    });
+
+    const { screen } = await renderLiveOperations({ database, initialIncidentId: 'incident-prepared' });
+    await waitFor(() => expect(screen.getByText('Roles: 3 active')).toBeTruthy());
+    await pressAndFlush(screen.getByTestId('presence_check_in_button'));
+
+    await waitFor(() => expect(screen.getByText('Roles: 4 active')).toBeTruthy());
   });
 
   it('degrades stale selected-center role, need, surplus, and confidence data textually', async () => {
@@ -275,5 +336,27 @@ describe('live operational flow wiring', () => {
     expect(screen.getByText('Network unavailable. Continue only with locally available coverage: cell-a7, cell-a8.')).toBeTruthy();
     expect(screen.getByTestId('continue_with_local_coverage_button')).toBeEnabled();
     expect(screen.getByText('Continuing cells: cell-a7, cell-a8')).toBeTruthy();
+  });
+
+  it('does not show the map-preparation panel for ordinary prepared incidents with map packs', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    await seedPreparedIncident(database);
+
+    const { screen } = await renderLiveOperations({ database, initialIncidentId: 'incident-prepared' });
+
+    await waitFor(() => expect(screen.getByText('Incident: Prepared flood response')).toBeTruthy());
+
+    expect(screen.queryByTestId('map_preparation_panel')).toBeNull();
+  });
+
+  it('labels unwired report actions as unavailable instead of presenting live actions', async () => {
+    const { screen } = await renderLiveOperations();
+
+    await pressAndFlush(screen.getByText('Create local incident'));
+    await waitFor(() => expect(screen.getByText('Incident: Local flood response')).toBeTruthy());
+    await pressAndFlush(screen.getByText('Create pending center'));
+
+    await waitFor(() => expect(screen.getByText('Report need unavailable')).toBeDisabled());
+    expect(screen.getByText('Report surplus unavailable')).toBeDisabled();
   });
 });

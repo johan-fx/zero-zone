@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { Paragraph, Text, XStack, YStack } from 'tamagui';
 
 import { createInMemoryLocalOperationDatabase, type LocalOperationDatabase, type PresenceLocalView, type WorkCenterView } from '@/infrastructure/local-db/local-db';
-import { resolveMapRenderState, type MapPackMetadata } from '@/infrastructure/maps';
+import { resolveMapPreparationCoverage, resolveMapRenderState, type MapPackMetadata } from '@/infrastructure/maps';
 import { appendSignedOperationAndMaterialize } from '@/infrastructure/oplog/outbox-service';
 import { FakeOperationSigner, type OperationSigner } from '@/infrastructure/security';
 import { ActionButton, OperationalCard, StatusBadge } from '@/shared/ui';
@@ -68,6 +68,8 @@ type WorkCenterPayload = {
 
 type PresenceAction = 'check_in' | 'pause' | 'check_out';
 
+let localOperationSequence = 0;
+
 export async function createOfflineIncident(input: {
   database: LocalOperationDatabase;
   signer: OperationSigner;
@@ -77,6 +79,7 @@ export async function createOfflineIncident(input: {
 }) {
   const incidentId = input.incidentId ?? DEFAULT_INCIDENT_ID;
   const cellId = input.cellId ?? DEFAULT_CELL_ID;
+  const stamp = nextOperationStamp('incident');
 
   return appendSignedOperationAndMaterialize({
     database: input.database,
@@ -89,8 +92,8 @@ export async function createOfflineIncident(input: {
       entityId: incidentId,
       opType: 'incident.create',
       payload: { title: input.title ?? 'Local flood response', status: 'unverified' },
-      hlc: `${DEFAULT_TIMESTAMP}-incident-${DEFAULT_DEVICE_ID}`,
-      createdAtDevice: DEFAULT_TIMESTAMP,
+      hlc: stamp.hlc,
+      createdAtDevice: stamp.createdAtDevice,
     },
   });
 }
@@ -103,8 +106,9 @@ export async function createOfflineWorkCenter(input: {
   centerId?: string;
   payload?: Partial<WorkCenterPayload>;
 }) {
-  const centerId = input.centerId ?? DEFAULT_CENTER_ID;
+  const centerId = input.centerId ?? (await createNextWorkCenterId(input.database, input.incidentId));
   const payload = createDefaultWorkCenterPayload(input.payload);
+  const stamp = nextOperationStamp('center');
 
   return appendSignedOperationAndMaterialize({
     database: input.database,
@@ -117,15 +121,15 @@ export async function createOfflineWorkCenter(input: {
       entityId: centerId,
       opType: 'work_center.create',
       payload,
-      hlc: `${DEFAULT_TIMESTAMP}-center-${DEFAULT_DEVICE_ID}`,
-      createdAtDevice: DEFAULT_TIMESTAMP,
+      hlc: stamp.hlc,
+      createdAtDevice: stamp.createdAtDevice,
     },
   });
 }
 
 export async function createPresenceOperation(input: { database: LocalOperationDatabase; signer: OperationSigner; incidentId: string; cellId: string; centerId: string; action: PresenceAction }) {
   const opType = `presence.${input.action}` as const;
-  const sequence = input.action === 'check_in' ? '0003' : input.action === 'pause' ? '0004' : '0005';
+  const stamp = nextOperationStamp(`presence-${input.action}`);
 
   return appendSignedOperationAndMaterialize({
     database: input.database,
@@ -138,8 +142,8 @@ export async function createPresenceOperation(input: { database: LocalOperationD
       entityId: `${DEFAULT_PRESENCE_ID}-${input.centerId}`,
       opType,
       payload: { actorId: DEFAULT_ACTOR_KEY_ID, centerId: input.centerId, role: 'volunteer' },
-      hlc: `${DEFAULT_TIMESTAMP}-${sequence}-${DEFAULT_DEVICE_ID}`,
-      createdAtDevice: DEFAULT_TIMESTAMP,
+      hlc: stamp.hlc,
+      createdAtDevice: stamp.createdAtDevice,
     },
   });
 }
@@ -288,7 +292,7 @@ export function LiveOperationalEntryScreen({
 
   const mapState = resolveMapRenderState({ pack: state?.mapPack ?? null, networkAvailable });
   const missingRequestedIncident = Boolean(activeIncidentId && state && !state.incident);
-  const mapPreparation = state?.incident && state.mapPacks.length > 0 ? resolveMapPreparationSummary({ incidentId: state.incident.incidentId, networkAvailable, packs: state.mapPacks, requestedCellIds: MAP_PREPARATION_CELL_IDS }) : null;
+  const mapPreparation = state?.incident?.incidentId === MAP_PREPARATION_INCIDENT_ID && state.mapPacks.length > 0 ? resolveMapPreparationSummary({ incidentId: state.incident.incidentId, networkAvailable, packs: state.mapPacks, requestedCellIds: MAP_PREPARATION_CELL_IDS }) : null;
 
   return (
     <YStack bg="$background" testID="live-operational-entry">
@@ -306,6 +310,9 @@ export function LiveOperationalEntryScreen({
                 <Paragraph color="$textMuted" fontSize="$sm" lineHeight={20}>
                   Signed local operations materialize immediately and remain pending until backend transport exists.
                 </Paragraph>
+                <Text color="$stale" fontSize="$xs" fontWeight="800">
+                  Dev spike storage: in-memory route only
+                </Text>
               </YStack>
               <StatusBadge tone="pending" label={`Outbox: ${state?.pendingOperations ?? 0} pending`} />
             </XStack>
@@ -444,8 +451,8 @@ function LiveSelectedCenterPanel({ center, onPresenceAction, presence }: { cente
           <ActionButton label="Check in" onPress={() => onPresenceAction('check_in')} testID="presence_check_in_button" tone="success" />
           <ActionButton disabled={presence?.status !== 'active'} label="Pause tracking" onPress={() => onPresenceAction('pause')} testID="presence_pause_button" tone="warning" />
           <ActionButton disabled={!presence || presence.status === 'checked_out'} label="Check out" onPress={() => onPresenceAction('check_out')} testID="presence_check_out_button" tone="stale" />
-          <ActionButton label="Report need" tone="warning" />
-          <ActionButton label="Report surplus" tone="info" />
+          <ActionButton disabled label="Report need unavailable" tone="warning" />
+          <ActionButton disabled label="Report surplus unavailable" tone="info" />
         </XStack>
       </YStack>
     </OperationalCard>
@@ -500,15 +507,15 @@ function formatMaybeStaleField(label: string, value: string, isStale: boolean): 
 
 function resolveRoleSummary(baseRoleCount: number, presence: PresenceLocalView | null): { value: string; isStale: boolean } {
   if (presence?.status === 'active') {
-    return { value: '1 active', isStale: false };
+    return { value: `${baseRoleCount + 1} active`, isStale: false };
   }
 
   if (presence?.status === 'paused') {
-    return { value: '1 paused', isStale: true };
+    return { value: baseRoleCount > 0 ? `${baseRoleCount} active, 1 paused` : '1 paused', isStale: true };
   }
 
   if (presence?.status === 'checked_out') {
-    return { value: '0 active', isStale: false };
+    return { value: `${baseRoleCount} active`, isStale: false };
   }
 
   return { value: `${baseRoleCount} active`, isStale: false };
@@ -589,47 +596,34 @@ function createScenarioMapPack(incidentId: string, cellId: string, state: MapPac
 }
 
 function resolveMapPreparationSummary(input: { incidentId: string; packs: MapPackMetadata[]; requestedCellIds: string[]; networkAvailable: boolean }): MapPreparationSummary {
-  const packsByCell = new Map(input.packs.map((pack) => [pack.cellId, pack]));
-  const availableCellIds: string[] = [];
-  const unavailableCellIds: string[] = [];
-
-  for (const cellId of input.requestedCellIds) {
-    const pack = packsByCell.get(cellId);
-
-    if (pack && isLocallyUsableMapPack(pack)) {
-      availableCellIds.push(cellId);
-    } else {
-      unavailableCellIds.push(cellId);
-    }
-  }
-
-  const continueCellIds = input.networkAvailable ? input.requestedCellIds : availableCellIds;
+  const coverage = resolveMapPreparationCoverage(input);
 
   return {
-    availableCellIds,
-    unavailableCellIds,
-    canContinue: continueCellIds.length > 0,
-    continueCellIds,
-    explanation: resolveMapPreparationExplanation(input.networkAvailable, continueCellIds),
+    availableCellIds: coverage.availableLocalPacks.map((pack) => pack.cellId),
+    unavailableCellIds: coverage.unavailablePacks.map((pack) => pack.cellId),
+    canContinue: coverage.canContinue,
+    continueCellIds: coverage.continueCellIds,
+    explanation: coverage.explanation,
   };
-}
-
-function isLocallyUsableMapPack(pack: MapPackMetadata): boolean {
-  return pack.state === 'downloaded' || pack.state === 'partial' || pack.downloadedBytes > 0 || pack.progress > 0;
-}
-
-function resolveMapPreparationExplanation(networkAvailable: boolean, continueCellIds: string[]): string {
-  if (networkAvailable) {
-    return 'Network available. Missing packs can be downloaded before continuing.';
-  }
-
-  if (continueCellIds.length === 0) {
-    return 'Network unavailable. No local map coverage is available for the requested cells.';
-  }
-
-  return `Network unavailable. Continue only with locally available coverage: ${continueCellIds.join(', ')}.`;
 }
 
 function formatCellList(cellIds: string[]): string {
   return cellIds.length > 0 ? cellIds.join(', ') : 'none';
+}
+
+function nextOperationStamp(label: string): { createdAtDevice: string; hlc: string } {
+  localOperationSequence += 1;
+  const sequence = String(localOperationSequence).padStart(6, '0');
+  const createdAtDevice = new Date(Date.parse(DEFAULT_TIMESTAMP) + localOperationSequence).toISOString();
+
+  return {
+    createdAtDevice,
+    hlc: `${createdAtDevice}-${sequence}-${label}-${DEFAULT_DEVICE_ID}`,
+  };
+}
+
+async function createNextWorkCenterId(database: LocalOperationDatabase, incidentId: string): Promise<string> {
+  const existingCenters = await database.views.workCenters.findByIncident(incidentId);
+
+  return existingCenters.length === 0 ? DEFAULT_CENTER_ID : `center-local-${existingCenters.length + 1}`;
 }

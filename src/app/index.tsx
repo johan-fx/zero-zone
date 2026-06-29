@@ -1,7 +1,8 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMemo } from 'react';
+import { ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Paragraph, ScrollView, Text, XStack, YStack } from 'tamagui';
+import { Paragraph, Text, XStack, YStack } from 'tamagui';
 
 import { LiveOperationalEntryScreen, resolveLiveOperationsDevScenario } from '@/features/operations/liveOperations';
 import { createInMemoryLocalOperationDatabase } from '@/infrastructure/local-db/local-db';
@@ -19,8 +20,8 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1 }} edges={['bottom']}>
-      <ScrollView bg="$background" testID="home-scroll">
-      <YStack bg="$background" grow={1} pb="$6">
+      <ScrollView contentContainerStyle={{ flexGrow: 1, paddingBottom: 24 }} contentInsetAdjustmentBehavior="automatic" testID="home-scroll">
+      <YStack bg="$background">
         <OperationalCard rounded={0} variant="default" px="$4" py="$3">
           <YStack gap="$3">
             <XStack items="center" justify="space-between">

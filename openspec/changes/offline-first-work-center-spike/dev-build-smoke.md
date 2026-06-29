@@ -8,6 +8,7 @@ These checks cover Slice B live operational entry, pending/offline indicators, p
 
 - A development build is required; Expo Go is insufficient because `@maplibre/maplibre-react-native`, RxDB SQLite storage, and signing/key-access seams require native modules.
 - Bundle/package id: `app.zonacero.mobile`.
+- RxDB SQLite currently uses the installed OSS `getRxStorageSQLiteTrial` API. The live route remains explicitly spike/dev in-memory until production-grade SQLite storage is selected or the trial-storage risk is formally accepted.
 
 ## Smoke commands
 
@@ -34,6 +35,7 @@ Covered scenarios: live entry launch, local incident creation, pending work cent
 - Create a pending work center and confirm `Pending sync`, `State: pending`, and `Activation requires sufficient evidence`.
 - Confirm visual audit remains reachable and shows `Visual audit: mock-backed operational-map` with mock preview content.
 - Confirm native MapLibre/RxDB/signing checks run in a dev build; no backend sync or real Meshtastic hardware is expected in this slice.
+- TODO/risk: replace or formally accept RxDB SQLite trial storage before claiming durable production offline routing.
 
 ## Environment-limited note
 
