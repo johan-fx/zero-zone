@@ -1,18 +1,26 @@
-appId: host.exp.Exponent
-name: iOS visual audit route check
-tags:
-  - visual-audit
-  - ios
+appId: app.zonacero.mobile
+name: Visual audit access smoke
 ---
-- openLink: "exp://127.0.0.1:8081/--/visual-audit?screen=operational-map&theme=day"
+- launchApp:
+    clearState: true
+- assertVisible: "Live operational entry"
+- tapOn:
+    id: "open-visual-audit"
+- assertVisible: "Visual audit: mock-backed operational-map"
 - assertVisible: "Available"
-- openLink: "exp://127.0.0.1:8081/--/visual-audit?screen=operational-map&theme=night"
+- assertNotVisible: "North triage point"
+- openLink: "zonacero://visual-audit?screen=operational-map&theme=night"
+- assertVisible: "Visual audit: mock-backed operational-map"
 - assertVisible: "Available"
-- openLink: "exp://127.0.0.1:8081/--/visual-audit?screen=selected-center&theme=day"
+- openLink: "zonacero://visual-audit?screen=selected-center&theme=day"
+- assertVisible: "Visual audit: mock-backed selected-center"
 - assertVisible: "Escuela Norte"
-- openLink: "exp://127.0.0.1:8081/--/visual-audit?screen=selected-center&theme=night"
+- openLink: "zonacero://visual-audit?screen=selected-center&theme=night"
+- assertVisible: "Visual audit: mock-backed selected-center"
 - assertVisible: "Escuela Norte"
-- openLink: "exp://127.0.0.1:8081/--/visual-audit?screen=sos-outbox&theme=day"
+- openLink: "zonacero://visual-audit?screen=sos-outbox&theme=day"
+- assertVisible: "Visual audit: mock-backed sos-outbox"
 - assertVisible: "SOS raised"
-- openLink: "exp://127.0.0.1:8081/--/visual-audit?screen=sos-outbox&theme=night"
+- openLink: "zonacero://visual-audit?screen=sos-outbox&theme=night"
+- assertVisible: "Visual audit: mock-backed sos-outbox"
 - assertVisible: "SOS raised"

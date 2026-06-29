@@ -90,6 +90,16 @@ export type WorkCenterView = {
   incidentId: string;
   cellId: string;
   name: string;
+  centerType?: string;
+  description?: string;
+  priority?: string;
+  initialNeed?: string;
+  confidence?: string;
+  risk?: string;
+  surplus?: string;
+  roleCount?: number;
+  activationState?: string;
+  location?: { latitude: number; longitude: number };
   status: string;
   syncState: string;
   updatedAt: string;

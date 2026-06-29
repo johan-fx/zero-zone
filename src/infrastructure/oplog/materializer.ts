@@ -14,6 +14,15 @@ export type WorkCenterMaterializedView = {
   incidentId: string;
   cellId: string;
   name: string;
+  centerType?: string;
+  description?: string;
+  priority?: string;
+  initialNeed?: string;
+  confidence?: string;
+  risk?: string;
+  surplus?: string;
+  roleCount?: number;
+  location?: { latitude: number; longitude: number };
   status: 'pending';
   activationState: 'requires_evidence';
   syncState: string;
@@ -109,6 +118,15 @@ export function materializeOperations(operations: readonly SignedOperation[]): M
           incidentId: operation.incidentId,
           cellId: operation.cellId,
           name: stringValue(payload.name, 'Pending work center'),
+          centerType: stringValue(payload.centerType, 'Work center'),
+          description: stringValue(payload.description, ''),
+          priority: stringValue(payload.priority, 'normal'),
+          initialNeed: stringValue(payload.initialNeed, 'Water'),
+          confidence: stringValue(payload.confidence, 'local estimate'),
+          risk: stringValue(payload.risk, 'precaution'),
+          surplus: stringValue(payload.surplus, 'none reported'),
+          roleCount: numberValue(payload.roleCount, 0),
+          location: locationValue(payload.location),
           status: 'pending',
           activationState: 'requires_evidence',
           syncState: operation.syncState,
@@ -245,4 +263,12 @@ function stringValue(value: unknown, fallback: string): string {
 
 function numberValue(value: unknown, fallback: number): number {
   return typeof value === 'number' ? value : fallback;
+}
+
+function locationValue(value: unknown): { latitude: number; longitude: number } | undefined {
+  const record = asRecord(value);
+  const latitude = record.latitude ?? record.lat;
+  const longitude = record.longitude ?? record.lng;
+
+  return typeof latitude === 'number' && typeof longitude === 'number' ? { latitude, longitude } : undefined;
 }

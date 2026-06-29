@@ -1,8 +1,10 @@
 import { useRouter } from 'expo-router';
+import { useMemo } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Paragraph, Text, XStack, YStack } from 'tamagui';
 
-import { OperationalScreensGallery } from '@/features/operations/screens';
+import { LiveOperationalEntryScreen } from '@/features/operations/liveOperations';
+import { createInMemoryLocalOperationDatabase } from '@/infrastructure/local-db/local-db';
 import { ThemePreference, useOperationalTheme } from '@/shared/theme';
 import { ActionButton, OperationalCard, StatusBadge } from '@/shared/ui';
 
@@ -10,6 +12,7 @@ const themeOptions: ThemePreference[] = ['system', 'day', 'night'];
 
 export default function HomeScreen() {
   const router = useRouter();
+  const database = useMemo(() => createInMemoryLocalOperationDatabase(), []);
   const { preference, setPreference, themeName } = useOperationalTheme();
 
   return (
@@ -23,7 +26,7 @@ export default function HomeScreen() {
                   Zona Cero
                 </Text>
                 <Paragraph color="$textMuted" fontSize={14} lineHeight={19}>
-                  Tamagui operational design system preview
+                  Live operational entry with local signed operations
                 </Paragraph>
               </YStack>
               <StatusBadge tone={themeName === 'dark' ? 'info' : 'success'} label={`${themeName} theme`} />
@@ -47,14 +50,21 @@ export default function HomeScreen() {
             <ActionButton
               testID="open-design-system"
               accessibilityLabel="Open design system"
-              label="Open design system"
+              label="Open design system previews"
               onPress={() => router.push('/design-system')}
               tone="success"
+            />
+            <ActionButton
+              testID="open-visual-audit"
+              accessibilityLabel="Open visual audit"
+              label="Open visual audit"
+              onPress={() => router.push('/visual-audit')}
+              tone="info"
             />
           </YStack>
         </OperationalCard>
 
-        <OperationalScreensGallery />
+        <LiveOperationalEntryScreen database={database} />
       </YStack>
     </SafeAreaView>
   );
