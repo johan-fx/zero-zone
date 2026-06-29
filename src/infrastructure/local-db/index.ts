@@ -1,2 +1,2 @@
 export * from './local-db';
-export { createRxdbSQLiteStorage } from './rxdb-storage';
+export { createTrialRxdbSQLiteStorage } from './rxdb-storage';

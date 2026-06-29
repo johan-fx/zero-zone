@@ -367,6 +367,11 @@ export function OperationalScreensGallery() {
   return (
     <ScrollView bg="$background">
       <YStack gap="$6" p="$4">
+        <OperationalCard testID="mock-backed-operations-gallery" variant="default">
+          <Text color="$primary" fontSize="$sm" fontWeight="900">
+            Mock-backed operations gallery
+          </Text>
+        </OperationalCard>
         {sections.map(([title, content]) => (
           <OperationalCard key={title} testID={`screen-${title.toLowerCase().replaceAll(' ', '-')}`}>
             <YStack gap="$4">

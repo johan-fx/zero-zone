@@ -81,6 +81,7 @@ export default function DesignSystemScreen() {
                 <Paragraph color="$textMuted" fontSize="$md" lineHeight={22}>
                   Operational components, semantic tokens, and adaptive day/night themes.
                 </Paragraph>
+                <StatusBadge tone="info" label="Mock-backed preview" />
                 <StatusBadge tone={themeName === 'dark' ? 'info' : 'success'} label={`${themeName} theme`} />
               </YStack>
 

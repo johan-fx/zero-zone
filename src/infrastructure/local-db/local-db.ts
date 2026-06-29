@@ -30,9 +30,10 @@ const stringProperty = { type: 'string' } as const;
 const nullableStringProperty = { type: ['string', 'null'] } as const;
 const numberProperty = { type: 'number' } as const;
 const objectProperty = { type: 'object' } as const;
+const arrayProperty = { type: 'array' } as const;
 
 export const localDbSchemas = {
-  sync_ops: createSchema('sync_ops', 'opId', ['opId', 'incidentId', 'cellId', 'opType', 'payload', 'signature', 'syncState', 'hlc', 'createdAtDevice']),
+  sync_ops: createSchema('sync_ops', 'opId', ['opId', 'version', 'actorKeyId', 'deviceId', 'incidentId', 'cellId', 'entityType', 'entityId', 'opType', 'payload', 'hlc', 'createdAtDevice', 'signature', 'syncState']),
   incidents: createSchema('incidents', 'incidentId', ['incidentId', 'title', 'status', 'syncState', 'updatedAt']),
   work_centers: createSchema('work_centers', 'centerId', ['centerId', 'incidentId', 'cellId', 'name', 'status', 'syncState', 'updatedAt']),
   map_packs: createSchema('map_packs', 'packId', ['packId', 'incidentId', 'cellId', 'bounds', 'state', 'progress', 'estimatedBytes', 'downloadedBytes', 'updatedAt']),
@@ -90,6 +91,17 @@ export type WorkCenterView = {
   incidentId: string;
   cellId: string;
   name: string;
+  centerType?: string;
+  description?: string;
+  priority?: string;
+  initialNeed?: string;
+  confidence?: string;
+  risk?: string;
+  surplus?: string;
+  roleCount?: number;
+  staleFields?: string[];
+  activationState?: string;
+  location?: { latitude: number; longitude: number };
   status: string;
   syncState: string;
   updatedAt: string;
@@ -254,9 +266,9 @@ async function createDefaultRxDatabase(input: { name: string; storage: unknown; 
 }
 
 async function createDefaultRxdbSQLiteStorage(): Promise<unknown> {
-  const { createRxdbSQLiteStorage } = await import('./rxdb-storage');
+  const { createTrialRxdbSQLiteStorage } = await import('./rxdb-storage');
 
-  return createRxdbSQLiteStorage();
+  return createTrialRxdbSQLiteStorage();
 }
 
 export async function addRxdbLocalCollections(database: RxdbDatabaseLike): Promise<void> {
@@ -389,15 +401,43 @@ function createSchema(title: string, primaryKey: string, required: string[]): Lo
     required,
     properties: {
       [primaryKey]: stringProperty,
+      version: numberProperty,
+      actorKeyId: stringProperty,
+      deviceId: stringProperty,
       incidentId: stringProperty,
       cellId: stringProperty,
       opId: stringProperty,
+      entityType: stringProperty,
+      entityId: stringProperty,
       opType: stringProperty,
       payload: objectProperty,
       bounds: objectProperty,
       signature: stringProperty,
       syncState: stringProperty,
+      title: stringProperty,
+      name: stringProperty,
+      centerType: stringProperty,
+      description: stringProperty,
+      priority: stringProperty,
+      initialNeed: stringProperty,
+      confidence: stringProperty,
+      risk: stringProperty,
+      surplus: stringProperty,
+      roleCount: numberProperty,
+      staleFields: arrayProperty,
+      activationState: stringProperty,
+      location: objectProperty,
+      actorId: stringProperty,
+      role: stringProperty,
+      centerId: stringProperty,
+      resource: stringProperty,
+      quantity: numberProperty,
+      eventType: stringProperty,
+      severity: stringProperty,
+      message: stringProperty,
+      roleCounts: objectProperty,
       state: stringProperty,
+      failureReason: stringProperty,
       progress: numberProperty,
       estimatedBytes: numberProperty,
       downloadedBytes: numberProperty,

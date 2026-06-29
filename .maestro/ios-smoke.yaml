@@ -1,47 +1,107 @@
-appId: host.exp.Exponent
-name: iOS Expo Go smoke test
-tags:
-  - smoke
-  - ios
+appId: app.zonacero.mobile
+name: Offline operational spike coverage
 ---
-- openLink: exp://127.0.0.1:8081
-- assertVisible: Zona Cero
-- assertVisible: Tamagui smoke check
-- assertVisible: Operational map
-- tapOn: Open design system
-- assertVisible: Design system preview
-- assertVisible: light theme
+- launchApp
+- runFlow:
+    when:
+      visible: "DEVELOPMENT SERVERS"
+    commands:
+      - tapOn:
+          point: "50%,22%"
+- runFlow:
+    when:
+      visible: "Close"
+    commands:
+      - tapOn: "Close"
+- openLink: "zonacero://operational-e2e"
+- extendedWaitUntil:
+    visible:
+      id: "live-operational-entry"
+    timeout: 30000
+- assertVisible: "Live operational entry"
+- assertVisible: "Offline-first operations"
+- assertVisible:
+    id: "live-operational-entry"
 - tapOn:
-    id: design-theme-night
-- assertVisible: dark theme
+    id: "create_local_incident_button"
+- assertVisible: "Incident: Local flood response"
+- assertVisible: "Status: unverified"
+- assertVisible: "Cell: cell-a7"
+- assertVisible: "Operational data is local pending"
+- assertVisible: "Local outbox: 1 pending"
+- swipe:
+    direction: UP
+- assertVisible: "MapLibre operational map"
+- scrollUntilVisible:
+    element:
+      id: "create_pending_center_button"
+    direction: UP
 - tapOn:
-    id: design-theme-day
-- assertVisible: light theme
+    id: "create_pending_center_button"
+- assertVisible: "North triage point"
+- assertVisible: "Pending sync"
+- scrollUntilVisible:
+    element: "Activation requires sufficient evidence"
+    direction: DOWN
+- assertVisible: "Activation requires sufficient evidence"
+- assertVisible: "State: pending"
+- assertNotVisible: "State: active"
+- assertVisible: "Confidence: local estimate"
+- assertVisible: "Need: Water"
+- assertVisible: "Surplus: none reported"
+- assertVisible: "Roles: 0 active"
+- assertNotVisible: "actor-key-local"
+- assertNotVisible: "volunteer-1"
 - scrollUntilVisible:
     element:
-      text: Compound patterns
+      id: "presence_check_in_button"
     direction: DOWN
-    speed: 70
-    visibilityPercentage: 50
-- assertVisible: Compound patterns
+- tapOn:
+    id: "presence_check_in_button"
+- assertVisible: "Tracking: active"
+- assertVisible: "Roles: 1 active"
+- tapOn:
+    id: "presence_pause_button"
+- assertVisible: "Tracking: paused"
+- assertVisible: "Roles: 1 paused — stale, verify before acting"
+- tapOn:
+    id: "presence_check_out_button"
+- assertVisible: "Tracking: stopped"
+- assertVisible: "Roles: 0 active"
+- openLink: "zonacero://operational-e2e?scenario=missing-local-data"
+- extendedWaitUntil:
+    visible: "Incident incident-missing is not available locally for offline use."
+    timeout: 10000
+- assertVisible: "Incident incident-missing is not available locally for offline use."
+- assertVisible: "Prepare this incident and cell before deployment or reconnect to fetch it."
+- assertNotVisible: "Operational data is fresh"
+- openLink: "zonacero://operational-e2e?scenario=stale-center-data"
+- extendedWaitUntil:
+    visible: "Incident: Prepared stale response"
+    timeout: 10000
+- assertVisible: "Incident: Prepared stale response"
+- scrollUntilVisible:
+    element: "Confidence: local estimate — stale, verify before acting"
+    direction: DOWN
+- assertVisible: "Confidence: local estimate — stale, verify before acting"
+- assertVisible: "Need: Water — stale, verify before acting"
+- assertVisible: "Surplus: blankets reported — stale, verify before acting"
+- assertVisible: "Roles: 3 active — stale, verify before acting"
+- openLink: "zonacero://operational-e2e?scenario=map-preparation"
+- extendedWaitUntil:
+    visible: "Incident: Map preparation drill"
+    timeout: 10000
+- assertVisible: "Incident: Map preparation drill"
 - scrollUntilVisible:
     element:
-      text: Center summary
+      id: "map_preparation_panel"
     direction: DOWN
-    speed: 70
-    visibilityPercentage: 50
-- assertVisible: Center summary
-- scrollUntilVisible:
-    element:
-      text: Recommendation card
-    direction: DOWN
-    speed: 70
-    visibilityPercentage: 50
-- assertVisible: Recommendation card
-- scrollUntilVisible:
-    element:
-      text: Sync state
-    direction: DOWN
-    speed: 70
-    visibilityPercentage: 50
-- assertVisible: Sync state
+- assertVisible: "Local available packs: cell-a7, cell-a8"
+- assertVisible: "Unavailable packs: cell-a9, cell-b1"
+- assertVisible: "Network unavailable. Continue only with locally available coverage: cell-a7, cell-a8."
+- assertVisible:
+    id: "continue_with_local_coverage_button"
+- assertVisible: "Continuing cells: cell-a7, cell-a8"
+- openLink: "zonacero://design-system"
+- assertVisible: "Design system preview"
+- assertVisible: "Mock-backed preview"

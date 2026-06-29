@@ -70,8 +70,8 @@ describe('operation signing contract', () => {
       opType: 'work_center.create',
       syncState: 'pending',
     });
-    expect(operation.signature).toMatch(/^fake-signature:actor-key-1:\d+$/);
-    expect(operation.opId).toMatch(/^op_\d+$/);
+    expect(operation.signature).toMatch(/^fake-signature:actor-key-1:[a-f0-9]{64}$/);
+    expect(operation.opId).toMatch(/^op_[a-f0-9]{64}$/);
 
     await expect(
       createSignedOperation(
@@ -84,6 +84,24 @@ describe('operation signing contract', () => {
         signer,
       ),
     ).resolves.toMatchObject({ opId: operation.opId, signature: operation.signature });
+  });
+
+  it('rejects non-JSON payload values before canonical signing', () => {
+    expect(() =>
+      createCanonicalPayload({
+        ...baseInput,
+        opType: 'work_center.create',
+        payload: { resources: ['water', undefined] },
+      }),
+    ).toThrow('Operation payload must be JSON-serializable');
+
+    expect(() =>
+      createCanonicalPayload({
+        ...baseInput,
+        opType: 'work_center.create',
+        payload: { priority: undefined },
+      }),
+    ).toThrow('Operation payload must be JSON-serializable');
   });
 
   it('blocks critical mutations when signing material is unavailable', async () => {
