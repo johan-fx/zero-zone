@@ -1,0 +1,59 @@
+schema: spec-driven
+project: zero-zone
+persistence: openspec
+strict_tdd: true
+
+context: |
+  Tech stack: Expo SDK 56, React Native 0.85, TypeScript, Expo Router, Tamagui, pnpm.
+  Architecture: Expo Router app with app/ routes, shared theme/ui layer, and feature modules; no persistence or sync backend spike yet.
+  Testing: Jest + jest-expo + React Native Testing Library; Maestro smoke/visual-audit flows; typecheck via tsc.
+  Style: Strict TypeScript, path aliases (@/*, @assets/*), semantic tokens, minimal boilerplate.
+
+testing:
+  strict_tdd: true
+  detected: "2026-06-28"
+  test_runner:
+    command: "pnpm test"
+    framework: "jest + jest-expo"
+  test_layers:
+    unit:
+      available: true
+      tool: "Jest"
+    integration:
+      available: true
+      tool: "React Native Testing Library"
+    e2e:
+      available: true
+      tool: "Maestro"
+  coverage:
+    available: true
+    command: "pnpm test:ci -- --coverage"
+  quality_tools:
+    linter:
+      available: false
+      command: ""
+    type_checker:
+      available: true
+      command: "pnpm typecheck"
+    formatter:
+      available: false
+      command: ""
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+  tasks:
+    - Group by phase and keep tasks completable in one session
+  apply:
+    - Follow existing Expo Router, Tamagui, and feature/shared layering
+    - Keep tests aligned with strict TDD
+  verify:
+    - Prefer deterministic runs with pnpm test:ci and pnpm typecheck
+  archive:
+    - Warn before merging destructive deltas
