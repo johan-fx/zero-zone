@@ -7,12 +7,14 @@ node_modules/
 .expo/
 dist/
 web-build/
-expo-env.d.ts
+/expo-env.d.ts
 .atl/
 
 # Native build output
 /ios
 /android
+apps/*/ios/
+apps/*/android/
 .kotlin/
 *.orig.*
 *.jks
@@ -39,8 +41,16 @@ pnpm-debug.*
 .DS_Store
 *.pem
 
+# Python
+__pycache__/
+*.py[cod]
+
 # TypeScript
 *.tsbuildinfo
+
+# Playwright
+playwright-report/
+test-results/
 
 docs/design-system-visual-regression/
 docs/design-system-visual-regression.md
