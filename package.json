@@ -22,6 +22,7 @@
     "visual:audit:contact-sheet": "python3 scripts/build_visual_contact_sheets.py"
   },
   "dependencies": {
+    "@maplibre/maplibre-react-native": "^11.3.6",
     "@tamagui/animations-react-native": "2.3.3",
     "@tamagui/config": "2.3.3",
     "@tamagui/core": "2.3.3",
@@ -30,6 +31,7 @@
     "expo-linking": "~56.0.14",
     "expo-router": "~56.2.11",
     "expo-splash-screen": "~56.0.10",
+    "expo-sqlite": "~56.0.5",
     "expo-status-bar": "~56.0.4",
     "expo-system-ui": "~56.0.5",
     "react": "19.2.3",
@@ -41,6 +43,7 @@
     "react-native-screens": "4.25.2",
     "react-native-web": "~0.21.0",
     "react-native-worklets": "0.8.3",
+    "rxdb": "^17.3.0",
     "tamagui": "2.3.3"
   },
   "devDependencies": {
