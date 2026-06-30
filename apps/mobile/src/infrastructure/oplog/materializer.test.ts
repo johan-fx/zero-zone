@@ -131,17 +131,50 @@ describe('operation materializer', () => {
     ]);
   });
 
-  it('keeps resource report, dispatch event, and SOS placeholder views schema-compatible', async () => {
-    const resource = await op('resource_report.create', 'report-1', { resource: 'Blankets', quantity: 12, state: 'surplus' });
-    const dispatchCreate = await op('dispatch_event.create', 'dispatch-1', { eventType: 'assignment', status: 'open' });
-    const dispatchUpdate = await op('dispatch_event.update', 'dispatch-1', { status: 'acknowledged' });
+  it('materializes canonical resource reports, dispatch events, and SOS local views', async () => {
+    const resource = await op('resource_report.create', 'report-1', {
+      category: 'Blankets',
+      quantityApprox: '12 units',
+      urgency: 'high',
+      constraints: ['dry storage'],
+      reportKind: 'surplus',
+      workCenterId: 'center-1',
+    });
+    const dispatchCreate = await op('dispatch_event.create', 'dispatch-1', {
+      category: 'Blankets',
+      quantityApprox: '12 units',
+      fromResourceReportId: 'report-1',
+      targetWorkCenterId: 'center-2',
+    });
+    const dispatchUpdate = await op('dispatch_event.update', 'dispatch-1', { dispatchTaskId: 'dispatch-1', status: 'accepted', notes: 'Runner assigned' });
     const sosCreate = await op('sos.create', 'sos-1', { severity: 'critical', message: 'Need evacuation support' });
     const sosCancel = await op('sos.cancel', 'sos-1', { reason: 'Resolved locally' });
 
     const views = materializeOperations([resource, dispatchCreate, dispatchUpdate, sosCreate, sosCancel]);
 
-    expect(views.resourceReports).toEqual([expect.objectContaining({ reportId: 'report-1', resource: 'Blankets', state: 'surplus' })]);
-    expect(views.dispatchEvents).toEqual([expect.objectContaining({ dispatchEventId: 'dispatch-1', status: 'acknowledged' })]);
+    expect(views.resourceReports).toEqual([
+      expect.objectContaining({
+        reportId: 'report-1',
+        category: 'Blankets',
+        quantityApprox: '12 units',
+        urgency: 'high',
+        constraints: ['dry storage'],
+        reportKind: 'surplus',
+        workCenterId: 'center-1',
+        provisional: true,
+      }),
+    ]);
+    expect(views.dispatchEvents).toEqual([
+      expect.objectContaining({
+        dispatchEventId: 'dispatch-1',
+        dispatchTaskId: 'dispatch-1',
+        category: 'Blankets',
+        quantityApprox: '12 units',
+        status: 'accepted',
+        notes: 'Runner assigned',
+        provisionalReason: 'local_update_pending_sync',
+      }),
+    ]);
     expect(views.sosSignals).toEqual([expect.objectContaining({ sosId: 'sos-1', status: 'cancelled', message: 'Need evacuation support' })]);
   });
 });

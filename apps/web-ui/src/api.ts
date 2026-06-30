@@ -1,10 +1,18 @@
 import {
+  DispatchTaskConnectedUpdateRequestSchema,
+  DispatchTaskListResponseSchema,
+  DispatchTaskResponseSchema,
   HealthResponseSchema,
+  ResourceReportListResponseSchema,
   WorkCenterConnectedCreateRequestSchema,
   WorkCenterCreateResponseSchema,
   WorkCenterDetailResponseSchema,
   WorkCenterListResponseSchema,
+  type DispatchTaskConnectedUpdateRequest,
+  type DispatchTaskListResponse,
+  type DispatchTaskResponse,
   type HealthResponse,
+  type ResourceReportListResponse,
   type WorkCenterConnectedCreateRequest,
   type WorkCenterCreateResponse,
   type WorkCenterDetailResponse,
@@ -53,6 +61,47 @@ export async function fetchWorkCenterDetail(
   return WorkCenterDetailResponseSchema.parse(await response.json());
 }
 
+
+export async function fetchResourceReports(incidentId: string, fetcher: Fetcher = fetch): Promise<ResourceReportListResponse> {
+  const response = await fetcher(`${getApiBaseUrl()}${resourceReportCollectionPath(incidentId)}`);
+
+  if (!response.ok) {
+    throw new Error(`Resource report list failed with status ${response.status}`);
+  }
+
+  return ResourceReportListResponseSchema.parse(await response.json());
+}
+
+export async function fetchDispatchTasks(incidentId: string, fetcher: Fetcher = fetch): Promise<DispatchTaskListResponse> {
+  const response = await fetcher(`${getApiBaseUrl()}${dispatchTaskCollectionPath(incidentId)}`);
+
+  if (!response.ok) {
+    throw new Error(`Dispatch task list failed with status ${response.status}`);
+  }
+
+  return DispatchTaskListResponseSchema.parse(await response.json());
+}
+
+export async function updateDispatchTask(
+  incidentId: string,
+  dispatchTaskId: string,
+  request: DispatchTaskConnectedUpdateRequest,
+  fetcher: Fetcher = fetch,
+): Promise<DispatchTaskResponse> {
+  const payload = DispatchTaskConnectedUpdateRequestSchema.parse(request);
+  const response = await fetcher(`${getApiBaseUrl()}${dispatchTaskDetailPath(incidentId, dispatchTaskId)}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Dispatch task update failed with status ${response.status}`);
+  }
+
+  return DispatchTaskResponseSchema.parse(await response.json());
+}
+
 export async function createWorkCenter(
   incidentId: string,
   request: WorkCenterConnectedCreateRequest,
@@ -78,4 +127,17 @@ function workCenterCollectionPath(incidentId: string): string {
 
 function workCenterDetailPath(incidentId: string, workCenterId: string): string {
   return `${workCenterCollectionPath(incidentId)}/${encodeURIComponent(workCenterId)}`;
+}
+
+
+function resourceReportCollectionPath(incidentId: string): string {
+  return `/incidents/${encodeURIComponent(incidentId)}/resource-reports`;
+}
+
+function dispatchTaskCollectionPath(incidentId: string): string {
+  return `/incidents/${encodeURIComponent(incidentId)}/dispatch-tasks`;
+}
+
+function dispatchTaskDetailPath(incidentId: string, dispatchTaskId: string): string {
+  return `${dispatchTaskCollectionPath(incidentId)}/${encodeURIComponent(dispatchTaskId)}`;
 }

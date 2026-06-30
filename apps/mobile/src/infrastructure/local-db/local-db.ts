@@ -39,8 +39,8 @@ export const localDbSchemas = {
   work_centers: createSchema('work_centers', 'centerId', ['centerId', 'incidentId', 'cellId', 'name', 'status', 'syncState', 'updatedAt']),
   map_packs: createSchema('map_packs', 'packId', ['packId', 'incidentId', 'cellId', 'bounds', 'state', 'progress', 'estimatedBytes', 'downloadedBytes', 'updatedAt']),
   presence: createSchema('presence', 'presenceId', ['presenceId', 'incidentId', 'cellId', 'status', 'updatedAt']),
-  resource_reports: createSchema('resource_reports', 'reportId', ['reportId', 'incidentId', 'cellId', 'resource', 'state', 'updatedAt']),
-  dispatch_events: createSchema('dispatch_events', 'dispatchEventId', ['dispatchEventId', 'incidentId', 'cellId', 'status', 'updatedAt']),
+  resource_reports: createSchema('resource_reports', 'reportId', ['reportId', 'incidentId', 'cellId', 'category', 'quantityApprox', 'urgency', 'constraints', 'reportKind', 'syncState', 'updatedAt']),
+  dispatch_events: createSchema('dispatch_events', 'dispatchEventId', ['dispatchEventId', 'dispatchTaskId', 'incidentId', 'cellId', 'category', 'quantityApprox', 'status', 'updatedAt']),
   sos_signals: createSchema('sos_signals', 'sosId', ['sosId', 'incidentId', 'cellId', 'status', 'updatedAt']),
   local_summaries: createSchema('local_summaries', 'summaryId', ['summaryId', 'incidentId', 'cellId', 'operationFreshness', 'pendingOperations']),
 } as const satisfies Record<LocalDbCollectionName, LocalDbSchema>;
@@ -126,19 +126,32 @@ export type ResourceReportLocalView = {
   reportId: string;
   incidentId: string;
   cellId: string;
-  resource: string;
-  quantity: number;
-  state: string;
+  workCenterId?: string;
+  category: string;
+  quantityApprox: string;
+  urgency: string;
+  constraints: string[];
+  reportKind: string;
+  provisional?: boolean;
+  provisionalReason?: string;
   syncState: string;
   updatedAt: string;
 };
 
 export type DispatchEventLocalView = {
   dispatchEventId: string;
+  dispatchTaskId: string;
   incidentId: string;
   cellId: string;
-  eventType: string;
+  category: string;
+  quantityApprox: string;
+  fromResourceReportId?: string;
+  toResourceReportId?: string;
+  targetWorkCenterId?: string;
+  notes?: string;
   status: string;
+  provisional?: boolean;
+  provisionalReason?: string;
   updatedAt: string;
 };
 
@@ -437,9 +450,17 @@ function createSchema(title: string, primaryKey: string, required: string[]): Lo
       actorId: stringProperty,
       role: stringProperty,
       centerId: stringProperty,
-      resource: stringProperty,
-      quantity: numberProperty,
-      eventType: stringProperty,
+      workCenterId: stringProperty,
+      category: stringProperty,
+      quantityApprox: stringProperty,
+      urgency: stringProperty,
+      constraints: arrayProperty,
+      reportKind: stringProperty,
+      dispatchTaskId: stringProperty,
+      fromResourceReportId: stringProperty,
+      toResourceReportId: stringProperty,
+      targetWorkCenterId: stringProperty,
+      notes: stringProperty,
       severity: stringProperty,
       message: stringProperty,
       roleCounts: objectProperty,

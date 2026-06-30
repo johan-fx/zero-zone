@@ -5,6 +5,18 @@ import {
   HealthResponseSchema,
   IncidentConfigResponseSchema,
   IncidentJoinRequestSchema,
+  DispatchEventCreatePayloadSchema,
+  DispatchEventUpdatePayloadSchema,
+  DispatchTaskConnectedCreateRequestSchema,
+  DispatchTaskConnectedUpdateRequestSchema,
+  DispatchTaskListResponseSchema,
+  DispatchTaskResponseSchema,
+  type DispatchEventCreatePayload,
+  type DispatchEventUpdatePayload,
+  type DispatchTask,
+  type DispatchTaskConnectedCreateRequest,
+  type DispatchTaskConnectedUpdateRequest,
+  type DispatchTaskStatus,
   IncidentJoinResponseSchema,
   IncidentListResponseSchema,
   PendingSignedOperationSchema,
@@ -16,6 +28,17 @@ import {
   type IncidentSummary,
   type PermissionSnapshot,
   type PendingSignedOperation,
+  ResourceReportConnectedCreateRequestSchema,
+  ResourceReportCreateResponseSchema,
+  ResourceReportDetailResponseSchema,
+  ResourceReportListResponseSchema,
+  ResourceReportMatchResponseSchema,
+  ResourceReportPayloadSchema,
+  type ResourceReportConnectedCreateRequest,
+  type ResourceReportCreateResponse,
+  type ResourceReportDetail,
+  type ResourceReportPayload,
+  type ResourceReportSummary,
   type SyncPushResponse,
   TelegramWebhookResultSchema,
   WorkCenterConnectedCreateRequestSchema,
@@ -31,17 +54,27 @@ import {
   type WorkCenterSignalType,
   type WorkCenterSummary,
 } from '@zona-cero/contracts';
-import { deriveWorkCenterState, type WorkCenterSignalInput } from '@zona-cero/domain';
+import { deriveResourceReportState, deriveWorkCenterState, matchResourceReports, type WorkCenterSignalInput } from '@zona-cero/domain';
 import {
+  handleTelegramDispatchTaskFlow,
   handleTelegramIncidentJoinFlow,
+  handleTelegramResourceReportFlow,
   handleTelegramWorkCenterReportFlow,
+  isTerminalTelegramDispatchTaskState,
   isTerminalTelegramIncidentJoinState,
+  isTerminalTelegramResourceReportState,
   isTerminalTelegramWorkCenterReportState,
   resolveTelegramCommand,
+  safeParseTelegramDispatchTaskState,
   safeParseTelegramIncidentJoinState,
+  safeParseTelegramResourceReportState,
   safeParseTelegramWorkCenterReportState,
+  type TelegramDispatchTaskPorts,
+  type TelegramDispatchTaskState,
   type TelegramIncidentJoinPorts,
   type TelegramIncidentJoinState,
+  type TelegramResourceReportPorts,
+  type TelegramResourceReportState,
   type TelegramUpdateLike,
   type TelegramWorkCenterReportPorts,
   type TelegramWorkCenterReportState,
@@ -211,6 +244,128 @@ app.get('/incidents/:incidentId/work-centers/:workCenterId', async (c) => {
   return c.json(WorkCenterDetailResponseSchema.parse({ workCenter }));
 });
 
+
+app.post('/incidents/:incidentId/resource-reports', async (c) => {
+  const startedAt = Date.now();
+  const incident = await findIncident(c.env.DB, c.req.param('incidentId'));
+
+  if (!incident) {
+    logOperationEvent({ channel: null, opType: 'resource_report.create', opId: null, entityId: null, result: 'rejected', errorCode: 'not_found', latencyMs: Date.now() - startedAt });
+    return c.json({ error: 'not_found' }, 404);
+  }
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = ResourceReportConnectedCreateRequestSchema.safeParse(body);
+
+  if (!parsed.success) {
+    logOperationEvent({ channel: null, opType: 'resource_report.create', opId: null, entityId: null, result: 'rejected', errorCode: 'invalid_payload', latencyMs: Date.now() - startedAt });
+    return c.json({ error: 'invalid_payload', issues: parsed.error.issues }, 400);
+  }
+
+  const membership = await findIncidentMembershipForChannel(c.env.DB, incident.incidentId, parsed.data.channel, parsed.data.externalId);
+  if (!membership) {
+    logOperationEvent({ channel: parsed.data.channel, opType: 'resource_report.create', opId: null, entityId: null, result: 'rejected', errorCode: 'permission_denied', latencyMs: Date.now() - startedAt });
+    return c.json({ error: 'permission_denied' }, 403);
+  }
+
+  const response = await createConnectedResourceReport(c.env.DB, incident, parsed.data, membership);
+  logOperationEvent({ channel: parsed.data.channel, opType: 'resource_report.create', opId: null, entityId: response.resourceReport.resourceReportId, result: 'accepted', errorCode: null, latencyMs: Date.now() - startedAt });
+  return c.json(ResourceReportCreateResponseSchema.parse(response));
+});
+
+app.get('/incidents/:incidentId/resource-reports', async (c) => {
+  const incident = await findIncident(c.env.DB, c.req.param('incidentId'));
+  if (!incident) {
+    return c.json({ error: 'not_found' }, 404);
+  }
+
+  return c.json(ResourceReportListResponseSchema.parse({ resourceReports: await listResourceReports(c.env.DB, incident.incidentId) }));
+});
+
+app.get('/incidents/:incidentId/resource-reports/matches', async (c) => {
+  const incident = await findIncident(c.env.DB, c.req.param('incidentId'));
+  if (!incident) {
+    return c.json({ error: 'not_found' }, 404);
+  }
+
+  const reports = await listResourceReports(c.env.DB, incident.incidentId);
+  return c.json(ResourceReportMatchResponseSchema.parse({ matches: matchResourceReports(reports) }));
+});
+
+app.get('/incidents/:incidentId/resource-reports/:resourceReportId', async (c) => {
+  const incident = await findIncident(c.env.DB, c.req.param('incidentId'));
+  if (!incident) {
+    return c.json({ error: 'not_found' }, 404);
+  }
+
+  const resourceReport = await getResourceReportDetail(c.env.DB, incident.incidentId, c.req.param('resourceReportId'));
+  if (!resourceReport) {
+    return c.json({ error: 'not_found' }, 404);
+  }
+
+  return c.json(ResourceReportDetailResponseSchema.parse({ resourceReport }));
+});
+
+app.post('/incidents/:incidentId/dispatch-tasks', async (c) => {
+  const startedAt = Date.now();
+  const incident = await findIncident(c.env.DB, c.req.param('incidentId'));
+  if (!incident) {
+    logOperationEvent({ channel: null, opType: 'dispatch_event.create', opId: null, entityId: null, result: 'rejected', errorCode: 'not_found', latencyMs: Date.now() - startedAt });
+    return c.json({ error: 'not_found' }, 404);
+  }
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = DispatchTaskConnectedCreateRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    logOperationEvent({ channel: null, opType: 'dispatch_event.create', opId: null, entityId: null, result: 'rejected', errorCode: 'invalid_payload', latencyMs: Date.now() - startedAt });
+    return c.json({ error: 'invalid_payload', issues: parsed.error.issues }, 400);
+  }
+
+  const membership = await findIncidentMembershipForChannel(c.env.DB, incident.incidentId, parsed.data.channel, parsed.data.externalId);
+  if (!membership) {
+    logOperationEvent({ channel: parsed.data.channel, opType: 'dispatch_event.create', opId: null, entityId: null, result: 'rejected', errorCode: 'permission_denied', latencyMs: Date.now() - startedAt });
+    return c.json({ error: 'permission_denied' }, 403);
+  }
+
+  const response = await createConnectedDispatchTask(c.env.DB, incident, parsed.data, membership);
+  logOperationEvent({ channel: parsed.data.channel, opType: 'dispatch_event.create', opId: null, entityId: response.dispatchTask.dispatchTaskId, result: 'accepted', errorCode: null, latencyMs: Date.now() - startedAt });
+  return c.json(DispatchTaskResponseSchema.parse(response));
+});
+
+app.get('/incidents/:incidentId/dispatch-tasks', async (c) => {
+  const incident = await findIncident(c.env.DB, c.req.param('incidentId'));
+  if (!incident) {
+    return c.json({ error: 'not_found' }, 404);
+  }
+
+  return c.json(DispatchTaskListResponseSchema.parse({ dispatchTasks: await listDispatchTasks(c.env.DB, incident.incidentId) }));
+});
+
+app.patch('/incidents/:incidentId/dispatch-tasks/:dispatchTaskId', async (c) => {
+  const incident = await findIncident(c.env.DB, c.req.param('incidentId'));
+  if (!incident) {
+    return c.json({ error: 'not_found' }, 404);
+  }
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = DispatchTaskConnectedUpdateRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: 'invalid_payload', issues: parsed.error.issues }, 400);
+  }
+
+  const membership = await findIncidentMembershipForChannel(c.env.DB, incident.incidentId, parsed.data.channel, parsed.data.externalId);
+  if (!membership) {
+    return c.json({ error: 'permission_denied' }, 403);
+  }
+
+  const response = await updateConnectedDispatchTask(c.env.DB, incident, c.req.param('dispatchTaskId'), parsed.data, membership);
+  if (!response) {
+    return c.json({ error: 'not_found' }, 404);
+  }
+
+  return c.json(DispatchTaskResponseSchema.parse(response));
+});
+
 app.post('/sync/push', async (c) => {
   const startedAt = Date.now();
   const body = await c.req.json().catch(() => null);
@@ -311,6 +466,46 @@ type WorkCenterSignalRow = {
   createdAt: string;
 };
 
+type ResourceReportRow = {
+  resourceReportId: string;
+  incidentId: string;
+  cellId: string;
+  workCenterId: string | null;
+  category: string;
+  quantityApprox: string;
+  urgency: ResourceReportSummary['urgency'];
+  constraintsJson: string;
+  reportKind: ResourceReportSummary['reportKind'];
+  freshness: ResourceReportSummary['freshness'];
+  confidence: ResourceReportSummary['confidence'];
+  risk: ResourceReportSummary['risk'];
+  sourceChannel: Channel | null;
+  sourceOperationId: string | null;
+  actorKeyId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type DispatchTaskRow = {
+  dispatchTaskId: string;
+  incidentId: string;
+  cellId: string;
+  category: string;
+  quantityApprox: string;
+  fromResourceReportId: string | null;
+  toResourceReportId: string | null;
+  targetWorkCenterId: string | null;
+  status: DispatchTaskStatus;
+  notes: string | null;
+  sourceChannel: Channel | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type ExistingDispatchTaskCreateRow = DispatchTaskRow & {
+  sourceOperationId: string | null;
+};
+
 function parseSyncPushBody(body: unknown): SyncPushBodyParseResult {
   if (!body || typeof body !== 'object' || !Array.isArray((body as { operations?: unknown }).operations)) {
     return { success: false, error: { issues: [{ message: 'operations must be an array' }] } };
@@ -348,6 +543,14 @@ async function handleSyncPushOperation(db: D1Database, rawOperation: unknown, st
   if (!parsed.success) {
     logOperationEvent({ channel: 'mobile', opType, opId, entityId, result: 'rejected', errorCode: 'invalid_payload', latencyMs: Date.now() - startedAt });
     return { status: 'rejected', ...(opId ? { opId } : {}), code: 'invalid_payload' };
+  }
+
+  if (parsed.data.opType === 'resource_report.create') {
+    return handleResourceReportCreateSyncOperation(db, parsed.data, startedAt);
+  }
+
+  if (parsed.data.opType === 'dispatch_event.create' || parsed.data.opType === 'dispatch_event.update') {
+    return handleDispatchEventSyncOperation(db, parsed.data, startedAt);
   }
 
   if (parsed.data.opType !== 'work_center.create') {
@@ -446,6 +649,134 @@ async function handleSyncPushOperation(db: D1Database, rawOperation: unknown, st
   });
 
   return { opId: parsed.data.opId, status: 'accepted' };
+}
+
+
+async function handleResourceReportCreateSyncOperation(db: D1Database, operation: PendingSignedOperation, startedAt: number): Promise<SyncPushOperationResult> {
+  const payload = ResourceReportPayloadSchema.safeParse(operation.payload);
+  if (!payload.success) {
+    logOperationEvent({ channel: 'mobile', opType: operation.opType, opId: operation.opId, entityId: operation.entityId, result: 'rejected', errorCode: 'invalid_payload', latencyMs: Date.now() - startedAt });
+    return { opId: operation.opId, status: 'rejected', code: 'invalid_payload' };
+  }
+
+  const incident = await findIncident(db, operation.incidentId);
+  if (!incident) {
+    logOperationEvent({ channel: 'mobile', opType: operation.opType, opId: operation.opId, entityId: operation.entityId, result: 'rejected', errorCode: 'not_found', latencyMs: Date.now() - startedAt });
+    return { opId: operation.opId, status: 'rejected', code: 'not_found' };
+  }
+
+  const payloadHash = await hashJson({ operation });
+  const existing = await resolveExistingSyncOperation(db, operation, payloadHash, startedAt);
+  if (existing) {
+    return existing;
+  }
+
+  const existingReport = await db.prepare('SELECT source_operation_id AS sourceOperationId FROM resource_reports WHERE resource_report_id = ?')
+    .bind(operation.entityId)
+    .first<{ sourceOperationId: string | null }>();
+  if (existingReport && existingReport.sourceOperationId !== operation.opId) {
+    await recordSyncOperation(db, operation, payloadHash, 'rejected');
+    return rejectOperation(operation, startedAt, 'operation_conflict');
+  }
+
+  await materializeResourceReportCreateOperation(db, operation, payload.data, 'mobile');
+  await recordSyncOperation(db, operation, payloadHash, 'accepted');
+  logOperationEvent({ channel: 'mobile', opType: operation.opType, opId: operation.opId, entityId: operation.entityId, result: 'accepted', errorCode: null, latencyMs: Date.now() - startedAt });
+  return { opId: operation.opId, status: 'accepted' };
+}
+
+async function handleDispatchEventSyncOperation(db: D1Database, operation: PendingSignedOperation, startedAt: number): Promise<SyncPushOperationResult> {
+  const createPayload = operation.opType === 'dispatch_event.create' ? DispatchEventCreatePayloadSchema.safeParse(operation.payload) : null;
+  const updatePayload = operation.opType === 'dispatch_event.update' ? DispatchEventUpdatePayloadSchema.safeParse(operation.payload) : null;
+  if ((operation.opType === 'dispatch_event.create' && !createPayload?.success) || (operation.opType === 'dispatch_event.update' && !updatePayload?.success)) {
+    return rejectOperation(operation, startedAt, 'invalid_payload');
+  }
+
+  const incident = await findIncident(db, operation.incidentId);
+  if (!incident) {
+    return rejectOperation(operation, startedAt, 'not_found');
+  }
+
+  const payloadHash = await hashJson({ operation });
+  const existing = await resolveExistingSyncOperation(db, operation, payloadHash, startedAt);
+  if (existing) {
+    return existing;
+  }
+
+  if (createPayload?.success) {
+    const existingDispatchTask = await getExistingDispatchTaskForCreate(db, operation.incidentId, operation.entityId);
+    if (existingDispatchTask) {
+      if (isConflictingDispatchTaskCreate(existingDispatchTask, operation, createPayload.data)) {
+        await recordSyncOperation(db, operation, payloadHash, 'rejected');
+        return rejectOperation(operation, startedAt, 'operation_conflict');
+      }
+
+      await recordSyncOperation(db, operation, payloadHash, 'accepted');
+      logOperationEvent({ channel: 'mobile', opType: operation.opType, opId: operation.opId, entityId: operation.entityId, result: 'accepted', errorCode: null, latencyMs: Date.now() - startedAt });
+      return { opId: operation.opId, status: 'accepted' };
+    }
+
+    await materializeDispatchTaskCreateOperation(db, operation, createPayload.data, 'mobile');
+  } else if (updatePayload?.success) {
+    const updated = await materializeDispatchTaskUpdateOperation(db, operation, updatePayload.data, 'mobile');
+    if (!updated) {
+      await recordSyncOperation(db, operation, payloadHash, 'rejected');
+      return rejectOperation(operation, startedAt, 'not_found');
+    }
+  }
+
+  await recordSyncOperation(db, operation, payloadHash, 'accepted');
+  logOperationEvent({ channel: 'mobile', opType: operation.opType, opId: operation.opId, entityId: operation.entityId, result: 'accepted', errorCode: null, latencyMs: Date.now() - startedAt });
+  return { opId: operation.opId, status: 'accepted' };
+}
+
+async function resolveExistingSyncOperation(
+  db: D1Database,
+  operation: PendingSignedOperation,
+  payloadHash: string,
+  startedAt: number,
+): Promise<SyncPushOperationResult | null> {
+  const existingOperation = await db
+    .prepare('SELECT payload_hash AS payloadHash, status FROM sync_operations WHERE op_id = ?')
+    .bind(operation.opId)
+    .first<{ payloadHash: string; status: string }>();
+
+  if (!existingOperation) {
+    return null;
+  }
+
+  const result = existingOperation.payloadHash === payloadHash && existingOperation.status === 'accepted' ? 'accepted' : 'rejected';
+  const errorCode = result === 'accepted' ? null : 'operation_conflict';
+  logOperationEvent({ channel: 'mobile', opType: operation.opType, opId: operation.opId, entityId: operation.entityId, result, errorCode, latencyMs: Date.now() - startedAt });
+  return result === 'accepted' ? { opId: operation.opId, status: 'accepted' } : { opId: operation.opId, status: 'rejected', code: 'operation_conflict' };
+}
+
+function rejectOperation(operation: PendingSignedOperation, startedAt: number, code: ContractErrorCode): SyncPushOperationResult {
+  logOperationEvent({ channel: 'mobile', opType: operation.opType, opId: operation.opId, entityId: operation.entityId, result: 'rejected', errorCode: code, latencyMs: Date.now() - startedAt });
+  return { opId: operation.opId, status: 'rejected', code };
+}
+
+async function getExistingDispatchTaskForCreate(db: D1Database, incidentId: string, dispatchTaskId: string): Promise<ExistingDispatchTaskCreateRow | null> {
+  const row = await db.prepare(dispatchTaskSelectSql('WHERE incident_id = ? AND dispatch_task_id = ?'))
+    .bind(incidentId, dispatchTaskId)
+    .first<ExistingDispatchTaskCreateRow>();
+  return row ?? null;
+}
+
+function isConflictingDispatchTaskCreate(existing: ExistingDispatchTaskCreateRow, operation: PendingSignedOperation, payload: DispatchEventCreatePayload): boolean {
+  if (existing.sourceOperationId !== operation.opId) {
+    return true;
+  }
+
+  return existing.incidentId !== operation.incidentId
+    || existing.cellId !== operation.cellId
+    || existing.category !== payload.category
+    || existing.quantityApprox !== payload.quantityApprox
+    || existing.fromResourceReportId !== (payload.fromResourceReportId ?? null)
+    || existing.toResourceReportId !== (payload.toResourceReportId ?? null)
+    || existing.targetWorkCenterId !== (payload.targetWorkCenterId ?? null)
+    || existing.status !== (payload.status ?? 'pending')
+    || existing.notes !== (payload.notes ?? null);
 }
 
 async function materializeWorkCenterCreateOperation(
@@ -790,6 +1121,266 @@ async function deriveWorkCenterReadState(db: D1Database, row: WorkCenterRow) {
   return deriveWorkCenterState({ signals: results, updatedAt: row.updatedAt, priority: row.priority });
 }
 
+
+async function createConnectedResourceReport(
+  db: D1Database,
+  incident: IncidentSummary,
+  request: ResourceReportConnectedCreateRequest,
+  membership: IncidentMembershipLookup,
+): Promise<ResourceReportCreateResponse> {
+  const resourceReportId = `rr_${slug(incident.incidentId)}_${slug(request.channel)}_${slug(request.externalId)}_${slug(request.payload.reportKind)}_${slug(request.payload.category)}`;
+  const auditEventId = `audit_resource_report_created_${slug(incident.incidentId)}_${resourceReportId}`;
+  const nowIso = new Date().toISOString();
+  await insertResourceReport(db, resourceReportId, incident.incidentId, `connected-${request.channel}`, request.payload, request.channel, null, null, nowIso);
+  await db.prepare(
+    `INSERT OR IGNORE INTO audit_events (audit_event_id, incident_id, channel_identity_id, incident_membership_id, event_type, payload_json)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).bind(auditEventId, incident.incidentId, membership.channelIdentityId, membership.incidentMembershipId, 'resource_report.created', JSON.stringify({ resourceReportId })).run();
+  const resourceReport = await getResourceReportDetail(db, incident.incidentId, resourceReportId);
+  if (!resourceReport) {
+    throw new Error(`Resource report was not persisted: ${resourceReportId}`);
+  }
+  return ResourceReportCreateResponseSchema.parse({ resourceReport, audit: { auditEventId }, idempotent: false });
+}
+
+async function materializeResourceReportCreateOperation(
+  db: D1Database,
+  operation: PendingSignedOperation,
+  payload: ResourceReportPayload,
+  channel: Channel,
+): Promise<void> {
+  await insertResourceReport(db, operation.entityId, operation.incidentId, operation.cellId, payload, channel, operation.opId, operation.actorKeyId, payload.reportedAt ?? operation.createdAtDevice);
+}
+
+async function insertResourceReport(
+  db: D1Database,
+  resourceReportId: string,
+  incidentId: string,
+  cellId: string,
+  payload: ResourceReportPayload,
+  sourceChannel: Channel,
+  sourceOperationId: string | null,
+  actorKeyId: string | null,
+  timestamp: string,
+): Promise<void> {
+  const state = deriveResourceReportState({ updatedAt: timestamp, reportKind: payload.reportKind, urgency: payload.urgency, constraints: payload.constraints });
+  await db.prepare(
+    `INSERT OR IGNORE INTO resource_reports (
+       resource_report_id, incident_id, cell_id, work_center_id, category, quantity_approx, urgency, constraints_json,
+       report_kind, freshness, confidence, risk, source_channel, source_operation_id, actor_key_id, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    resourceReportId,
+    incidentId,
+    cellId,
+    payload.workCenterId ?? null,
+    payload.category,
+    payload.quantityApprox,
+    payload.urgency,
+    JSON.stringify(payload.constraints),
+    payload.reportKind,
+    state.freshness,
+    state.confidence,
+    state.risk,
+    sourceChannel,
+    sourceOperationId,
+    actorKeyId,
+    timestamp,
+    timestamp,
+  ).run();
+}
+
+async function listResourceReports(db: D1Database, incidentId: string): Promise<ResourceReportSummary[]> {
+  const { results } = await db.prepare(resourceReportSelectSql('WHERE incident_id = ? ORDER BY updated_at DESC')).bind(incidentId).all<ResourceReportRow>();
+  return results.map(rowToResourceReportSummary);
+}
+
+async function getResourceReportDetail(db: D1Database, incidentId: string, resourceReportId: string): Promise<ResourceReportDetail | null> {
+  const row = await db.prepare(resourceReportSelectSql('WHERE incident_id = ? AND resource_report_id = ?')).bind(incidentId, resourceReportId).first<ResourceReportRow>();
+  return row ? rowToResourceReportDetail(row) : null;
+}
+
+function resourceReportSelectSql(whereClause: string): string {
+  return `SELECT resource_report_id AS resourceReportId, incident_id AS incidentId, cell_id AS cellId, work_center_id AS workCenterId,
+    category, quantity_approx AS quantityApprox, urgency, constraints_json AS constraintsJson, report_kind AS reportKind,
+    freshness, confidence, risk, source_channel AS sourceChannel, source_operation_id AS sourceOperationId,
+    actor_key_id AS actorKeyId, created_at AS createdAt, updated_at AS updatedAt
+    FROM resource_reports ${whereClause}`;
+}
+
+function rowToResourceReportSummary(row: ResourceReportRow): ResourceReportSummary {
+  const state = deriveResourceReportState({ updatedAt: row.updatedAt, reportKind: row.reportKind, urgency: row.urgency, constraints: parseStringArray(row.constraintsJson) });
+  return ResourceReportListResponseSchema.shape.resourceReports.element.parse({
+    resourceReportId: row.resourceReportId,
+    incidentId: row.incidentId,
+    cellId: row.cellId,
+    ...(row.workCenterId ? { workCenterId: row.workCenterId } : {}),
+    category: row.category,
+    quantityApprox: row.quantityApprox,
+    urgency: row.urgency,
+    constraints: parseStringArray(row.constraintsJson),
+    reportKind: row.reportKind,
+    freshness: state.freshness,
+    confidence: state.confidence,
+    risk: state.risk,
+    ...(row.sourceChannel ? { sourceChannel: row.sourceChannel } : {}),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  });
+}
+
+function rowToResourceReportDetail(row: ResourceReportRow): ResourceReportDetail {
+  return ResourceReportDetailResponseSchema.shape.resourceReport.parse({
+    ...rowToResourceReportSummary(row),
+    ...(row.sourceOperationId ? { sourceOperationId: row.sourceOperationId } : {}),
+    ...(row.actorKeyId ? { actorKeyId: row.actorKeyId } : {}),
+  });
+}
+
+async function createConnectedDispatchTask(
+  db: D1Database,
+  incident: IncidentSummary,
+  request: DispatchTaskConnectedCreateRequest,
+  membership: IncidentMembershipLookup,
+): Promise<{ dispatchTask: DispatchTask; audit: { auditEventId: string }; idempotent: boolean }> {
+  const dispatchTaskId = `dt_${slug(incident.incidentId)}_${slug(request.channel)}_${slug(request.externalId)}_${slug(request.payload.category)}`;
+  const auditEventId = `audit_dispatch_task_created_${slug(incident.incidentId)}_${dispatchTaskId}`;
+  const nowIso = new Date().toISOString();
+  await insertDispatchTask(db, dispatchTaskId, incident.incidentId, `connected-${request.channel}`, request.payload, request.channel, null, nowIso);
+  await db.prepare(`INSERT OR IGNORE INTO audit_events (audit_event_id, incident_id, channel_identity_id, incident_membership_id, event_type, payload_json) VALUES (?, ?, ?, ?, ?, ?)`)
+    .bind(auditEventId, incident.incidentId, membership.channelIdentityId, membership.incidentMembershipId, 'dispatch_task.created', JSON.stringify({ dispatchTaskId })).run();
+  const dispatchTask = await getDispatchTask(db, incident.incidentId, dispatchTaskId);
+  if (!dispatchTask) {
+    throw new Error(`Dispatch task was not persisted: ${dispatchTaskId}`);
+  }
+  return { dispatchTask, audit: { auditEventId }, idempotent: false };
+}
+
+async function updateConnectedDispatchTask(
+  db: D1Database,
+  incident: IncidentSummary,
+  dispatchTaskId: string,
+  request: DispatchTaskConnectedUpdateRequest,
+  membership: IncidentMembershipLookup,
+): Promise<{ dispatchTask: DispatchTask; audit: { auditEventId: string } } | null> {
+  const payload: DispatchEventUpdatePayload = { dispatchTaskId, status: request.status, ...(request.notes ? { notes: request.notes } : {}) };
+  const updated = await updateDispatchTaskStatus(db, incident.incidentId, payload, request.channel, null, null, new Date().toISOString());
+  if (!updated) {
+    return null;
+  }
+  const auditEventId = `audit_dispatch_task_updated_${slug(incident.incidentId)}_${slug(dispatchTaskId)}_${slug(request.status)}`;
+  await db.prepare(`INSERT OR IGNORE INTO audit_events (audit_event_id, incident_id, channel_identity_id, incident_membership_id, event_type, payload_json) VALUES (?, ?, ?, ?, ?, ?)`)
+    .bind(auditEventId, incident.incidentId, membership.channelIdentityId, membership.incidentMembershipId, 'dispatch_task.updated', JSON.stringify({ dispatchTaskId, status: request.status })).run();
+  return { dispatchTask: updated, audit: { auditEventId } };
+}
+
+async function materializeDispatchTaskCreateOperation(db: D1Database, operation: PendingSignedOperation, payload: DispatchEventCreatePayload, channel: Channel): Promise<void> {
+  await insertDispatchTask(db, operation.entityId, operation.incidentId, operation.cellId, payload, channel, operation.opId, operation.createdAtDevice, payload.status ?? 'pending');
+}
+
+async function materializeDispatchTaskUpdateOperation(db: D1Database, operation: PendingSignedOperation, payload: DispatchEventUpdatePayload, channel: Channel): Promise<DispatchTask | null> {
+  return updateDispatchTaskStatus(db, operation.incidentId, payload, channel, operation.opId, operation.actorKeyId, operation.createdAtDevice);
+}
+
+async function insertDispatchTask(
+  db: D1Database,
+  dispatchTaskId: string,
+  incidentId: string,
+  cellId: string,
+  payload: DispatchEventCreatePayload,
+  sourceChannel: Channel,
+  sourceOperationId: string | null,
+  timestamp: string,
+  explicitStatus: DispatchTaskStatus = 'pending',
+): Promise<void> {
+  const status = payload.status ?? explicitStatus;
+  await db.prepare(
+    `INSERT OR IGNORE INTO dispatch_tasks (
+      dispatch_task_id, incident_id, cell_id, category, quantity_approx, from_resource_report_id, to_resource_report_id,
+      target_work_center_id, status, notes, source_channel, source_operation_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(dispatchTaskId, incidentId, cellId, payload.category, payload.quantityApprox, payload.fromResourceReportId ?? null, payload.toResourceReportId ?? null, payload.targetWorkCenterId ?? null, status, payload.notes ?? null, sourceChannel, sourceOperationId, timestamp, timestamp).run();
+  await insertDispatchEvent(db, `de_${slug(sourceOperationId ?? dispatchTaskId)}_created`, dispatchTaskId, incidentId, status, payload.notes ?? null, sourceChannel, sourceOperationId, null, timestamp);
+}
+
+async function updateDispatchTaskStatus(
+  db: D1Database,
+  incidentId: string,
+  payload: DispatchEventUpdatePayload,
+  sourceChannel: Channel,
+  sourceOperationId: string | null,
+  actorKeyId: string | null,
+  timestamp: string,
+): Promise<DispatchTask | null> {
+  const existing = await getDispatchTask(db, incidentId, payload.dispatchTaskId);
+  if (!existing) {
+    return null;
+  }
+  await db.prepare('UPDATE dispatch_tasks SET status = ?, notes = COALESCE(?, notes), updated_at = ? WHERE incident_id = ? AND dispatch_task_id = ?')
+    .bind(payload.status, payload.notes ?? null, timestamp, incidentId, payload.dispatchTaskId).run();
+  await insertDispatchEvent(db, `de_${slug(sourceOperationId ?? `${payload.dispatchTaskId}_${payload.status}`)}`, payload.dispatchTaskId, incidentId, payload.status, payload.notes ?? null, sourceChannel, sourceOperationId, actorKeyId, timestamp);
+  return getDispatchTask(db, incidentId, payload.dispatchTaskId);
+}
+
+async function insertDispatchEvent(
+  db: D1Database,
+  dispatchEventId: string,
+  dispatchTaskId: string,
+  incidentId: string,
+  status: DispatchTaskStatus,
+  notes: string | null,
+  sourceChannel: Channel,
+  sourceOperationId: string | null,
+  actorKeyId: string | null,
+  timestamp: string,
+): Promise<void> {
+  await db.prepare(`INSERT OR IGNORE INTO dispatch_events (dispatch_event_id, dispatch_task_id, incident_id, status, notes, source_channel, source_operation_id, actor_key_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(dispatchEventId, dispatchTaskId, incidentId, status, notes, sourceChannel, sourceOperationId, actorKeyId, timestamp).run();
+}
+
+async function listDispatchTasks(db: D1Database, incidentId: string): Promise<DispatchTask[]> {
+  const { results } = await db.prepare(dispatchTaskSelectSql('WHERE incident_id = ? ORDER BY updated_at DESC')).bind(incidentId).all<DispatchTaskRow>();
+  return results.map(rowToDispatchTask);
+}
+
+async function getDispatchTask(db: D1Database, incidentId: string, dispatchTaskId: string): Promise<DispatchTask | null> {
+  const row = await db.prepare(dispatchTaskSelectSql('WHERE incident_id = ? AND dispatch_task_id = ?')).bind(incidentId, dispatchTaskId).first<DispatchTaskRow>();
+  return row ? rowToDispatchTask(row) : null;
+}
+
+function dispatchTaskSelectSql(whereClause: string): string {
+  return `SELECT dispatch_task_id AS dispatchTaskId, incident_id AS incidentId, cell_id AS cellId, category, quantity_approx AS quantityApprox,
+    from_resource_report_id AS fromResourceReportId, to_resource_report_id AS toResourceReportId, target_work_center_id AS targetWorkCenterId,
+    status, notes, source_channel AS sourceChannel, source_operation_id AS sourceOperationId, created_at AS createdAt, updated_at AS updatedAt FROM dispatch_tasks ${whereClause}`;
+}
+
+function rowToDispatchTask(row: DispatchTaskRow): DispatchTask {
+  return DispatchTaskResponseSchema.shape.dispatchTask.parse({
+    dispatchTaskId: row.dispatchTaskId,
+    incidentId: row.incidentId,
+    cellId: row.cellId,
+    category: row.category,
+    quantityApprox: row.quantityApprox,
+    ...(row.fromResourceReportId ? { fromResourceReportId: row.fromResourceReportId } : {}),
+    ...(row.toResourceReportId ? { toResourceReportId: row.toResourceReportId } : {}),
+    ...(row.targetWorkCenterId ? { targetWorkCenterId: row.targetWorkCenterId } : {}),
+    status: row.status,
+    ...(row.notes ? { notes: row.notes } : {}),
+    ...(row.sourceChannel ? { sourceChannel: row.sourceChannel } : {}),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  });
+}
+
+function parseStringArray(value: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 function readStringProperty(value: unknown, property: string): string | null {
   if (!value || typeof value !== 'object') {
     return null;
@@ -849,24 +1440,62 @@ function createIncidentConfigResponse(incident: IncidentSummary): IncidentConfig
 
 
 async function handleTelegramConversation(db: D1Database, update: TelegramUpdateLike, command: string | null): Promise<string> {
-  const workCenterStateKey = getTelegramWorkCenterConversationStateKey(update);
   const joinStateKey = getTelegramConversationStateKey(update);
+  const workCenterStateKey = getTelegramWorkCenterConversationStateKey(update);
+  const resourceStateKey = getTelegramResourceConversationStateKey(update);
+  const dispatchStateKey = getTelegramDispatchConversationStateKey(update);
+
+  if (command === '/start') {
+    await deleteTelegramConversationStates(db, [workCenterStateKey, resourceStateKey, dispatchStateKey]);
+    return handleTelegramIncidentJoinConversation(db, update, joinStateKey);
+  }
 
   if (command === '/workcenter') {
+    await deleteTelegramConversationStates(db, [resourceStateKey, dispatchStateKey]);
     return handleTelegramWorkCenterConversation(db, update, workCenterStateKey);
   }
 
-  if (command !== '/start' && workCenterStateKey) {
-    const existingWorkCenterState = await loadTelegramConversationState(
-      db,
-      workCenterStateKey,
-      safeParseTelegramWorkCenterReportState,
-      { step: 'idle' } satisfies TelegramWorkCenterReportState,
-    );
+  if (command === '/resource') {
+    await deleteTelegramConversationStates(db, [workCenterStateKey, dispatchStateKey]);
+    return handleTelegramResourceConversation(db, update, resourceStateKey);
+  }
 
-    if (existingWorkCenterState.step !== 'idle') {
-      return handleTelegramWorkCenterConversation(db, update, workCenterStateKey, existingWorkCenterState);
-    }
+  if (command === '/dispatch') {
+    await deleteTelegramConversationStates(db, [workCenterStateKey, resourceStateKey]);
+    return handleTelegramDispatchConversation(db, update, dispatchStateKey);
+  }
+
+  const routedResource = await routeExistingTelegramFlow(
+    db,
+    resourceStateKey,
+    safeParseTelegramResourceReportState,
+    { step: 'idle' } satisfies TelegramResourceReportState,
+    (state) => handleTelegramResourceConversation(db, update, resourceStateKey, state),
+  );
+  if (routedResource) {
+    return routedResource;
+  }
+
+  const routedDispatch = await routeExistingTelegramFlow(
+    db,
+    dispatchStateKey,
+    safeParseTelegramDispatchTaskState,
+    { step: 'idle' } satisfies TelegramDispatchTaskState,
+    (state) => handleTelegramDispatchConversation(db, update, dispatchStateKey, state),
+  );
+  if (routedDispatch) {
+    return routedDispatch;
+  }
+
+  const routedWorkCenter = await routeExistingTelegramFlow(
+    db,
+    workCenterStateKey,
+    safeParseTelegramWorkCenterReportState,
+    { step: 'idle' } satisfies TelegramWorkCenterReportState,
+    (state) => handleTelegramWorkCenterConversation(db, update, workCenterStateKey, state),
+  );
+  if (routedWorkCenter) {
+    return routedWorkCenter;
   }
 
   return handleTelegramIncidentJoinConversation(db, update, joinStateKey);
@@ -913,8 +1542,77 @@ async function handleTelegramWorkCenterConversation(
   return result.responseText;
 }
 
+async function handleTelegramResourceConversation(
+  db: D1Database,
+  update: TelegramUpdateLike,
+  stateKey: string | null,
+  loadedState?: TelegramResourceReportState,
+): Promise<string> {
+  const currentState = loadedState ?? (stateKey
+    ? await loadTelegramConversationState(db, stateKey, safeParseTelegramResourceReportState, { step: 'idle' } satisfies TelegramResourceReportState)
+    : ({ step: 'idle' } satisfies TelegramResourceReportState));
+  const ports = createTelegramResourceReportPorts(db);
+  const result = await handleTelegramResourceReportFlow(currentState, update, ports);
+
+  if (stateKey) {
+    if (isTerminalTelegramResourceReportState(result.state) || isPermissionDeniedTelegramResourceResult(currentState, result.responseText)) {
+      await deleteTelegramConversationState(db, stateKey);
+    } else {
+      await persistTelegramConversationState(db, stateKey, result.state);
+    }
+  }
+
+  return result.responseText;
+}
+
+async function handleTelegramDispatchConversation(
+  db: D1Database,
+  update: TelegramUpdateLike,
+  stateKey: string | null,
+  loadedState?: TelegramDispatchTaskState,
+): Promise<string> {
+  const currentState = loadedState ?? (stateKey
+    ? await loadTelegramConversationState(db, stateKey, safeParseTelegramDispatchTaskState, { step: 'idle' } satisfies TelegramDispatchTaskState)
+    : ({ step: 'idle' } satisfies TelegramDispatchTaskState));
+  const ports = createTelegramDispatchTaskPorts(db);
+  const result = await handleTelegramDispatchTaskFlow(currentState, update, ports);
+
+  if (stateKey) {
+    if (isTerminalLikeTelegramDispatchResult(result.state, result.responseText)) {
+      await deleteTelegramConversationState(db, stateKey);
+    } else {
+      await persistTelegramConversationState(db, stateKey, result.state);
+    }
+  }
+
+  return result.responseText;
+}
+
 function isPermissionDeniedTelegramWorkCenterResult(state: TelegramWorkCenterReportState, responseText: string): boolean {
   return state.step === 'awaitingConfirmation' && responseText.includes('Permission denied');
+}
+
+function isPermissionDeniedTelegramResourceResult(state: TelegramResourceReportState, responseText: string): boolean {
+  return state.step === 'awaitingConfirmation' && responseText.includes('Permission denied');
+}
+
+function isTerminalLikeTelegramDispatchResult(state: TelegramDispatchTaskState, responseText: string): boolean {
+  return isTerminalTelegramDispatchTaskState(state) || responseText.includes('Permission denied') || responseText.includes('Dispatch task not found');
+}
+
+async function routeExistingTelegramFlow<TState extends { step: string }>(
+  db: D1Database,
+  stateKey: string | null,
+  safeParseState: (value: unknown) => { success: true; data: TState } | { success: false; error: Error },
+  idleState: TState,
+  handle: (state: TState) => Promise<string>,
+): Promise<string | null> {
+  if (!stateKey) {
+    return null;
+  }
+
+  const state = await loadTelegramConversationState(db, stateKey, safeParseState, idleState);
+  return state.step === 'idle' ? null : handle(state);
 }
 
 function createTelegramIncidentJoinPorts(db: D1Database): TelegramIncidentJoinPorts {
@@ -962,13 +1660,80 @@ function createTelegramWorkCenterReportPorts(db: D1Database): TelegramWorkCenter
   };
 }
 
+function createTelegramResourceReportPorts(db: D1Database): TelegramResourceReportPorts {
+  return {
+    async listIncidents() {
+      return IncidentListResponseSchema.parse({ incidents: await listIncidents(db) });
+    },
+    async createResourceReport(incidentId, request) {
+      const incident = await findIncident(db, incidentId);
+      if (!incident) {
+        throw Object.assign(new Error('not_found'), { error: 'not_found' });
+      }
+
+      const membership = await findIncidentMembershipForChannel(db, incident.incidentId, request.channel, request.externalId);
+      if (!membership) {
+        throw Object.assign(new Error('permission_denied'), { error: 'permission_denied' });
+      }
+
+      return ResourceReportCreateResponseSchema.parse(await createConnectedResourceReport(db, incident, request, membership));
+    },
+  };
+}
+
+function createTelegramDispatchTaskPorts(db: D1Database): TelegramDispatchTaskPorts {
+  return {
+    async listIncidents() {
+      return IncidentListResponseSchema.parse({ incidents: await listIncidents(db) });
+    },
+    async listDispatchTasks(incidentId) {
+      const incident = await findIncident(db, incidentId);
+      if (!incident) {
+        throw Object.assign(new Error('not_found'), { error: 'not_found' });
+      }
+
+      return DispatchTaskListResponseSchema.parse({ dispatchTasks: await listDispatchTasks(db, incident.incidentId) });
+    },
+    async updateDispatchTask(incidentId, dispatchTaskId, request) {
+      const incident = await findIncident(db, incidentId);
+      if (!incident) {
+        throw Object.assign(new Error('not_found'), { error: 'not_found' });
+      }
+
+      const membership = await findIncidentMembershipForChannel(db, incident.incidentId, request.channel, request.externalId);
+      if (!membership) {
+        throw Object.assign(new Error('permission_denied'), { error: 'permission_denied' });
+      }
+
+      const response = await updateConnectedDispatchTask(db, incident, dispatchTaskId, request, membership);
+      if (!response) {
+        throw Object.assign(new Error('not_found'), { error: 'not_found' });
+      }
+
+      return DispatchTaskResponseSchema.parse(response);
+    },
+  };
+}
+
 function getTelegramConversationStateKey(update: TelegramUpdateLike): string | null {
   return getTelegramConversationBaseStateKey(update);
 }
 
 function getTelegramWorkCenterConversationStateKey(update: TelegramUpdateLike): string | null {
+  return getTelegramNamespacedConversationStateKey(update, 'workcenter');
+}
+
+function getTelegramResourceConversationStateKey(update: TelegramUpdateLike): string | null {
+  return getTelegramNamespacedConversationStateKey(update, 'resource');
+}
+
+function getTelegramDispatchConversationStateKey(update: TelegramUpdateLike): string | null {
+  return getTelegramNamespacedConversationStateKey(update, 'dispatch');
+}
+
+function getTelegramNamespacedConversationStateKey(update: TelegramUpdateLike, flow: 'workcenter' | 'resource' | 'dispatch'): string | null {
   const baseKey = getTelegramConversationBaseStateKey(update);
-  return baseKey ? `flow:workcenter:${baseKey}` : null;
+  return baseKey ? `flow:${flow}:${baseKey}` : null;
 }
 
 function getTelegramConversationBaseStateKey(update: TelegramUpdateLike): string | null {
@@ -1019,7 +1784,7 @@ async function loadTelegramConversationState<TState>(
 async function persistTelegramConversationState(
   db: D1Database,
   stateKey: string,
-  state: TelegramIncidentJoinState | TelegramWorkCenterReportState,
+  state: TelegramIncidentJoinState | TelegramWorkCenterReportState | TelegramResourceReportState | TelegramDispatchTaskState,
 ): Promise<void> {
   const now = new Date();
   const nowIso = now.toISOString();
@@ -1041,6 +1806,14 @@ async function persistTelegramConversationState(
 
 async function deleteTelegramConversationState(db: D1Database, stateKey: string): Promise<void> {
   await db.prepare('DELETE FROM telegram_conversation_states WHERE state_key = ?').bind(stateKey).run();
+}
+
+async function deleteTelegramConversationStates(db: D1Database, stateKeys: Array<string | null>): Promise<void> {
+  for (const stateKey of stateKeys) {
+    if (stateKey) {
+      await deleteTelegramConversationState(db, stateKey);
+    }
+  }
 }
 
 async function joinIncident(

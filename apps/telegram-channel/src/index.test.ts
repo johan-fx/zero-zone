@@ -9,11 +9,22 @@ import {
   validWorkCenterCreatePayloadFixture,
   workCenterCreateResponseHappyFixture,
 } from '@zona-cero/testing';
-import { WorkCenterConnectedCreateRequestSchema } from '@zona-cero/contracts';
 import {
+  DispatchTaskConnectedUpdateRequestSchema,
+  ResourceReportConnectedCreateRequestSchema,
+  WorkCenterConnectedCreateRequestSchema,
+  type DispatchTask,
+  type DispatchTaskResponse,
+  type ResourceReportCreateResponse,
+} from '@zona-cero/contracts';
+import {
+  TelegramDispatchTaskStateSchema,
   TelegramIncidentJoinStateSchema,
+  TelegramResourceReportStateSchema,
   TelegramWorkCenterReportStateSchema,
+  handleTelegramDispatchTaskFlow,
   handleTelegramIncidentJoinFlow,
+  handleTelegramResourceReportFlow,
   handleTelegramWorkCenterReportFlow,
   handleTelegramWebhookUpdate,
   isTerminalTelegramIncidentJoinState,
@@ -21,9 +32,15 @@ import {
   parseTelegramIncidentJoinState,
   parseTelegramWorkCenterReportState,
   resolveTelegramCommand,
+  safeParseTelegramDispatchTaskState,
   safeParseTelegramIncidentJoinState,
+  safeParseTelegramResourceReportState,
   safeParseTelegramWorkCenterReportState,
+  type TelegramDispatchTaskPorts,
+  type TelegramDispatchTaskState,
   type TelegramIncidentJoinPorts,
+  type TelegramResourceReportPorts,
+  type TelegramResourceReportState,
   type TelegramIncidentJoinState,
   type TelegramWorkCenterReportPorts,
   type TelegramWorkCenterReportState,
@@ -54,6 +71,68 @@ function createWorkCenterPorts(overrides: Partial<TelegramWorkCenterReportPorts>
   };
 }
 
+
+const resourceReportCreateResponseFixture: ResourceReportCreateResponse = {
+  resourceReport: {
+    resourceReportId: 'resource-report-water-needed',
+    incidentId: 'incident-zc-demo',
+    cellId: 'cell-zc-demo',
+    workCenterId: 'center-north-triage',
+    category: 'water',
+    quantityApprox: '20 bottles',
+    urgency: 'high',
+    constraints: ['sealed bottles'],
+    reportKind: 'needed',
+    freshness: 'fresh',
+    confidence: 'low',
+    risk: 'medium',
+    sourceChannel: 'telegram',
+    createdAt: '2026-06-30T10:00:00.000Z',
+    updatedAt: '2026-06-30T10:00:00.000Z',
+  },
+  audit: { auditEventId: 'audit_resource_report_created' },
+  idempotent: false,
+};
+
+const dispatchTaskFixture: DispatchTask = {
+  dispatchTaskId: 'dispatch-task-water-1',
+  incidentId: 'incident-zc-demo',
+  cellId: 'cell-zc-demo',
+  category: 'water',
+  quantityApprox: '20 bottles',
+  fromResourceReportId: 'resource-surplus-water',
+  toResourceReportId: 'resource-report-water-needed',
+  targetWorkCenterId: 'center-north-triage',
+  status: 'pending',
+  notes: 'Use sealed bottles',
+  sourceChannel: 'web-ui',
+  createdAt: '2026-06-30T10:00:00.000Z',
+  updatedAt: '2026-06-30T10:00:00.000Z',
+};
+
+const dispatchTaskResponseFixture: DispatchTaskResponse = {
+  dispatchTask: { ...dispatchTaskFixture, status: 'accepted', updatedAt: '2026-06-30T10:05:00.000Z' },
+  audit: { auditEventId: 'audit_dispatch_task_updated' },
+  idempotent: false,
+};
+
+function createResourcePorts(overrides: Partial<TelegramResourceReportPorts> = {}): TelegramResourceReportPorts {
+  return {
+    listIncidents: vi.fn().mockResolvedValue(incidentListHappyFixture),
+    createResourceReport: vi.fn().mockResolvedValue(resourceReportCreateResponseFixture),
+    ...overrides,
+  };
+}
+
+function createDispatchPorts(overrides: Partial<TelegramDispatchTaskPorts> = {}): TelegramDispatchTaskPorts {
+  return {
+    listIncidents: vi.fn().mockResolvedValue(incidentListHappyFixture),
+    listDispatchTasks: vi.fn().mockResolvedValue({ dispatchTasks: [dispatchTaskFixture] }),
+    updateDispatchTask: vi.fn().mockResolvedValue(dispatchTaskResponseFixture),
+    ...overrides,
+  };
+}
+
 const validJoinStates = [
   { step: 'idle' },
   { step: 'awaitingIncident', incidents: incidentListHappyFixture.incidents, externalUserId: '1001' },
@@ -62,6 +141,31 @@ const validJoinStates = [
   { step: 'joined', response: telegramIncidentJoinResponseFixture },
   { step: 'cancelled' },
 ] satisfies TelegramIncidentJoinState[];
+
+
+const validResourceStates = [
+  { step: 'idle' },
+  { step: 'awaitingIncident', incidents: incidentListHappyFixture.incidents, externalUserId: '1001', displayName: 'Field' },
+  { step: 'awaitingKind', incident: incidentListHappyFixture.incidents[0], externalUserId: '1001', displayName: 'Field' },
+  { step: 'awaitingCategory', incident: incidentListHappyFixture.incidents[0], externalUserId: '1001', displayName: 'Field', reportKind: 'needed' },
+  { step: 'awaitingQuantity', incident: incidentListHappyFixture.incidents[0], externalUserId: '1001', displayName: 'Field', reportKind: 'needed', category: 'water' },
+  { step: 'awaitingUrgency', incident: incidentListHappyFixture.incidents[0], externalUserId: '1001', displayName: 'Field', reportKind: 'needed', category: 'water', quantityApprox: '20 bottles' },
+  { step: 'awaitingConstraints', incident: incidentListHappyFixture.incidents[0], externalUserId: '1001', displayName: 'Field', reportKind: 'needed', category: 'water', quantityApprox: '20 bottles', urgency: 'high' },
+  { step: 'awaitingWorkCenter', incident: incidentListHappyFixture.incidents[0], externalUserId: '1001', displayName: 'Field', request: { channel: 'telegram', externalId: '1001', displayName: 'Field', payload: { category: 'water', quantityApprox: '20 bottles', urgency: 'high', constraints: ['sealed bottles'], reportKind: 'needed' } } },
+  { step: 'awaitingConfirmation', incident: incidentListHappyFixture.incidents[0], externalUserId: '1001', displayName: 'Field', request: { channel: 'telegram', externalId: '1001', displayName: 'Field', payload: { category: 'water', quantityApprox: '20 bottles', urgency: 'high', constraints: ['sealed bottles'], reportKind: 'needed', workCenterId: 'center-north-triage' } } },
+  { step: 'reported', response: resourceReportCreateResponseFixture },
+  { step: 'cancelled' },
+] satisfies TelegramResourceReportState[];
+
+const validDispatchStates = [
+  { step: 'idle' },
+  { step: 'awaitingIncident', incidents: incidentListHappyFixture.incidents, externalUserId: '1001' },
+  { step: 'awaitingTask', incident: incidentListHappyFixture.incidents[0], tasks: [dispatchTaskFixture], externalUserId: '1001' },
+  { step: 'awaitingStatus', incident: incidentListHappyFixture.incidents[0], task: dispatchTaskFixture, externalUserId: '1001' },
+  { step: 'awaitingConfirmation', incident: incidentListHappyFixture.incidents[0], task: dispatchTaskFixture, externalUserId: '1001', request: { channel: 'telegram', externalId: '1001', status: 'accepted' } },
+  { step: 'updated', response: dispatchTaskResponseFixture },
+  { step: 'cancelled' },
+] satisfies TelegramDispatchTaskState[];
 
 const validWorkCenterStates = [
   { step: 'idle' },
@@ -87,6 +191,39 @@ async function advance(
 
   for (const input of inputs) {
     const result = await handleTelegramIncidentJoinFlow(state, telegramUserUpdate(input), ports);
+    state = result.state;
+    responseText = result.responseText;
+  }
+
+  return { state, responseText, ports };
+}
+
+
+async function advanceResource(
+  inputs: string[],
+  ports = createResourcePorts(),
+): Promise<{ state: TelegramResourceReportState; responseText: string; ports: TelegramResourceReportPorts }> {
+  let state: TelegramResourceReportState = { step: 'idle' };
+  let responseText = '';
+
+  for (const input of inputs) {
+    const result = await handleTelegramResourceReportFlow(state, telegramUserUpdate(input), ports);
+    state = result.state;
+    responseText = result.responseText;
+  }
+
+  return { state, responseText, ports };
+}
+
+async function advanceDispatch(
+  inputs: string[],
+  ports = createDispatchPorts(),
+): Promise<{ state: TelegramDispatchTaskState; responseText: string; ports: TelegramDispatchTaskPorts }> {
+  let state: TelegramDispatchTaskState = { step: 'idle' };
+  let responseText = '';
+
+  for (const input of inputs) {
+    const result = await handleTelegramDispatchTaskFlow(state, telegramUserUpdate(input), ports);
     state = result.state;
     responseText = result.responseText;
   }
@@ -319,4 +456,74 @@ describe('telegram channel flows', () => {
       false,
     );
   });
+
+
+
+  it('parses resource report and dispatch task flow states for API persistence', () => {
+    for (const state of validResourceStates) {
+      const jsonState = JSON.parse(JSON.stringify(state));
+      expect(TelegramResourceReportStateSchema.safeParse(jsonState).success).toBe(true);
+      expect(safeParseTelegramResourceReportState(jsonState)).toEqual({ success: true, data: state });
+    }
+
+    for (const state of validDispatchStates) {
+      const jsonState = JSON.parse(JSON.stringify(state));
+      expect(TelegramDispatchTaskStateSchema.safeParse(jsonState).success).toBe(true);
+      expect(safeParseTelegramDispatchTaskState(jsonState)).toEqual({ success: true, data: state });
+    }
+  });
+
+  it('runs the /resource happy path with canonical report kind, urgency and optional work center id', async () => {
+    const ports = createResourcePorts();
+    const { state, responseText } = await advanceResource(['/resource', '1', 'needed', 'water', '20 bottles', 'high', 'sealed bottles', 'center-north-triage', 'yes'], ports);
+
+    expect(state.step).toBe('reported');
+    expect(responseText).toContain('Resource needed reported: water');
+    expect(ports.createResourceReport).toHaveBeenCalledWith('incident-zc-demo', {
+      channel: 'telegram',
+      externalId: '1001',
+      displayName: 'Field',
+      payload: {
+        category: 'water',
+        quantityApprox: '20 bottles',
+        urgency: 'high',
+        constraints: ['sealed bottles'],
+        reportKind: 'needed',
+        workCenterId: 'center-north-triage',
+      },
+    });
+    expect(ResourceReportConnectedCreateRequestSchema.parse(vi.mocked(ports.createResourceReport).mock.calls[0]?.[1]).payload.reportKind).toBe('needed');
+  });
+
+  it('keeps resource report state and reports backend errors visibly', async () => {
+    const ports = createResourcePorts({ createResourceReport: vi.fn().mockRejectedValue({ error: 'permission_denied' }) });
+    const { state, responseText } = await advanceResource(['/resource', '1', 'surplus', 'blankets', '10 boxes', 'medium', 'skip', 'skip', 'yes'], ports);
+
+    expect(state.step).toBe('awaitingConfirmation');
+    expect(responseText).toContain('Permission denied');
+  });
+
+  it('runs the /dispatch happy path using canonical dispatch statuses', async () => {
+    const ports = createDispatchPorts();
+    const { state, responseText } = await advanceDispatch(['/dispatch', '1', '1', 'en camino', 'yes'], ports);
+
+    expect(state.step).toBe('updated');
+    expect(responseText).toContain('Dispatch task updated');
+    expect(ports.updateDispatchTask).toHaveBeenCalledWith('incident-zc-demo', 'dispatch-task-water-1', {
+      channel: 'telegram',
+      externalId: '1001',
+      status: 'en_route',
+    });
+    expect(DispatchTaskConnectedUpdateRequestSchema.parse(vi.mocked(ports.updateDispatchTask).mock.calls[0]?.[2]).status).toBe('en_route');
+  });
+
+  it('rejects non-canonical dispatch statuses before calling the backend', async () => {
+    const ports = createDispatchPorts();
+    const { state, responseText } = await advanceDispatch(['/dispatch', '1', '1', 'done'], ports);
+
+    expect(state.step).toBe('awaitingStatus');
+    expect(responseText).toContain('Invalid status');
+    expect(ports.updateDispatchTask).not.toHaveBeenCalled();
+  });
+
 });

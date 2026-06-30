@@ -365,6 +365,171 @@ export const WorkCenterConnectedCreateRequestSchema = z.object({
 });
 export type WorkCenterConnectedCreateRequest = z.infer<typeof WorkCenterConnectedCreateRequestSchema>;
 
+
+export const resourceReportKinds = ['needed', 'surplus'] as const;
+export const ResourceReportKindSchema = z.enum(resourceReportKinds);
+export type ResourceReportKind = z.infer<typeof ResourceReportKindSchema>;
+
+export const resourceReportUrgencies = ['low', 'medium', 'high', 'critical'] as const;
+export const ResourceReportUrgencySchema = z.enum(resourceReportUrgencies);
+export type ResourceReportUrgency = z.infer<typeof ResourceReportUrgencySchema>;
+
+export const ResourceReportFreshnessSchema = WorkCenterFreshnessSchema;
+export type ResourceReportFreshness = z.infer<typeof ResourceReportFreshnessSchema>;
+
+export const ResourceReportConfidenceSchema = WorkCenterConfidenceSchema;
+export type ResourceReportConfidence = z.infer<typeof ResourceReportConfidenceSchema>;
+
+export const ResourceReportRiskSchema = WorkCenterRiskSchema;
+export type ResourceReportRisk = z.infer<typeof ResourceReportRiskSchema>;
+
+export const ResourceReportPayloadSchema = z.object({
+  category: z.string().min(1),
+  quantityApprox: z.string().min(1),
+  urgency: ResourceReportUrgencySchema.default('medium'),
+  constraints: z.array(z.string().min(1)).default([]),
+  reportKind: ResourceReportKindSchema,
+  workCenterId: z.string().min(1).optional(),
+  reportedAt: z.string().min(1).optional(),
+}).strict();
+export type ResourceReportPayload = z.infer<typeof ResourceReportPayloadSchema>;
+
+const ResourceReportBaseSchema = z.object({
+  resourceReportId: z.string().min(1),
+  incidentId: z.string().min(1),
+  cellId: z.string().min(1),
+  workCenterId: z.string().min(1).optional(),
+  category: z.string().min(1),
+  quantityApprox: z.string().min(1),
+  urgency: ResourceReportUrgencySchema,
+  constraints: z.array(z.string().min(1)),
+  reportKind: ResourceReportKindSchema,
+  freshness: ResourceReportFreshnessSchema,
+  confidence: ResourceReportConfidenceSchema,
+  risk: ResourceReportRiskSchema,
+  sourceChannel: ChannelSchema.optional(),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+}).strict();
+
+export const ResourceReportSummarySchema = ResourceReportBaseSchema;
+export type ResourceReportSummary = z.infer<typeof ResourceReportSummarySchema>;
+
+export const ResourceReportDetailSchema = ResourceReportBaseSchema.extend({
+  sourceOperationId: z.string().min(1).optional(),
+  actorKeyId: z.string().min(1).optional(),
+}).strict();
+export type ResourceReportDetail = z.infer<typeof ResourceReportDetailSchema>;
+
+export const ResourceReportListResponseSchema = z.object({
+  resourceReports: z.array(ResourceReportSummarySchema),
+}).strict();
+export type ResourceReportListResponse = z.infer<typeof ResourceReportListResponseSchema>;
+
+export const ResourceReportDetailResponseSchema = z.object({
+  resourceReport: ResourceReportDetailSchema,
+}).strict();
+export type ResourceReportDetailResponse = z.infer<typeof ResourceReportDetailResponseSchema>;
+
+export const ResourceReportCreateResponseSchema = z.object({
+  resourceReport: ResourceReportDetailSchema,
+  audit: AuditReferenceSchema,
+  idempotent: z.boolean(),
+}).strict();
+export type ResourceReportCreateResponse = z.infer<typeof ResourceReportCreateResponseSchema>;
+
+export const ResourceReportConnectedCreateRequestSchema = z.object({
+  channel: ChannelSchema,
+  externalId: z.string().min(1),
+  displayName: z.string().min(1).optional(),
+  payload: ResourceReportPayloadSchema,
+}).strict();
+export type ResourceReportConnectedCreateRequest = z.infer<typeof ResourceReportConnectedCreateRequestSchema>;
+
+export const ResourceReportMatchSchema = z.object({
+  need: ResourceReportSummarySchema,
+  surplus: ResourceReportSummarySchema,
+  score: z.number().min(0).max(1),
+  reasons: z.array(z.string().min(1)),
+}).strict();
+export type ResourceReportMatch = z.infer<typeof ResourceReportMatchSchema>;
+
+export const ResourceReportMatchResponseSchema = z.object({
+  matches: z.array(ResourceReportMatchSchema),
+}).strict();
+export type ResourceReportMatchResponse = z.infer<typeof ResourceReportMatchResponseSchema>;
+
+export const dispatchTaskStatuses = ['pending', 'accepted', 'en_route', 'delivered', 'cancelled'] as const;
+export const DispatchTaskStatusSchema = z.enum(dispatchTaskStatuses);
+export type DispatchTaskStatus = z.infer<typeof DispatchTaskStatusSchema>;
+
+export const DispatchTaskPayloadSchema = z.object({
+  category: z.string().min(1),
+  quantityApprox: z.string().min(1),
+  fromResourceReportId: z.string().min(1).optional(),
+  toResourceReportId: z.string().min(1).optional(),
+  targetWorkCenterId: z.string().min(1).optional(),
+  notes: z.string().min(1).optional(),
+}).strict();
+export type DispatchTaskPayload = z.infer<typeof DispatchTaskPayloadSchema>;
+
+export const DispatchEventCreatePayloadSchema = DispatchTaskPayloadSchema.extend({
+  status: z.literal('pending').optional(),
+}).strict();
+export type DispatchEventCreatePayload = z.infer<typeof DispatchEventCreatePayloadSchema>;
+
+export const DispatchEventUpdatePayloadSchema = z.object({
+  dispatchTaskId: z.string().min(1),
+  status: DispatchTaskStatusSchema,
+  notes: z.string().min(1).optional(),
+}).strict();
+export type DispatchEventUpdatePayload = z.infer<typeof DispatchEventUpdatePayloadSchema>;
+
+export const DispatchTaskSchema = z.object({
+  dispatchTaskId: z.string().min(1),
+  incidentId: z.string().min(1),
+  cellId: z.string().min(1),
+  category: z.string().min(1),
+  quantityApprox: z.string().min(1),
+  fromResourceReportId: z.string().min(1).optional(),
+  toResourceReportId: z.string().min(1).optional(),
+  targetWorkCenterId: z.string().min(1).optional(),
+  status: DispatchTaskStatusSchema,
+  notes: z.string().min(1).optional(),
+  sourceChannel: ChannelSchema.optional(),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+}).strict();
+export type DispatchTask = z.infer<typeof DispatchTaskSchema>;
+
+export const DispatchTaskListResponseSchema = z.object({
+  dispatchTasks: z.array(DispatchTaskSchema),
+}).strict();
+export type DispatchTaskListResponse = z.infer<typeof DispatchTaskListResponseSchema>;
+
+export const DispatchTaskResponseSchema = z.object({
+  dispatchTask: DispatchTaskSchema,
+  audit: AuditReferenceSchema.optional(),
+  idempotent: z.boolean().optional(),
+}).strict();
+export type DispatchTaskResponse = z.infer<typeof DispatchTaskResponseSchema>;
+
+export const DispatchTaskConnectedCreateRequestSchema = z.object({
+  channel: ChannelSchema,
+  externalId: z.string().min(1),
+  displayName: z.string().min(1).optional(),
+  payload: DispatchEventCreatePayloadSchema,
+}).strict();
+export type DispatchTaskConnectedCreateRequest = z.infer<typeof DispatchTaskConnectedCreateRequestSchema>;
+
+export const DispatchTaskConnectedUpdateRequestSchema = z.object({
+  channel: ChannelSchema,
+  externalId: z.string().min(1),
+  status: DispatchTaskStatusSchema,
+  notes: z.string().min(1).optional(),
+}).strict();
+export type DispatchTaskConnectedUpdateRequest = z.infer<typeof DispatchTaskConnectedUpdateRequestSchema>;
+
 export const IncidentSummarySchema = z.object({
   incidentId: z.string().min(1),
   name: z.string().min(1),

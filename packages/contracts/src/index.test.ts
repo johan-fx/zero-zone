@@ -11,7 +11,20 @@ import {
   IncidentRoleSchema,
   OperationInputSchema,
   OperationRejectedSchema,
+  DispatchEventCreatePayloadSchema,
+  DispatchEventUpdatePayloadSchema,
+  DispatchTaskConnectedCreateRequestSchema,
+  DispatchTaskConnectedUpdateRequestSchema,
+  DispatchTaskListResponseSchema,
+  DispatchTaskResponseSchema,
+  DispatchTaskStatusSchema,
   PendingSignedOperationSchema,
+  ResourceReportConnectedCreateRequestSchema,
+  ResourceReportCreateResponseSchema,
+  ResourceReportDetailResponseSchema,
+  ResourceReportListResponseSchema,
+  ResourceReportMatchResponseSchema,
+  ResourceReportPayloadSchema,
   SignedOperationSchema,
   SyncPushRequestSchema,
   SyncPushResponseSchema,
@@ -36,6 +49,9 @@ import {
   workCenterConfidenceLevels,
   workCenterFreshnessLevels,
   workCenterRiskLevels,
+  dispatchTaskStatuses,
+  resourceReportKinds,
+  resourceReportUrgencies,
   workCenterStatuses,
 } from './index';
 
@@ -357,4 +373,71 @@ describe('contracts package', () => {
       version: '0.0.0',
     });
   });
+
+  it('validates canonical resource report contracts', () => {
+    expect(resourceReportKinds).toEqual(['needed', 'surplus']);
+    expect(resourceReportUrgencies).toEqual(['low', 'medium', 'high', 'critical']);
+
+    const payload = ResourceReportPayloadSchema.parse({
+      category: 'water',
+      quantityApprox: '20 boxes',
+      urgency: 'high',
+      constraints: ['sealed bottles'],
+      reportKind: 'needed',
+      workCenterId: 'center-north-triage',
+    });
+    expect(payload.reportKind).toBe('needed');
+    expect(ResourceReportPayloadSchema.safeParse({ ...payload, unknown: true }).success).toBe(false);
+
+    const summary = {
+      resourceReportId: 'rr-1',
+      incidentId: 'incident-zc-demo',
+      cellId: 'cell-a',
+      workCenterId: 'center-north-triage',
+      category: 'water',
+      quantityApprox: '20 boxes',
+      urgency: 'high',
+      constraints: ['sealed bottles'],
+      reportKind: 'needed',
+      freshness: 'fresh',
+      confidence: 'medium',
+      risk: 'medium',
+      sourceChannel: 'telegram',
+      createdAt: '2026-06-30T10:00:00.000Z',
+      updatedAt: '2026-06-30T10:00:00.000Z',
+    } as const;
+    const detail = { ...summary, sourceOperationId: 'op-rr-1', actorKeyId: 'actor-1' } as const;
+
+    expect(ResourceReportListResponseSchema.parse({ resourceReports: [summary] }).resourceReports[0]?.category).toBe('water');
+    expect(ResourceReportDetailResponseSchema.parse({ resourceReport: detail }).resourceReport.actorKeyId).toBe('actor-1');
+    expect(ResourceReportCreateResponseSchema.parse({ resourceReport: detail, audit: { auditEventId: 'audit-1' }, idempotent: false }).idempotent).toBe(false);
+    expect(ResourceReportConnectedCreateRequestSchema.parse({ channel: 'telegram', externalId: 'user-1', payload }).payload.category).toBe('water');
+    expect(ResourceReportMatchResponseSchema.parse({ matches: [{ need: summary, surplus: { ...summary, resourceReportId: 'rr-2', reportKind: 'surplus' }, score: 0.8, reasons: ['same_cell'] }] }).matches).toHaveLength(1);
+  });
+
+  it('validates dispatch task and event contracts', () => {
+    expect(dispatchTaskStatuses).toEqual(['pending', 'accepted', 'en_route', 'delivered', 'cancelled']);
+    expect(DispatchTaskStatusSchema.parse('en_route')).toBe('en_route');
+    const createPayload = DispatchEventCreatePayloadSchema.parse({ category: 'water', quantityApprox: '20 boxes', targetWorkCenterId: 'center-1' });
+    expect(createPayload.status).toBeUndefined();
+    expect(DispatchEventUpdatePayloadSchema.parse({ dispatchTaskId: 'dt-1', status: 'delivered' }).status).toBe('delivered');
+
+    const task = {
+      dispatchTaskId: 'dt-1',
+      incidentId: 'incident-zc-demo',
+      cellId: 'cell-a',
+      category: 'water',
+      quantityApprox: '20 boxes',
+      status: 'pending',
+      sourceChannel: 'web-ui',
+      createdAt: '2026-06-30T10:00:00.000Z',
+      updatedAt: '2026-06-30T10:00:00.000Z',
+    } as const;
+
+    expect(DispatchTaskListResponseSchema.parse({ dispatchTasks: [task] }).dispatchTasks[0]?.dispatchTaskId).toBe('dt-1');
+    expect(DispatchTaskResponseSchema.parse({ dispatchTask: task }).dispatchTask.status).toBe('pending');
+    expect(DispatchTaskConnectedCreateRequestSchema.parse({ channel: 'web-ui', externalId: 'web-1', payload: createPayload }).payload.category).toBe('water');
+    expect(DispatchTaskConnectedUpdateRequestSchema.parse({ channel: 'web-ui', externalId: 'web-1', status: 'accepted' }).status).toBe('accepted');
+  });
+
 });

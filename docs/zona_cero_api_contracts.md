@@ -79,9 +79,14 @@ type OperationEnvelope = {
 
 | Acción | Request mínimo | Response mínimo |
 |---|---|---|
-| Reportar recurso | `centerId`, `kind`, `category`, `quantityApprox`, `urgency`, `restrictions` | `reportId`, `freshness`, `confidence`. |
-| Crear tarea | `fromCenterId`, `toCenterId`, `resource`, `priority` | `taskId`, `state`, `assignedTo?`. |
-| Actualizar tarea | `taskId`, `state`, `note?` | `taskId`, `state`, `updatedAt`. |
+| Reportar recurso conectado | `channel`, `externalId`, `payload.reportKind`, `category`, `quantityApprox`, `urgency`, `constraints`, `workCenterId?` | `resourceReport`, `audit`, `idempotent`. |
+| Reportar recurso offline | Operación firmada `resource_report.create` con `ResourceReportPayload` y `syncState: pending` | Resultado `/sync/push` `accepted` o error estable. |
+| Listar reportes | `incidentId`, filtros opcionales por celda/centro/tipo | reportes con categoría, cantidad aproximada, urgencia, restricciones, frescura/confianza/riesgo. |
+| Sugerir matching | `incidentId`, filtros opcionales | pares necesidad/sobrante por categoría compatible y score simple backend. |
+| Crear tarea | `fromResourceReportId`, `toResourceReportId`, `category`, `quantityApprox`, `priority` | `dispatchTaskId`, `status`, `audit`. |
+| Actualizar tarea | `dispatchTaskId`, `status`, `note?` | `dispatchTaskId`, `status`, `updatedAt`. |
+
+Estados canónicos de tarea logística: `pending`, `accepted`, `en_route`, `delivered`, `cancelled`. Los clientes pueden mostrar estos estados, pero no crear estados paralelos.
 
 ### SOS
 
@@ -124,6 +129,20 @@ type OperationEnvelope = {
 | `link_expired` | Enlace web caducado, consumido o fuera de TTL. | `telegram.error.link_expired` / `web.error.link_expired` |
 | `invalid_link_scope` | Scope de enlace desconocido o no permitido para el flow/entidad. | `telegram.error.invalid_link_scope` / `web.error.invalid_link_scope` |
 | `link_correlation_mismatch` | La correlación del link no coincide con el flow que lo originó. | `telegram.error.link_correlation_mismatch` / `web.error.link_correlation_mismatch` |
+
+## Slice 4 Resources + logistics contract update
+
+`@zona-cero/contracts` is the canonical source for resource reports, dispatch task statuses, connected channel requests, and signed offline operation payloads.
+
+| Contract | Rule |
+|---|---|
+| `ResourceReportPayload` | Requires `reportKind`, `category`, `quantityApprox`, `urgency`, and `constraints`; accepts optional `workCenterId` and field context. `reportKind` is `needed` or `surplus`. |
+| `DispatchTaskStatus` | Canonical statuses are `pending`, `accepted`, `en_route`, `delivered`, `cancelled`. Clients must not introduce local status vocabularies. |
+| Matching rule | Backend/domain owns need-surplus matching. Clients may display suggestions but must not calculate authoritative matching. |
+| `/sync/push` compatibility | Signed operation `version: 1` accepts `resource_report.create`, `dispatch_event.create`, and `dispatch_event.update`. |
+| Idempotency | Duplicate `opId` with the same payload is accepted. A second `dispatch_event.create` targeting an existing `dispatchTaskId`/`entityId` with incompatible ownership or payload returns `operation_conflict`. |
+| Telegram state | `/resource` and `/dispatch` use namespaced persisted state and clear sibling flow state on explicit commands to avoid cross-flow hijacking. |
+| Mobile offline | Mobile may materialize pending resource reports locally, but freshness/confidence/risk and matching remain backend/domain concerns. |
 
 ## Slice 3 Work Center contract update
 

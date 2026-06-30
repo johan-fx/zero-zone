@@ -31,7 +31,7 @@ Usar este reparto como contrato de trabajo para todas las slices. La clave es qu
 | 1 | Contratos compartidos | 🟢 | 🟢 | 🟢 | Hecho |
 | 2 | Incidentes + identidad básica | 🟢 | 🟢 | 🟢 | Hecho |
 | 3 | Centros de trabajo | 🟢 | 🟢 | 🟢 | Hecho |
-| 4 | Recursos + logística | ⬜ | ⬜ | ⬜ | No iniciado |
+| 4 | Recursos + logística | 🟢 | 🟢 | 🟢 | Hecho |
 | 5 | SOS conectado + nativo crítico | ⬜ | ⬜ | ⬜ | No iniciado |
 | 6 | Reunificación familiar web | ⬜ | ⬜ | ⬜ | No iniciado |
 | 7 | Sync/offline hardening | ⬜ | ⬜ | ⬜ | No iniciado |
@@ -209,18 +209,29 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 
 | Equipo | Checklist |
 |---|---|
-| A | ⬜ Bot flow para faltante/sobrante. |
-| A | ⬜ Bot flow para aceptar/actualizar tarea logística. |
-| B | ⬜ Modelo de resource report con frescura/confianza. |
-| B | ⬜ Matching simple y dispatch tasks. |
-| C | ⬜ Reporte offline desde centro activo. |
-| C | ⬜ Vista nativa de necesidades/sobrantes por centro. |
+| A | 🟢 Bot flow para faltante/sobrante. |
+| A | 🟢 Bot flow para aceptar/actualizar tarea logística. |
+| B | 🟢 Modelo de resource report con frescura/confianza. |
+| B | 🟢 Matching simple y dispatch tasks. |
+| C | 🟢 Reporte offline desde centro activo. |
+| C | 🟢 Vista nativa de necesidades/sobrantes por centro. |
 
 **Definition of Done**
 
 - Reportes tienen categoría, cantidad aproximada, urgencia y restricciones.
 - Matching simple genera o sugiere tarea.
 - Tareas tienen estados: pendiente, aceptada, en camino, entregada, cancelada.
+
+**Cierre Slice 4**
+
+- `packages/contracts` define contratos canónicos para recursos y logística: `ResourceReportPayload`, reportes `needed/surplus`, urgencias, restricciones, tareas de dispatch y estados `pending`, `accepted`, `en_route`, `delivered`, `cancelled`.
+- `packages/domain` contiene el matching simple necesidad/sobrante por incidente, celda y categoría; Telegram, Web UI y Mobile no calculan matching paralelo.
+- `services/api` añade la migración `0004_resource_reports_dispatch.sql`, endpoints de resource reports, matches y dispatch tasks, y materialización vía `/sync/push` para `resource_report.create`, `dispatch_event.create` y `dispatch_event.update`.
+- La idempotencia de dispatch queda protegida: duplicados compatibles se aceptan y un segundo `dispatch_event.create` con el mismo `dispatchTaskId`/`entityId` pero payload incompatible se rechaza con `operation_conflict`.
+- Telegram añade flows `/resource` y `/dispatch` conectados al webhook con estados namespaced para evitar interferencias con `/start` y `/workcenter`.
+- Web UI muestra necesidades/sobrantes y tareas logísticas consumiendo contratos/endpoints backend; no inventa estados ni matching local.
+- Mobile crea `resource_report.create` offline desde el centro activo, materializa necesidades/sobrantes localmente y muestra degradación visible como `Local pending` / `Offline provisional` hasta sincronizar.
+- Verificación ejecutada: `pnpm contracts:test:strict`, `pnpm --filter @zona-cero/domain test:strict`, `pnpm api:test:strict`, `pnpm telegram:test:strict`, `pnpm web:test:strict`, `pnpm mobile:test:strict`, `pnpm test:integration`, `pnpm test:strict`, fresh review post-remediación y `pnpm e2e`.
 
 ## Slice 5 - SOS conectado + nativo crítico
 

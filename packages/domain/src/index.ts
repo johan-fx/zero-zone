@@ -1,10 +1,13 @@
 import type {
   OperationType,
+  ResourceReportKind,
+  ResourceReportSummary,
+  ResourceReportUrgency,
+  WorkCenterRisk,
   WorkCenterActivationState,
   WorkCenterConfidence,
   WorkCenterFreshness,
   WorkCenterPriority,
-  WorkCenterRisk,
   WorkCenterSignalType,
   WorkCenterStatus,
 } from '@zona-cero/contracts';
@@ -135,4 +138,71 @@ export function deriveWorkCenterRisk(input: {
 
 function countCorroboratingSignalTypes(signals: WorkCenterSignalInput[]): number {
   return new Set(signals.map((signal) => signal.signalType)).size;
+}
+
+
+export type ResourceReportStateInput = {
+  updatedAt: string;
+  reportKind: ResourceReportKind;
+  urgency: ResourceReportUrgency;
+  constraints?: string[];
+  now?: Date;
+};
+
+export type ResourceReportDerivedState = {
+  freshness: WorkCenterFreshness;
+  confidence: WorkCenterConfidence;
+  risk: WorkCenterRisk;
+};
+
+export function deriveResourceReportState(input: ResourceReportStateInput): ResourceReportDerivedState {
+  const freshness = deriveWorkCenterFreshness(input.updatedAt, input.now);
+  const confidence = input.constraints && input.constraints.length > 0 ? 'medium' : 'low';
+  const risk = deriveWorkCenterRisk({ confidence, freshness, priority: input.urgency });
+
+  return { freshness, confidence, risk };
+}
+
+export type ResourceReportMatch = {
+  need: ResourceReportSummary;
+  surplus: ResourceReportSummary;
+  score: number;
+  reasons: string[];
+};
+
+export function matchResourceReports(reports: ResourceReportSummary[]): ResourceReportMatch[] {
+  const needs = reports.filter((report) => report.reportKind === 'needed');
+  const surpluses = reports.filter((report) => report.reportKind === 'surplus');
+  const matches: ResourceReportMatch[] = [];
+
+  for (const need of needs) {
+    for (const surplus of surpluses) {
+      if (need.incidentId !== surplus.incidentId || normalizeCategory(need.category) !== normalizeCategory(surplus.category)) {
+        continue;
+      }
+
+      const sameCell = need.cellId === surplus.cellId;
+      const sameWorkCenter = need.workCenterId !== undefined && need.workCenterId === surplus.workCenterId;
+
+      if (!sameCell && !sameWorkCenter) {
+        continue;
+      }
+
+      const reasons = [sameWorkCenter ? 'same_work_center' : 'same_cell', 'same_category'];
+      const urgencyBoost = need.urgency === 'critical' || need.urgency === 'high' ? 0.1 : 0;
+      const confidencePenalty = surplus.confidence === 'low' ? 0.1 : 0;
+      const score = clampScore((sameWorkCenter ? 0.9 : 0.75) + urgencyBoost - confidencePenalty);
+      matches.push({ need, surplus, score, reasons });
+    }
+  }
+
+  return matches.sort((a, b) => b.score - a.score || a.need.resourceReportId.localeCompare(b.need.resourceReportId));
+}
+
+function normalizeCategory(category: string): string {
+  return category.trim().toLowerCase();
+}
+
+function clampScore(score: number): number {
+  return Math.max(0, Math.min(1, Number(score.toFixed(2))));
 }

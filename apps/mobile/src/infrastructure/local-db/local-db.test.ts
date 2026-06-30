@@ -55,8 +55,8 @@ describe('local operation database contract', () => {
     );
     expect(Object.keys(localDbSchemas.work_centers.properties)).toEqual(expect.arrayContaining(['centerType', 'description', 'priority', 'initialNeed', 'surplus', 'activationState', 'freshness', 'confidence', 'risk', 'signalCount', 'corroboratingSignalCount', 'provisional', 'provisionalReason', 'location']));
     expect(Object.keys(localDbSchemas.presence.properties)).toEqual(expect.arrayContaining(['actorId', 'role', 'centerId']));
-    expect(Object.keys(localDbSchemas.resource_reports.properties)).toEqual(expect.arrayContaining(['quantity', 'syncState']));
-    expect(Object.keys(localDbSchemas.dispatch_events.properties)).toEqual(expect.arrayContaining(['eventType']));
+    expect(Object.keys(localDbSchemas.resource_reports.properties)).toEqual(expect.arrayContaining(['category', 'quantityApprox', 'urgency', 'constraints', 'reportKind', 'workCenterId', 'provisional', 'provisionalReason', 'syncState']));
+    expect(Object.keys(localDbSchemas.dispatch_events.properties)).toEqual(expect.arrayContaining(['dispatchTaskId', 'category', 'quantityApprox', 'fromResourceReportId', 'toResourceReportId', 'targetWorkCenterId', 'notes', 'provisional', 'provisionalReason']));
     expect(Object.keys(localDbSchemas.sos_signals.properties)).toEqual(expect.arrayContaining(['severity', 'message']));
     expect(Object.keys(localDbSchemas.local_summaries.properties)).toEqual(expect.arrayContaining(['roleCounts']));
     expect(Object.keys(localDbSchemas.map_packs.properties)).toEqual(expect.arrayContaining(['failureReason']));

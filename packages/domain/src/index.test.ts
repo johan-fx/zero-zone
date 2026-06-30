@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { ResourceReportSummary } from '@zona-cero/contracts';
 
 import {
   canAccessRestrictedIncidentData,
@@ -7,7 +8,9 @@ import {
   deriveWorkCenterConfidence,
   deriveWorkCenterFreshness,
   deriveWorkCenterRisk,
+  deriveResourceReportState,
   deriveWorkCenterState,
+  matchResourceReports,
   isCriticalOperation,
 } from './index';
 
@@ -57,4 +60,43 @@ describe('domain package', () => {
     expect(deriveWorkCenterConfidence({ activationState: 'active', corroboratingSignalCount: 3 })).toBe('high');
     expect(deriveWorkCenterRisk({ confidence: 'low', freshness: 'fresh', priority: 'critical' })).toBe('high');
   });
+
+  it('derives resource report freshness confidence and risk', () => {
+    expect(
+      deriveResourceReportState({
+        updatedAt: '2026-06-30T10:00:00.000Z',
+        now: new Date('2026-06-30T11:00:00.000Z'),
+        reportKind: 'needed',
+        urgency: 'critical',
+        constraints: ['cold chain'],
+      }),
+    ).toEqual({ freshness: 'fresh', confidence: 'medium', risk: 'medium' });
+  });
+
+  it('matches needed and surplus reports by incident cell and category', () => {
+    const base = {
+      incidentId: 'incident-zc-demo',
+      cellId: 'cell-a',
+      category: 'Water',
+      quantityApprox: '20 boxes',
+      urgency: 'high' as const,
+      constraints: [] as string[],
+      freshness: 'fresh' as const,
+      confidence: 'medium' as const,
+      risk: 'medium' as const,
+      createdAt: '2026-06-30T10:00:00.000Z',
+      updatedAt: '2026-06-30T10:00:00.000Z',
+    };
+
+    const reports: ResourceReportSummary[] = [
+      { ...base, resourceReportId: 'need-1', reportKind: 'needed' },
+      { ...base, resourceReportId: 'surplus-1', category: 'water', reportKind: 'surplus' },
+      { ...base, resourceReportId: 'surplus-2', cellId: 'cell-b', reportKind: 'surplus' },
+    ];
+    const matches = matchResourceReports(reports);
+
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toMatchObject({ need: { resourceReportId: 'need-1' }, surplus: { resourceReportId: 'surplus-1' }, reasons: ['same_cell', 'same_category'] });
+  });
+
 });

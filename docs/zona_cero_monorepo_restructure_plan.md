@@ -2,9 +2,9 @@
 
 Este documento propone cómo evolucionar el repo actual hacia un monorepo que permita trabajar en paralelo a tres equipos: Telegram + Web UI, Backend + Cloudflare y App nativa.
 
-## Estado actual tras Fase 5
+## Estado actual tras Fase 5 + Slice 4
 
-El repo ya funciona como monorepo pnpm. La app Expo vive en `apps/mobile`, el backend Cloudflare vive en `services/api`, Telegram/Web UI tienen implementaciones reales para slices conectadas y la raíz queda como orquestador de scripts.
+El repo ya funciona como monorepo pnpm. La app Expo vive en `apps/mobile`, el backend Cloudflare vive en `services/api`, Telegram/Web UI tienen implementaciones reales para slices conectadas y la raíz queda como orquestador de scripts. Tras Slice 4, recursos/logística también quedan integrados entre contratos, backend, Telegram/Web y mobile offline-first.
 
 Estructura actual relevante:
 
@@ -132,6 +132,14 @@ Estructura actual relevante:
 - `docs/zona_cero_api_contracts.md` documenta errores estables, contrato Work Center, idempotencia, observabilidad y procedimiento de cambios breaking.
 - Playwright E2E prepara D1 local con migraciones + seed antes de arrancar `wrangler dev`, y el smoke de slice pasa contra API + Web UI + webhook Telegram.
 - Verificación ejecutada: `pnpm contracts:test:strict`, `pnpm api:test:strict`, `pnpm telegram:test:strict`, `pnpm web:test:strict`, `pnpm mobile:test:strict`, `pnpm test:strict`, `git diff --check` y `pnpm e2e`.
+
+**Avance Slice 4 sobre monorepo**
+
+- `packages/contracts` y `packages/domain` extienden el lenguaje compartido a reportes de recursos, matching simple y tareas logísticas.
+- `services/api` añade persistencia D1, endpoints, webhook Telegram y sync push para recursos/dispatch sin mover reglas críticas a los clientes.
+- `apps/telegram-channel` y `apps/web-ui` consumen esos contratos para reportar faltantes/sobrantes y operar tareas logísticas.
+- `apps/mobile` crea reportes offline en outbox y degrada visualmente datos locales pendientes hasta sincronizar.
+- El patrón multi-equipo de Slice 4 confirma la frontera de ownership del monorepo: B define contratos/dominio/API; A y C consumen sin duplicar reglas.
 
 ## Reglas de oro
 

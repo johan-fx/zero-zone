@@ -10,18 +10,17 @@ El backend no debe ser un CRUD pasivo. Debe concentrar reglas de dominio compart
 
 ## Estado actual del repo
 
-El repo actual ya es un monorepo pnpm con la app Expo/Tamagui en `apps/mobile`:
+El repo actual ya es un monorepo pnpm con app nativa, canales conectados, backend Cloudflare y contratos compartidos reales:
 
-- El `package.json` raíz orquesta scripts Expo/Jest hacia `@zona-cero/mobile` y mantiene comandos Maestro/visual audit desde la raíz.
-- `apps/mobile/src/app/` contiene rutas Expo Router.
-- `apps/mobile/src/features/operations/` ya implementa pantallas y tests de operación.
-- `apps/mobile/src/infrastructure/local-db/` contiene una base local en memoria/RxDB-facing.
-- `apps/mobile/src/infrastructure/oplog/` contiene materialización y outbox de operaciones firmadas.
-- `apps/mobile/src/infrastructure/security/operation-signer.ts` define tipos de operación firmada.
-- `apps/mobile/src/infrastructure/maps/` contiene adaptadores y lógica de paquetes offline.
-- `pnpm-workspace.yaml` declara `apps/*`, `services/*` y `packages/*`; `services/api` y los paquetes compartidos existen como placeholders.
+- El `package.json` raíz orquesta scripts Expo/Jest, API, Telegram, Web UI, contratos, integración y E2E.
+- `apps/mobile/` contiene la app Expo/Tamagui, outbox de operaciones firmadas, local DB/materializer y vistas offline-first.
+- `apps/telegram-channel/` contiene state machines puras para `/start`, `/workcenter`, `/resource` y `/dispatch`.
+- `apps/web-ui/` contiene paneles ligeros para Work Centers, necesidades/sobrantes y tareas logísticas.
+- `services/api/` contiene el Worker Hono, D1, webhook Telegram, sync push/pull, incidentes, Work Centers, resource reports y dispatch tasks.
+- `packages/contracts/` y `packages/domain/` contienen schemas, vocabulario, estados derivados y reglas compartidas para evitar duplicación en clientes.
+- `pnpm-workspace.yaml` declara `apps/*`, `services/*` y `packages/*`.
 
-Eso significa que el backend debería nacer extrayendo contratos y dominio compartidos, no reescribiendo el producto desde cero.
+Eso significa que el backend ya no es un placeholder: es la fuente canónica de reglas compartidas, idempotencia, persistencia y auditoría para los canales.
 
 ## Capacidades backend por dominio
 
@@ -68,12 +67,20 @@ Eso significa que el backend debería nacer extrayendo contratos y dominio compa
 |---|---|---|
 | Incidentes | `GET /incidents`, `POST /incidents/:id/join` | Alta |
 | Identidad de canal | `POST /channel-identities/telegram` | Alta |
-| Centros | `POST /operations/work-center.create`, `GET /incidents/:id/centers` | Alta |
-| Recursos | `POST /operations/resource-report.create` | Alta |
-| Logística | `POST /dispatch-tasks`, `PATCH /dispatch-tasks/:id/state` | Media |
+| Centros | `POST /incidents/:incidentId/work-centers`, `GET /incidents/:incidentId/work-centers`, `GET /incidents/:incidentId/work-centers/:workCenterId` | Alta / implementado |
+| Recursos | `POST /incidents/:incidentId/resource-reports`, `GET /incidents/:incidentId/resource-reports`, `GET /incidents/:incidentId/resource-reports/:resourceReportId`, `GET /incidents/:incidentId/resource-reports/matches` | Alta / implementado |
+| Logística | `POST /incidents/:incidentId/dispatch-tasks`, `GET /incidents/:incidentId/dispatch-tasks`, `PATCH /incidents/:incidentId/dispatch-tasks/:dispatchTaskId` | Alta / implementado |
 | SOS | `POST /operations/sos.create`, `POST /sos/:id/ack` | Alta |
 | Web links | `POST /web-links`, `GET /web-links/:token/session` | Alta |
 | Sync móvil | `POST /sync/push`, `GET /sync/pull` | Alta para app nativa |
+
+## Cierre Slice 4 - Recursos + logística
+
+- Resource reports y dispatch tasks ya están respaldados por D1, contratos Zod y endpoints Hono.
+- `/sync/push` acepta `resource_report.create`, `dispatch_event.create` y `dispatch_event.update` como operaciones firmadas `version: 1`.
+- Matching simple de necesidad/sobrante vive en `packages/domain` y se expone desde API; los clientes no calculan matching autoritativo.
+- La idempotencia de tareas logísticas rechaza `dispatch_event.create` incompatibles sobre el mismo `dispatchTaskId`/`entityId` con `operation_conflict`.
+- `/telegram/webhook` enruta `/resource` y `/dispatch` con estados namespaced para evitar interferencias entre flows.
 
 ## Reglas de implementación
 

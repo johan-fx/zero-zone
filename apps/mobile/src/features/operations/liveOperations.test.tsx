@@ -10,7 +10,7 @@ import { appendSignedOperationAndMaterialize } from '@/infrastructure/oplog/outb
 import { FakeOperationSigner } from '@/infrastructure/security';
 import { OperationalThemeProvider } from '@/shared/theme';
 import { tamaguiConfig } from '../../../tamagui.config';
-import { LiveOperationalEntryScreen, createOfflineWorkCenter } from './liveOperations';
+import { LiveOperationalEntryScreen, createOfflineResourceReport, createOfflineWorkCenter } from './liveOperations';
 
 async function renderLiveOperations(input: {
   database?: ReturnType<typeof createInMemoryLocalOperationDatabase>;
@@ -390,14 +390,78 @@ describe('live operational flow wiring', () => {
     expect(screen.queryByTestId('map_preparation_panel')).toBeNull();
   });
 
-  it('labels unwired report actions as unavailable instead of presenting live actions', async () => {
+  it('creates offline resource reports for selected-center needs and surplus', async () => {
     const { screen } = await renderLiveOperations();
 
     await pressAndFlush(screen.getByText('Create local incident'));
     await waitFor(() => expect(screen.getByText('Incident: Local flood response')).toBeTruthy());
     await pressAndFlush(screen.getByText('Create pending center'));
 
-    await waitFor(() => expect(screen.getByText('Report need unavailable')).toBeDisabled());
-    expect(screen.getByText('Report surplus unavailable')).toBeDisabled();
+    await waitFor(() => expect(screen.getByText('Report need')).toBeTruthy());
+    await pressAndFlush(screen.getByTestId('report_need_button'));
+    await waitFor(() => expect(screen.getByText('Water · 24 boxes · high')).toBeTruthy());
+    expect(screen.getByText('Constraints: sealed bottles preferred')).toBeTruthy();
+    expect(screen.getByText('Local pending · verify before acting')).toBeTruthy();
+
+    await pressAndFlush(screen.getByTestId('report_surplus_button'));
+    await waitFor(() => expect(screen.getByText('Blankets · 12 units · medium')).toBeTruthy());
+    expect(screen.getAllByText('Local pending · verify before acting')).toHaveLength(2);
+  });
+
+  it('accepts canonical resource report payloads for offline signing', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    await seedPreparedIncident(database);
+    await createOfflineWorkCenter({
+      database,
+      signer: new FakeOperationSigner('resource-canonical-center-tests'),
+      incidentId: 'incident-prepared',
+      cellId: 'cell-a7',
+      centerId: 'center-resource-1',
+    });
+
+    await createOfflineResourceReport({
+      database,
+      signer: new FakeOperationSigner('resource-canonical-report-tests'),
+      incidentId: 'incident-prepared',
+      cellId: 'cell-a7',
+      workCenterId: 'center-resource-1',
+      reportId: 'report-canonical-1',
+      payload: {
+        category: 'Medical supplies',
+        quantityApprox: '3 kits',
+        urgency: 'critical',
+        constraints: ['sealed'],
+        reportKind: 'needed',
+      },
+    });
+
+    const operations = await database.syncOps.findByIncident('incident-prepared');
+    const resourceOperation = operations.find((operation) => operation.opType === 'resource_report.create');
+    expect(resourceOperation).toEqual(
+      expect.objectContaining({
+        opType: 'resource_report.create',
+        version: 1,
+        entityId: 'report-canonical-1',
+        payload: expect.objectContaining({
+          category: 'Medical supplies',
+          quantityApprox: '3 kits',
+          urgency: 'critical',
+          constraints: ['sealed'],
+          reportKind: 'needed',
+          workCenterId: 'center-resource-1',
+        }),
+      }),
+    );
+    expect(await database.views.resourceReports.findByIncident('incident-prepared')).toContainEqual(
+      expect.objectContaining({
+        reportId: 'report-canonical-1',
+        category: 'Medical supplies',
+        quantityApprox: '3 kits',
+        urgency: 'critical',
+        reportKind: 'needed',
+        workCenterId: 'center-resource-1',
+        provisional: true,
+      }),
+    );
   });
 });

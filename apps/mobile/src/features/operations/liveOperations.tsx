@@ -1,9 +1,9 @@
-import { WorkCenterCreatePayloadSchema, type WorkCenterCreatePayload } from '@zona-cero/contracts';
+import { ResourceReportPayloadSchema, WorkCenterCreatePayloadSchema, type ResourceReportKind, type ResourceReportPayload, type ResourceReportUrgency, type WorkCenterCreatePayload } from '@zona-cero/contracts';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
 import { Paragraph, Text, XStack, YStack } from 'tamagui';
 
-import { createInMemoryLocalOperationDatabase, type LocalOperationDatabase, type PresenceLocalView, type WorkCenterView } from '@/infrastructure/local-db/local-db';
+import { createInMemoryLocalOperationDatabase, type DispatchEventLocalView, type LocalOperationDatabase, type PresenceLocalView, type ResourceReportLocalView, type WorkCenterView } from '@/infrastructure/local-db/local-db';
 import { resolveMapPreparationCoverage, resolveMapRenderState, type MapPackMetadata } from '@/infrastructure/maps';
 import { appendSignedOperationAndMaterialize } from '@/infrastructure/oplog/outbox-service';
 import { FakeOperationSigner, type OperationSigner } from '@/infrastructure/security';
@@ -40,6 +40,8 @@ type LiveOperationalState = {
   centers: WorkCenterView[];
   selectedCenter: WorkCenterView | null;
   selectedPresence: PresenceLocalView | null;
+  resourceReports: ResourceReportLocalView[];
+  dispatchEvents: DispatchEventLocalView[];
   mapPack: MapPackMetadata | null;
   mapPacks: MapPackMetadata[];
   pendingOperations: number;
@@ -56,6 +58,7 @@ type MapPreparationSummary = {
 type WorkCenterPayload = WorkCenterCreatePayload;
 
 type PresenceAction = 'check_in' | 'pause' | 'check_out';
+type ResourceReportIntent = 'needed' | 'surplus';
 
 let localOperationSequence = 0;
 
@@ -137,14 +140,57 @@ export async function createPresenceOperation(input: { database: LocalOperationD
   });
 }
 
+export async function createOfflineResourceReport(input: {
+  database: LocalOperationDatabase;
+  signer: OperationSigner;
+  incidentId: string;
+  cellId: string;
+  workCenterId: string;
+  reportId?: string;
+  payload: {
+    category: string;
+    quantityApprox: string;
+    urgency: ResourceReportUrgency;
+    constraints?: string[];
+    reportKind: ResourceReportKind;
+  };
+}) {
+  const reportId = input.reportId ?? (await createNextResourceReportId(input.database, input.incidentId));
+  const payload = ResourceReportPayloadSchema.parse({
+    ...input.payload,
+    constraints: input.payload.constraints ?? [],
+    workCenterId: input.workCenterId,
+    reportedAt: nextOperationTimestamp(),
+  });
+  const stamp = nextOperationStamp(`resource-${input.payload.reportKind}`);
+
+  return appendSignedOperationAndMaterialize({
+    database: input.database,
+    signer: input.signer,
+    input: {
+      actorKeyId: DEFAULT_ACTOR_KEY_ID,
+      deviceId: DEFAULT_DEVICE_ID,
+      incidentId: input.incidentId,
+      cellId: input.cellId,
+      entityId: reportId,
+      opType: 'resource_report.create',
+      payload,
+      hlc: stamp.hlc,
+      createdAtDevice: stamp.createdAtDevice,
+    },
+  });
+}
+
 export async function loadLiveOperationalState(database: LocalOperationDatabase, incidentId: string): Promise<LiveOperationalState> {
   const incident = await database.views.incidents.findById(incidentId);
   const cellId = incident?.cellId ?? DEFAULT_CELL_ID;
-  const [centers, mapPacks, operations, presenceSessions] = await Promise.all([
+  const [centers, mapPacks, operations, presenceSessions, resourceReports, dispatchEvents] = await Promise.all([
     database.views.workCenters.findByIncident(incidentId),
     database.views.mapPacks.findByIncident(incidentId),
     database.syncOps.findByIncident(incidentId),
     database.views.presence.findByIncident(incidentId),
+    database.views.resourceReports.findByIncident(incidentId),
+    database.views.dispatchEvents.findByIncident(incidentId),
   ]);
   const pendingOperations = operations.filter((operation) => 'syncState' in operation && operation.syncState === 'pending').length;
   const selectedCenter = centers[centers.length - 1] ?? null;
@@ -155,6 +201,8 @@ export async function loadLiveOperationalState(database: LocalOperationDatabase,
     centers,
     selectedCenter,
     selectedPresence: selectedCenter ? presenceSessions.find((session) => session.centerId === selectedCenter.centerId) ?? null : null,
+    resourceReports,
+    dispatchEvents,
     mapPack,
     mapPacks,
     pendingOperations,
@@ -265,6 +313,30 @@ export function LiveOperationalEntryScreen({
     [database, refresh, signer, state?.incident, state?.selectedCenter],
   );
 
+  const handleResourceReport = useCallback(
+    async (reportKind: ResourceReportIntent) => {
+      if (!state?.incident || !state.selectedCenter) {
+        return;
+      }
+
+      setError(null);
+      try {
+        await createOfflineResourceReport({
+          database,
+          signer,
+          incidentId: state.incident.incidentId,
+          cellId: state.incident.cellId,
+          workCenterId: state.selectedCenter.centerId,
+          payload: createDefaultResourceReportPayload(reportKind),
+        });
+        await refresh(state.incident.incidentId);
+      } catch (caughtError) {
+        setError(caughtError instanceof Error ? caughtError.message : 'Unable to create resource report');
+      }
+    },
+    [database, refresh, signer, state?.incident, state?.selectedCenter],
+  );
+
   const handleDevScenario = useCallback(
     async (scenario: LiveOperationsDevScenario) => {
       setError(null);
@@ -353,7 +425,9 @@ export function LiveOperationalEntryScreen({
 
         {mapPreparation ? <MapPreparationPanel preparation={mapPreparation} /> : null}
 
-        {state?.selectedCenter ? <LiveSelectedCenterPanel center={state.selectedCenter} onPresenceAction={handlePresenceAction} presence={state.selectedPresence} /> : null}
+        {state?.selectedCenter ? <LiveSelectedCenterPanel center={state.selectedCenter} onPresenceAction={handlePresenceAction} onResourceReport={handleResourceReport} presence={state.selectedPresence} /> : null}
+
+        {state?.selectedCenter ? <ResourceLogisticsPanel dispatchEvents={state.dispatchEvents} reports={state.resourceReports} selectedCenterId={state.selectedCenter.centerId} /> : null}
       </YStack>
     </YStack>
   );
@@ -383,7 +457,17 @@ function LiveMapLibreSurface({ centers, indicator }: { centers: WorkCenterView[]
   );
 }
 
-function LiveSelectedCenterPanel({ center, onPresenceAction, presence }: { center: WorkCenterView; onPresenceAction: (action: PresenceAction) => void; presence: PresenceLocalView | null }) {
+function LiveSelectedCenterPanel({
+  center,
+  onPresenceAction,
+  onResourceReport,
+  presence,
+}: {
+  center: WorkCenterView;
+  onPresenceAction: (action: PresenceAction) => void;
+  onResourceReport: (reportKind: ResourceReportIntent) => void;
+  presence: PresenceLocalView | null;
+}) {
   const centerRecord = center as WorkCenterView & Partial<WorkCenterPayload>;
   const trackingLabel = presence?.status === 'active' ? 'Tracking: active' : presence?.status === 'paused' ? 'Tracking: paused' : presence?.status === 'checked_out' ? 'Tracking: stopped' : 'Tracking: stopped';
   const roleSummary = resolveRoleSummary(presence);
@@ -435,11 +519,85 @@ function LiveSelectedCenterPanel({ center, onPresenceAction, presence }: { cente
           <ActionButton label="Check in" onPress={() => onPresenceAction('check_in')} testID="presence_check_in_button" tone="success" />
           <ActionButton disabled={presence?.status !== 'active'} label="Pause tracking" onPress={() => onPresenceAction('pause')} testID="presence_pause_button" tone="warning" />
           <ActionButton disabled={!presence || presence.status === 'checked_out'} label="Check out" onPress={() => onPresenceAction('check_out')} testID="presence_check_out_button" tone="stale" />
-          <ActionButton disabled label="Report need unavailable" tone="warning" />
-          <ActionButton disabled label="Report surplus unavailable" tone="info" />
+          <ActionButton label="Report need" onPress={() => onResourceReport('needed')} testID="report_need_button" tone="warning" />
+          <ActionButton label="Report surplus" onPress={() => onResourceReport('surplus')} testID="report_surplus_button" tone="info" />
         </XStack>
       </YStack>
     </OperationalCard>
+  );
+}
+
+function ResourceLogisticsPanel({ dispatchEvents, reports, selectedCenterId }: { dispatchEvents: DispatchEventLocalView[]; reports: ResourceReportLocalView[]; selectedCenterId: string }) {
+  const centerReports = reports.filter((report) => report.workCenterId === selectedCenterId);
+  const needs = centerReports.filter((report) => report.reportKind === 'needed');
+  const surplus = centerReports.filter((report) => report.reportKind === 'surplus');
+
+  return (
+    <OperationalCard testID="resource-logistics-panel">
+      <YStack gap="$3">
+        <XStack items="center" justify="space-between" gap="$3">
+          <YStack grow={1} gap="$1">
+            <Text color="$text" fontSize="$lg" fontWeight="900">
+              Resources + logistics
+            </Text>
+            <Text color="$textMuted" fontSize="$sm" fontWeight="700">
+              Local reports are provisional until sync confirms them.
+            </Text>
+          </YStack>
+          <StatusBadge tone={centerReports.length > 0 ? 'pending' : 'stale'} label={centerReports.length > 0 ? 'Local pending' : 'No local reports'} />
+        </XStack>
+
+        <ResourceReportList heading="Needs" reports={needs} />
+        <ResourceReportList heading="Surplus" reports={surplus} />
+
+        <YStack gap="$2">
+          <Text color="$text" fontSize="$md" fontWeight="900">
+            Dispatch tasks
+          </Text>
+          {dispatchEvents.length === 0 ? (
+            <Text color="$textMuted" fontSize="$sm" fontWeight="700">
+              No dispatch tasks available locally.
+            </Text>
+          ) : (
+            dispatchEvents.map((event) => (
+              <YStack key={event.dispatchEventId} gap="$1">
+                <Text color="$text" fontSize="$sm" fontWeight="800">
+                  {event.category} · {event.quantityApprox}
+                </Text>
+                <StatusBadge tone={event.provisional ? 'pending' : 'info'} label={`Dispatch: ${formatCanonicalValue(event.status)}${event.provisional ? ' · local pending' : ''}`} />
+              </YStack>
+            ))
+          )}
+        </YStack>
+      </YStack>
+    </OperationalCard>
+  );
+}
+
+function ResourceReportList({ heading, reports }: { heading: string; reports: ResourceReportLocalView[] }) {
+  return (
+    <YStack gap="$2">
+      <Text color="$text" fontSize="$md" fontWeight="900">
+        {heading}
+      </Text>
+      {reports.length === 0 ? (
+        <Text color="$textMuted" fontSize="$sm" fontWeight="700">
+          No {heading.toLowerCase()} reported for this center.
+        </Text>
+      ) : (
+        reports.map((report) => (
+          <YStack key={report.reportId} gap="$1">
+            <Text color="$text" fontSize="$sm" fontWeight="800">
+              {report.category} · {report.quantityApprox} · {formatCanonicalValue(report.urgency)}
+            </Text>
+            <Text color="$textMuted" fontSize="$xs" fontWeight="700">
+              Constraints: {report.constraints.length > 0 ? report.constraints.join(', ') : 'none'}
+            </Text>
+            <StatusBadge tone="pending" label={report.provisional ? 'Local pending · verify before acting' : 'Synced'} />
+          </YStack>
+        ))
+      )}
+    </YStack>
   );
 }
 
@@ -479,6 +637,16 @@ function createDefaultWorkCenterPayload(overrides: Partial<WorkCenterPayload> = 
     location: { latitude: 41.38, longitude: 2.17 },
     reportedAt: DEFAULT_TIMESTAMP,
     ...overrides,
+  });
+}
+
+function createDefaultResourceReportPayload(reportKind: ResourceReportIntent): ResourceReportPayload {
+  return ResourceReportPayloadSchema.parse({
+    category: reportKind === 'needed' ? 'Water' : 'Blankets',
+    quantityApprox: reportKind === 'needed' ? '24 boxes' : '12 units',
+    urgency: reportKind === 'needed' ? 'high' : 'medium',
+    constraints: reportKind === 'needed' ? ['sealed bottles preferred'] : [],
+    reportKind,
   });
 }
 
@@ -600,8 +768,18 @@ function nextOperationStamp(label: string): { createdAtDevice: string; hlc: stri
   };
 }
 
+function nextOperationTimestamp(): string {
+  return new Date(Date.parse(DEFAULT_TIMESTAMP) + localOperationSequence + 1).toISOString();
+}
+
 async function createNextWorkCenterId(database: LocalOperationDatabase, incidentId: string): Promise<string> {
   const existingCenters = await database.views.workCenters.findByIncident(incidentId);
 
   return existingCenters.length === 0 ? DEFAULT_CENTER_ID : `center-local-${existingCenters.length + 1}`;
+}
+
+async function createNextResourceReportId(database: LocalOperationDatabase, incidentId: string): Promise<string> {
+  const existingReports = await database.views.resourceReports.findByIncident(incidentId);
+
+  return `resource-report-local-${existingReports.length + 1}`;
 }

@@ -1,3 +1,4 @@
+import { DispatchEventCreatePayloadSchema, DispatchEventUpdatePayloadSchema, ResourceReportPayloadSchema, type DispatchTaskStatus, type ResourceReportKind, type ResourceReportUrgency } from '@zona-cero/contracts';
 import { WorkCenterCreatePayloadSchema } from '@zona-cero/contracts';
 import type { SignedOperation } from '@/infrastructure/security/operation-signer';
 
@@ -43,19 +44,32 @@ export type ResourceReportView = {
   reportId: string;
   incidentId: string;
   cellId: string;
-  resource: string;
-  quantity: number;
-  state: string;
+  workCenterId?: string;
+  category: string;
+  quantityApprox: string;
+  urgency: ResourceReportUrgency;
+  constraints: string[];
+  reportKind: ResourceReportKind;
+  provisional: true;
+  provisionalReason: 'offline_pending_sync';
   syncState: string;
   updatedAt: string;
 };
 
 export type DispatchEventView = {
   dispatchEventId: string;
+  dispatchTaskId: string;
   incidentId: string;
   cellId: string;
-  eventType: string;
-  status: string;
+  category: string;
+  quantityApprox: string;
+  fromResourceReportId?: string;
+  toResourceReportId?: string;
+  targetWorkCenterId?: string;
+  notes?: string;
+  status: DispatchTaskStatus;
+  provisional: boolean;
+  provisionalReason: 'offline_pending_sync' | 'local_update_pending_sync';
   updatedAt: string;
 };
 
@@ -145,9 +159,9 @@ export function materializeOperations(operations: readonly SignedOperation[]): M
           reportId: operation.entityId,
           incidentId: operation.incidentId,
           cellId: operation.cellId,
-          resource: stringValue(payload.resource, 'unknown'),
-          quantity: numberValue(payload.quantity, 0),
-          state: stringValue(payload.state, 'needed'),
+          ...materializeResourceReportCreatePayload(payload),
+          provisional: true,
+          provisionalReason: 'offline_pending_sync',
           syncState: operation.syncState,
           updatedAt: operation.createdAtDevice,
         });
@@ -156,10 +170,10 @@ export function materializeOperations(operations: readonly SignedOperation[]): M
       case 'dispatch_event.update':
         dispatchEvents.set(operation.entityId, {
           dispatchEventId: operation.entityId,
+          dispatchTaskId: operation.entityId,
           incidentId: operation.incidentId,
           cellId: operation.cellId,
-          eventType: stringValue(payload.eventType, dispatchEvents.get(operation.entityId)?.eventType ?? 'placeholder'),
-          status: stringValue(payload.status, dispatchEvents.get(operation.entityId)?.status ?? 'open'),
+          ...materializeDispatchEventPayload(operation.opType, payload, dispatchEvents.get(operation.entityId)),
           updatedAt: operation.createdAtDevice,
         });
         break;
@@ -267,10 +281,6 @@ function stringValue(value: unknown, fallback: string): string {
   return typeof value === 'string' ? value : fallback;
 }
 
-function numberValue(value: unknown, fallback: number): number {
-  return typeof value === 'number' ? value : fallback;
-}
-
 function materializeWorkCenterCreatePayload(payload: Record<string, unknown>): Pick<WorkCenterMaterializedView, 'name' | 'centerType' | 'description' | 'priority' | 'initialNeed' | 'surplus' | 'location'> {
   const parsedPayload = WorkCenterCreatePayloadSchema.safeParse(payload);
 
@@ -288,6 +298,84 @@ function materializeWorkCenterCreatePayload(payload: Record<string, unknown>): P
   return parsedPayload.data;
 }
 
+function materializeResourceReportCreatePayload(payload: Record<string, unknown>): Pick<ResourceReportView, 'workCenterId' | 'category' | 'quantityApprox' | 'urgency' | 'constraints' | 'reportKind'> {
+  const parsedPayload = ResourceReportPayloadSchema.safeParse(payload);
+
+  if (!parsedPayload.success) {
+    return {
+      category: stringValue(payload.category, stringValue(payload.resource, 'unknown')),
+      quantityApprox: stringValue(payload.quantityApprox, typeof payload.quantity === 'number' ? String(payload.quantity) : 'unknown'),
+      urgency: parseResourceUrgency(payload.urgency),
+      constraints: parseStringArray(payload.constraints),
+      reportKind: parseResourceReportKind(payload.reportKind ?? payload.state),
+      workCenterId: optionalStringValue(payload.workCenterId),
+    };
+  }
+
+  return parsedPayload.data;
+}
+
+function materializeDispatchEventPayload(
+  opType: SignedOperation['opType'],
+  payload: Record<string, unknown>,
+  existing: DispatchEventView | undefined,
+): Pick<DispatchEventView, 'category' | 'quantityApprox' | 'fromResourceReportId' | 'toResourceReportId' | 'targetWorkCenterId' | 'notes' | 'status' | 'provisional' | 'provisionalReason'> {
+  if (opType === 'dispatch_event.update') {
+    const parsedPayload = DispatchEventUpdatePayloadSchema.safeParse(payload);
+
+    return {
+      category: existing?.category ?? 'unknown',
+      quantityApprox: existing?.quantityApprox ?? 'unknown',
+      fromResourceReportId: existing?.fromResourceReportId,
+      toResourceReportId: existing?.toResourceReportId,
+      targetWorkCenterId: existing?.targetWorkCenterId,
+      notes: parsedPayload.success ? parsedPayload.data.notes ?? existing?.notes : optionalStringValue(payload.notes) ?? existing?.notes,
+      status: parsedPayload.success ? parsedPayload.data.status : parseDispatchStatus(payload.status, existing?.status ?? 'pending'),
+      provisional: true,
+      provisionalReason: 'local_update_pending_sync',
+    };
+  }
+
+  const parsedPayload = DispatchEventCreatePayloadSchema.safeParse(payload);
+
+  if (!parsedPayload.success) {
+    return {
+      category: stringValue(payload.category, stringValue(payload.eventType, 'unknown')),
+      quantityApprox: stringValue(payload.quantityApprox, 'unknown'),
+      fromResourceReportId: optionalStringValue(payload.fromResourceReportId),
+      toResourceReportId: optionalStringValue(payload.toResourceReportId),
+      targetWorkCenterId: optionalStringValue(payload.targetWorkCenterId),
+      notes: optionalStringValue(payload.notes),
+      status: parseDispatchStatus(payload.status, 'pending'),
+      provisional: true,
+      provisionalReason: 'offline_pending_sync',
+    };
+  }
+
+  return {
+    ...parsedPayload.data,
+    status: parsedPayload.data.status ?? 'pending',
+    provisional: true,
+    provisionalReason: 'offline_pending_sync',
+  };
+}
+
 function optionalStringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function parseStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.length > 0) : [];
+}
+
+function parseResourceReportKind(value: unknown): ResourceReportKind {
+  return value === 'surplus' ? 'surplus' : 'needed';
+}
+
+function parseResourceUrgency(value: unknown): ResourceReportUrgency {
+  return value === 'low' || value === 'high' || value === 'critical' ? value : 'medium';
+}
+
+function parseDispatchStatus(value: unknown, fallback: DispatchTaskStatus): DispatchTaskStatus {
+  return value === 'accepted' || value === 'en_route' || value === 'delivered' || value === 'cancelled' || value === 'pending' ? value : fallback;
 }

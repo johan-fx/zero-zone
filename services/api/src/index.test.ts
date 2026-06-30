@@ -12,7 +12,12 @@ import {
   validWorkCenterCreateOperationFixture,
 } from '@zona-cero/testing';
 import {
+  DispatchTaskListResponseSchema,
+  DispatchTaskResponseSchema,
   IncidentJoinResponseSchema,
+  ResourceReportCreateResponseSchema,
+  ResourceReportListResponseSchema,
+  ResourceReportMatchResponseSchema,
   SyncPushResponseSchema,
   TelegramWebhookResultSchema,
   WorkCenterCreateResponseSchema,
@@ -718,4 +723,282 @@ describe('api worker', () => {
       .first<{ count: number }>();
     expect(audit?.count).toBe(1);
   });
+
+  it('creates, lists and matches resource reports', async () => {
+    await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(telegramIncidentJoinRequestFixture),
+    });
+
+    const needResponse = await request('/incidents/incident-zc-demo/resource-reports', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        channel: 'telegram',
+        externalId: 'telegram-user-1001',
+        payload: { category: 'water', quantityApprox: '20 boxes', urgency: 'high', constraints: ['sealed'], reportKind: 'needed' },
+      }),
+    });
+    expect(needResponse.status).toBe(200);
+    const need = ResourceReportCreateResponseSchema.parse(await needResponse.json());
+    expect(need.resourceReport).toMatchObject({ category: 'water', reportKind: 'needed', sourceChannel: 'telegram' });
+
+    await request('/sync/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        operations: [{
+          ...createSignedOperationFixture({
+            opId: 'op-resource-surplus-1',
+            incidentId: 'incident-zc-demo',
+            cellId: 'connected-telegram',
+            entityId: 'rr-surplus-water-1',
+            entityType: 'resource_report',
+            opType: 'resource_report.create',
+            payload: { category: 'water', quantityApprox: '30 boxes', urgency: 'medium', constraints: [], reportKind: 'surplus' },
+          }),
+          syncState: 'pending',
+        }],
+      }),
+    });
+
+    const list = ResourceReportListResponseSchema.parse(await (await request('/incidents/incident-zc-demo/resource-reports')).json());
+    expect(list.resourceReports.map((report) => report.reportKind).sort()).toEqual(['needed', 'surplus']);
+
+    const matches = ResourceReportMatchResponseSchema.parse(await (await request('/incidents/incident-zc-demo/resource-reports/matches')).json());
+    expect(matches.matches).toHaveLength(1);
+    expect(matches.matches[0]).toMatchObject({ need: { reportKind: 'needed' }, surplus: { reportKind: 'surplus' } });
+  });
+
+  it('creates and updates dispatch task status', async () => {
+    await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(telegramIncidentJoinRequestFixture),
+    });
+
+    const create = await request('/incidents/incident-zc-demo/dispatch-tasks', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        channel: 'telegram',
+        externalId: 'telegram-user-1001',
+        payload: { category: 'water', quantityApprox: '10 boxes', notes: 'Bring to north gate' },
+      }),
+    });
+    expect(create.status).toBe(200);
+    const created = DispatchTaskResponseSchema.parse(await create.json());
+    expect(created.dispatchTask.status).toBe('pending');
+
+    const update = await request(`/incidents/incident-zc-demo/dispatch-tasks/${created.dispatchTask.dispatchTaskId}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ channel: 'telegram', externalId: 'telegram-user-1001', status: 'en_route' }),
+    });
+    expect(update.status).toBe(200);
+    expect(DispatchTaskResponseSchema.parse(await update.json()).dispatchTask.status).toBe('en_route');
+
+    const list = DispatchTaskListResponseSchema.parse(await (await request('/incidents/incident-zc-demo/dispatch-tasks')).json());
+    expect(list.dispatchTasks[0]).toMatchObject({ status: 'en_route', category: 'water' });
+  });
+
+  it('sync push creates and updates dispatch tasks idempotently', async () => {
+    const createOperation = {
+      ...createSignedOperationFixture({
+        opId: 'op-dispatch-create-1',
+        incidentId: 'incident-zc-demo',
+        cellId: 'cell-zc-demo',
+        entityId: 'dt-mobile-water-1',
+        entityType: 'dispatch_event',
+        opType: 'dispatch_event.create',
+        payload: { category: 'water', quantityApprox: '5 boxes' },
+      }),
+      syncState: 'pending',
+    };
+    const first = await request('/sync/push', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operations: [createOperation] }) });
+    const duplicate = await request('/sync/push', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operations: [createOperation] }) });
+    expect(SyncPushResponseSchema.parse(await first.json()).results[0]).toMatchObject({ status: 'accepted' });
+    expect(SyncPushResponseSchema.parse(await duplicate.json()).results[0]).toMatchObject({ status: 'accepted' });
+
+    const conflict = await request('/sync/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        operations: [{
+          ...createOperation,
+          opId: 'op-dispatch-create-conflict-1',
+          payload: { category: 'medical', quantityApprox: '12 kits' },
+        }],
+      }),
+    });
+    expect(SyncPushResponseSchema.parse(await conflict.json()).results[0]).toMatchObject({
+      opId: 'op-dispatch-create-conflict-1',
+      status: 'rejected',
+      code: 'operation_conflict',
+    });
+
+    const rejectedOperation = await (env as Env).DB.prepare('SELECT status FROM sync_operations WHERE op_id = ?')
+      .bind('op-dispatch-create-conflict-1')
+      .first<{ status: string }>();
+    expect(rejectedOperation?.status).toBe('rejected');
+
+    const eventCount = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM dispatch_events WHERE dispatch_task_id = ?')
+      .bind('dt-mobile-water-1')
+      .first<{ count: number }>();
+    expect(eventCount?.count).toBe(1);
+
+    const update = await request('/sync/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ operations: [{ ...createOperation, opId: 'op-dispatch-update-1', entityId: 'dt-mobile-water-1', opType: 'dispatch_event.update', payload: { dispatchTaskId: 'dt-mobile-water-1', status: 'delivered' } }] }),
+    });
+    expect(SyncPushResponseSchema.parse(await update.json()).results[0]).toMatchObject({ status: 'accepted' });
+    const list = DispatchTaskListResponseSchema.parse(await (await request('/incidents/incident-zc-demo/dispatch-tasks')).json());
+    expect(list.dispatchTasks[0]?.status).toBe('delivered');
+  });
+
+
+  it('drives Telegram webhook /resource through persisted state and clears terminal state', async () => {
+    const telegramUserId = 26001;
+    await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ...telegramIncidentJoinRequestFixture,
+        externalId: String(telegramUserId),
+        displayName: 'Resource Reporter',
+      }),
+    });
+
+    await expect(postTelegramMessage(telegramUserId, '/resource', 'Resource')).resolves.toMatchObject({
+      accepted: true,
+      command: '/resource',
+      responseText: expect.stringContaining('Choose an incident before reporting resources'),
+    });
+
+    const stateKey = `flow:resource:chat:${telegramUserId}:from:${telegramUserId}`;
+    await expect(
+      (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?').bind(stateKey).first<{ step: string }>(),
+    ).resolves.toMatchObject({ step: 'awaitingIncident' });
+
+    await expect(postTelegramMessage(telegramUserId, '1', 'Resource')).resolves.toMatchObject({ responseText: expect.stringContaining('needed or surplus') });
+    await expect(postTelegramMessage(telegramUserId, 'needed', 'Resource')).resolves.toMatchObject({ responseText: expect.stringContaining('resource category') });
+    await expect(postTelegramMessage(telegramUserId, 'water', 'Resource')).resolves.toMatchObject({ responseText: expect.stringContaining('approximate quantity') });
+    await expect(postTelegramMessage(telegramUserId, '20 boxes', 'Resource')).resolves.toMatchObject({ responseText: expect.stringContaining('urgency') });
+    await expect(postTelegramMessage(telegramUserId, 'high', 'Resource')).resolves.toMatchObject({ responseText: expect.stringContaining('optional restrictions') });
+    await expect(postTelegramMessage(telegramUserId, 'sealed', 'Resource')).resolves.toMatchObject({ responseText: expect.stringContaining('work center id') });
+    await expect(postTelegramMessage(telegramUserId, 'skip', 'Resource')).resolves.toMatchObject({ responseText: expect.stringContaining('Confirm resource report') });
+
+    const created = await postTelegramMessage(telegramUserId, 'yes', 'Resource');
+    expect(created).toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining('Resource needed reported: water (20 boxes).'),
+    });
+
+    const list = ResourceReportListResponseSchema.parse(await (await request('/incidents/incident-zc-demo/resource-reports')).json());
+    expect(list.resourceReports[0]).toMatchObject({ category: 'water', reportKind: 'needed', sourceChannel: 'telegram' });
+
+    const terminalState = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM telegram_conversation_states WHERE state_key = ?')
+      .bind(stateKey)
+      .first<{ count: number }>();
+    expect(terminalState?.count).toBe(0);
+  });
+
+  it('drives Telegram webhook /dispatch through persisted state and clears terminal state', async () => {
+    const telegramUserId = 26002;
+    await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ...telegramIncidentJoinRequestFixture,
+        externalId: String(telegramUserId),
+        displayName: 'Dispatch Reporter',
+      }),
+    });
+
+    const create = await request('/incidents/incident-zc-demo/dispatch-tasks', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        channel: 'telegram',
+        externalId: String(telegramUserId),
+        payload: { category: 'water', quantityApprox: '10 boxes', notes: 'North gate' },
+      }),
+    });
+    const task = DispatchTaskResponseSchema.parse(await create.json()).dispatchTask;
+
+    await expect(postTelegramMessage(telegramUserId, '/dispatch', 'Dispatch')).resolves.toMatchObject({
+      accepted: true,
+      command: '/dispatch',
+      responseText: expect.stringContaining('Choose an incident before updating dispatch tasks'),
+    });
+
+    const stateKey = `flow:dispatch:chat:${telegramUserId}:from:${telegramUserId}`;
+    await expect(
+      (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?').bind(stateKey).first<{ step: string }>(),
+    ).resolves.toMatchObject({ step: 'awaitingIncident' });
+
+    await expect(postTelegramMessage(telegramUserId, '1', 'Dispatch')).resolves.toMatchObject({ responseText: expect.stringContaining('Choose a dispatch task') });
+    await expect(postTelegramMessage(telegramUserId, '1', 'Dispatch')).resolves.toMatchObject({ responseText: expect.stringContaining('new status') });
+    await expect(postTelegramMessage(telegramUserId, 'en_route', 'Dispatch')).resolves.toMatchObject({ responseText: expect.stringContaining('Confirm dispatch task update') });
+
+    const updated = await postTelegramMessage(telegramUserId, 'yes', 'Dispatch');
+    expect(updated).toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining(`Dispatch task updated: ${task.dispatchTaskId}.`),
+    });
+
+    const list = DispatchTaskListResponseSchema.parse(await (await request('/incidents/incident-zc-demo/dispatch-tasks')).json());
+    expect(list.dispatchTasks[0]).toMatchObject({ dispatchTaskId: task.dispatchTaskId, status: 'en_route' });
+
+    const terminalState = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM telegram_conversation_states WHERE state_key = ?')
+      .bind(stateKey)
+      .first<{ count: number }>();
+    expect(terminalState?.count).toBe(0);
+  });
+
+  it('prevents explicit Telegram commands from being hijacked by sibling flow state', async () => {
+    const telegramUserId = 26003;
+
+    await postTelegramMessage(telegramUserId, '/resource', 'NoHijack');
+    await expect(
+      (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?')
+        .bind(`flow:resource:chat:${telegramUserId}:from:${telegramUserId}`)
+        .first<{ step: string }>(),
+    ).resolves.toMatchObject({ step: 'awaitingIncident' });
+
+    await expect(postTelegramMessage(telegramUserId, '/workcenter', 'NoHijack')).resolves.toMatchObject({
+      command: '/workcenter',
+      responseText: expect.stringContaining('Choose an incident before reporting a work center'),
+    });
+    await expect(
+      (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM telegram_conversation_states WHERE state_key = ?')
+        .bind(`flow:resource:chat:${telegramUserId}:from:${telegramUserId}`)
+        .first<{ count: number }>(),
+    ).resolves.toMatchObject({ count: 0 });
+
+    await expect(postTelegramMessage(telegramUserId, '/dispatch', 'NoHijack')).resolves.toMatchObject({
+      command: '/dispatch',
+      responseText: expect.stringContaining('Choose an incident before updating dispatch tasks'),
+    });
+    await expect(
+      (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM telegram_conversation_states WHERE state_key = ?')
+        .bind(`flow:workcenter:chat:${telegramUserId}:from:${telegramUserId}`)
+        .first<{ count: number }>(),
+    ).resolves.toMatchObject({ count: 0 });
+
+    await expect(postTelegramMessage(telegramUserId, '/start', 'NoHijack')).resolves.toMatchObject({
+      command: '/start',
+      responseText: expect.stringContaining('Choose an incident'),
+    });
+    await expect(
+      (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM telegram_conversation_states WHERE state_key LIKE ?')
+        .bind(`flow:%:chat:${telegramUserId}:from:${telegramUserId}`)
+        .first<{ count: number }>(),
+    ).resolves.toMatchObject({ count: 0 });
+  });
+
 });
