@@ -14,10 +14,14 @@ export type SyncState = z.infer<typeof SyncStateSchema>;
 
 export const contractErrorCodes = [
   'invalid_payload',
+  'invalid_operation_version',
   'invalid_signature',
   'unauthorized_operation',
+  'permission_denied',
   'stale_cursor',
   'duplicate_operation',
+  'operation_conflict',
+  'not_found',
   'unsupported_operation_type',
   'link_expired',
   'invalid_link_scope',
@@ -35,6 +39,13 @@ export const contractErrorSemantics = {
       web: 'web.error.invalid_payload',
     },
   },
+  invalid_operation_version: {
+    meaning: 'The signed operation version is not supported by this API; version 1 remains accepted.',
+    visibleMappingKey: {
+      telegram: 'telegram.error.invalid_operation_version',
+      web: 'web.error.invalid_operation_version',
+    },
+  },
   invalid_signature: {
     meaning: 'The signed operation cannot be verified with the expected actor key and canonical payload.',
     visibleMappingKey: {
@@ -49,6 +60,13 @@ export const contractErrorSemantics = {
       web: 'web.error.unauthorized_operation',
     },
   },
+  permission_denied: {
+    meaning: 'The caller is known but lacks permission to perform the requested operation in this incident.',
+    visibleMappingKey: {
+      telegram: 'telegram.error.permission_denied',
+      web: 'web.error.permission_denied',
+    },
+  },
   stale_cursor: {
     meaning: 'The sync cursor is too old or no longer compatible with the current sync window.',
     visibleMappingKey: {
@@ -61,6 +79,20 @@ export const contractErrorSemantics = {
     visibleMappingKey: {
       telegram: 'telegram.error.duplicate_operation',
       web: 'web.error.duplicate_operation',
+    },
+  },
+  operation_conflict: {
+    meaning: 'The idempotency key or entity already exists with incompatible payload or ownership.',
+    visibleMappingKey: {
+      telegram: 'telegram.error.operation_conflict',
+      web: 'web.error.operation_conflict',
+    },
+  },
+  not_found: {
+    meaning: 'The requested incident, entity, or sync target does not exist.',
+    visibleMappingKey: {
+      telegram: 'telegram.error.not_found',
+      web: 'web.error.not_found',
     },
   },
   unsupported_operation_type: {
@@ -184,8 +216,6 @@ export const SyncPushResponseSchema = z.object({
 });
 export type SyncPushResponse = z.infer<typeof SyncPushResponseSchema>;
 
-
-
 export const channels = ['telegram', 'mobile', 'web-ui'] as const;
 export const ChannelSchema = z.enum(channels);
 export type Channel = z.infer<typeof ChannelSchema>;
@@ -224,6 +254,116 @@ export const AuditReferenceSchema = z.object({
   auditEventId: z.string().min(1),
 });
 export type AuditReference = z.infer<typeof AuditReferenceSchema>;
+
+export const workCenterStatuses = ['reported', 'active', 'inactive', 'archived'] as const;
+export const WorkCenterStatusSchema = z.enum(workCenterStatuses);
+export type WorkCenterStatus = z.infer<typeof WorkCenterStatusSchema>;
+
+export const workCenterActivationStates = ['pending_corroboration', 'active', 'needs_review'] as const;
+export const WorkCenterActivationStateSchema = z.enum(workCenterActivationStates);
+export type WorkCenterActivationState = z.infer<typeof WorkCenterActivationStateSchema>;
+
+export const workCenterFreshnessLevels = ['fresh', 'stale', 'expired'] as const;
+export const WorkCenterFreshnessSchema = z.enum(workCenterFreshnessLevels);
+export type WorkCenterFreshness = z.infer<typeof WorkCenterFreshnessSchema>;
+
+export const workCenterConfidenceLevels = ['low', 'medium', 'high'] as const;
+export const WorkCenterConfidenceSchema = z.enum(workCenterConfidenceLevels);
+export type WorkCenterConfidence = z.infer<typeof WorkCenterConfidenceSchema>;
+
+export const workCenterRiskLevels = ['low', 'medium', 'high'] as const;
+export const WorkCenterRiskSchema = z.enum(workCenterRiskLevels);
+export type WorkCenterRisk = z.infer<typeof WorkCenterRiskSchema>;
+
+export const workCenterPriorities = ['low', 'medium', 'high', 'critical'] as const;
+export const WorkCenterPrioritySchema = z.enum(workCenterPriorities);
+export type WorkCenterPriority = z.infer<typeof WorkCenterPrioritySchema>;
+
+export const workCenterSignalTypes = ['creator_report', 'presence_check_in', 'resource_report', 'coordinator_attestation'] as const;
+export const WorkCenterSignalTypeSchema = z.enum(workCenterSignalTypes);
+export type WorkCenterSignalType = z.infer<typeof WorkCenterSignalTypeSchema>;
+
+export const WorkCenterLocationSchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+});
+export type WorkCenterLocation = z.infer<typeof WorkCenterLocationSchema>;
+
+export const WorkCenterCreatePayloadSchema = z.object({
+  name: z.string().min(1),
+  centerType: z.string().min(1).optional(),
+  description: z.string().min(1).optional(),
+  priority: WorkCenterPrioritySchema.default('medium'),
+  initialNeed: z.string().min(1).optional(),
+  surplus: z.string().min(1).optional(),
+  location: WorkCenterLocationSchema.optional(),
+  reportedAt: z.string().min(1).optional(),
+});
+export type WorkCenterCreatePayload = z.infer<typeof WorkCenterCreatePayloadSchema>;
+
+const WorkCenterBaseSchema = z.object({
+  workCenterId: z.string().min(1),
+  incidentId: z.string().min(1),
+  cellId: z.string().min(1),
+  name: z.string().min(1),
+  centerType: z.string().min(1).optional(),
+  description: z.string().min(1).optional(),
+  priority: WorkCenterPrioritySchema,
+  initialNeed: z.string().min(1).optional(),
+  surplus: z.string().min(1).optional(),
+  location: WorkCenterLocationSchema.optional(),
+  status: WorkCenterStatusSchema,
+  activationState: WorkCenterActivationStateSchema,
+  freshness: WorkCenterFreshnessSchema,
+  confidence: WorkCenterConfidenceSchema,
+  risk: WorkCenterRiskSchema,
+  signalCount: z.number().int().nonnegative(),
+  corroboratingSignalCount: z.number().int().nonnegative(),
+  sourceChannel: ChannelSchema.optional(),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+});
+
+export const WorkCenterSummarySchema = WorkCenterBaseSchema.omit({ description: true, initialNeed: true, surplus: true });
+export type WorkCenterSummary = z.infer<typeof WorkCenterSummarySchema>;
+
+export const WorkCenterDetailSchema = WorkCenterBaseSchema.extend({
+  latestSignals: z.array(
+    z.object({
+      signalId: z.string().min(1),
+      signalType: WorkCenterSignalTypeSchema,
+      sourceChannel: ChannelSchema,
+      sourceId: z.string().min(1),
+      createdAt: z.string().min(1),
+    }),
+  ),
+});
+export type WorkCenterDetail = z.infer<typeof WorkCenterDetailSchema>;
+
+export const WorkCenterListResponseSchema = z.object({
+  workCenters: z.array(WorkCenterSummarySchema),
+});
+export type WorkCenterListResponse = z.infer<typeof WorkCenterListResponseSchema>;
+
+export const WorkCenterCreateResponseSchema = z.object({
+  workCenter: WorkCenterDetailSchema,
+  audit: AuditReferenceSchema,
+  idempotent: z.boolean(),
+});
+export type WorkCenterCreateResponse = z.infer<typeof WorkCenterCreateResponseSchema>;
+
+export const WorkCenterDetailResponseSchema = z.object({
+  workCenter: WorkCenterDetailSchema,
+});
+export type WorkCenterDetailResponse = z.infer<typeof WorkCenterDetailResponseSchema>;
+
+export const WorkCenterConnectedCreateRequestSchema = z.object({
+  channel: ChannelSchema,
+  externalId: z.string().min(1),
+  displayName: z.string().min(1).optional(),
+  payload: WorkCenterCreatePayloadSchema,
+});
+export type WorkCenterConnectedCreateRequest = z.infer<typeof WorkCenterConnectedCreateRequestSchema>;
 
 export const IncidentSummarySchema = z.object({
   incidentId: z.string().min(1),

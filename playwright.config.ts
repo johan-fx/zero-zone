@@ -11,7 +11,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: 'pnpm --filter @zona-cero/api dev',
+      command: 'pnpm api:migrate:local && pnpm api:seed:local && pnpm --filter @zona-cero/api dev',
       url: 'http://127.0.0.1:8787/health',
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,

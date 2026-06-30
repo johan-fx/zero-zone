@@ -11,7 +11,7 @@ const operationInput = {
   cellId: 'cell-a',
   entityId: 'center-1',
   opType: 'work_center.create',
-  payload: { name: 'North shelter', priority: 'high' },
+  payload: { name: 'North shelter', priority: 'high', location: { latitude: 41.38, longitude: 2.17 } },
   hlc: '2026-06-29T09:00:00.000Z-0001-device-1',
   createdAtDevice: '2026-06-29T09:00:00.000Z',
 } as const;
@@ -28,8 +28,8 @@ describe('durable signed outbox service', () => {
     });
 
     expect(writeOrder.slice(0, 2)).toEqual(['sync_ops', 'work_centers']);
-    expect(await db.syncOps.findByIncident('incident-1')).toEqual([expect.objectContaining({ opId: result.operation.opId, signature: result.operation.signature, syncState: 'pending' })]);
-    expect(await db.views.workCenters.findByIncident('incident-1')).toEqual([expect.objectContaining({ centerId: 'center-1', name: 'North shelter', status: 'pending' })]);
+    expect(await db.syncOps.findByIncident('incident-1')).toEqual([expect.objectContaining({ opId: result.operation.opId, signature: result.operation.signature, syncState: 'pending', version: 1, payload: operationInput.payload })]);
+    expect(await db.views.workCenters.findByIncident('incident-1')).toEqual([expect.objectContaining({ centerId: 'center-1', name: 'North shelter', status: 'pending', provisional: true, location: operationInput.payload.location })]);
     expect(result.views.localSummaries).toEqual([expect.objectContaining({ pendingOperations: 1, operationFreshness: 'local_pending' })]);
   });
 

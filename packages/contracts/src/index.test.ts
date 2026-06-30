@@ -17,6 +17,12 @@ import {
   SyncPushResponseSchema,
   WebLinkRequestSchema,
   WebLinkSessionSchema,
+  WorkCenterConnectedCreateRequestSchema,
+  WorkCenterCreatePayloadSchema,
+  WorkCenterCreateResponseSchema,
+  WorkCenterDetailResponseSchema,
+  WorkCenterListResponseSchema,
+  WorkCenterSignalTypeSchema,
   channels,
   contractErrorCodes,
   contractErrorSemantics,
@@ -26,6 +32,11 @@ import {
   operationTypes,
   syncStates,
   webLinkScopes,
+  workCenterActivationStates,
+  workCenterConfidenceLevels,
+  workCenterFreshnessLevels,
+  workCenterRiskLevels,
+  workCenterStatuses,
 } from './index';
 
 const signedOperationFixture = {
@@ -142,10 +153,14 @@ describe('contracts package', () => {
   it('exposes stable contract error codes', () => {
     expect(contractErrorCodes).toEqual([
       'invalid_payload',
+      'invalid_operation_version',
       'invalid_signature',
       'unauthorized_operation',
+      'permission_denied',
       'stale_cursor',
       'duplicate_operation',
+      'operation_conflict',
+      'not_found',
       'unsupported_operation_type',
       'link_expired',
       'invalid_link_scope',
@@ -154,6 +169,80 @@ describe('contracts package', () => {
     expect(ContractErrorCodeSchema.parse('unsupported_operation_type')).toBe('unsupported_operation_type');
     expect(Object.keys(contractErrorSemantics)).toEqual([...contractErrorCodes]);
     expect(contractErrorSemantics.link_expired.visibleMappingKey.telegram).toBe('telegram.error.link_expired');
+    expect(contractErrorSemantics.invalid_operation_version.visibleMappingKey.web).toBe('web.error.invalid_operation_version');
+  });
+
+  it('validates canonical work center contracts and stable derived-state enums', () => {
+    expect(workCenterStatuses).toEqual(['reported', 'active', 'inactive', 'archived']);
+    expect(workCenterActivationStates).toEqual(['pending_corroboration', 'active', 'needs_review']);
+    expect(workCenterFreshnessLevels).toEqual(['fresh', 'stale', 'expired']);
+    expect(workCenterConfidenceLevels).toEqual(['low', 'medium', 'high']);
+    expect(workCenterRiskLevels).toEqual(['low', 'medium', 'high']);
+    expect(WorkCenterSignalTypeSchema.parse('creator_report')).toBe('creator_report');
+
+    const payload = WorkCenterCreatePayloadSchema.parse({
+      name: 'North triage point',
+      centerType: 'Medical post',
+      description: 'Triage and water distribution near the north gate.',
+      priority: 'high',
+      initialNeed: 'Water',
+      surplus: 'none reported',
+      location: { latitude: 41.38, longitude: 2.17 },
+      reportedAt: '2026-06-30T10:00:00.000Z',
+    });
+
+    expect(payload.priority).toBe('high');
+    expect(WorkCenterCreatePayloadSchema.parse({ name: 'Minimal center' }).priority).toBe('medium');
+    expect(WorkCenterCreatePayloadSchema.safeParse({ name: '', location: { latitude: 120, longitude: 2 } }).success).toBe(false);
+    expect(
+      WorkCenterConnectedCreateRequestSchema.parse({
+        channel: 'telegram',
+        externalId: 'telegram-user-1',
+        payload,
+      }).payload.name,
+    ).toBe('North triage point');
+  });
+
+  it('validates work center list, detail and create response contracts', () => {
+    const summary = {
+      workCenterId: 'center-1',
+      incidentId: 'incident-1',
+      cellId: 'cell-a',
+      name: 'North triage point',
+      centerType: 'Medical post',
+      priority: 'high',
+      location: { latitude: 41.38, longitude: 2.17 },
+      status: 'reported',
+      activationState: 'pending_corroboration',
+      freshness: 'fresh',
+      confidence: 'low',
+      risk: 'medium',
+      signalCount: 1,
+      corroboratingSignalCount: 1,
+      sourceChannel: 'telegram',
+      createdAt: '2026-06-30T10:00:00.000Z',
+      updatedAt: '2026-06-30T10:00:00.000Z',
+    } as const;
+
+    const detail = {
+      ...summary,
+      description: 'Triage and water distribution near the north gate.',
+      initialNeed: 'Water',
+      surplus: 'none reported',
+      latestSignals: [
+        {
+          signalId: 'sig-1',
+          signalType: 'creator_report',
+          sourceChannel: 'telegram',
+          sourceId: 'telegram-user-1',
+          createdAt: '2026-06-30T10:00:00.000Z',
+        },
+      ],
+    } as const;
+
+    expect(WorkCenterListResponseSchema.parse({ workCenters: [summary] }).workCenters[0]?.workCenterId).toBe('center-1');
+    expect(WorkCenterDetailResponseSchema.parse({ workCenter: detail }).workCenter.latestSignals[0]?.signalType).toBe('creator_report');
+    expect(WorkCenterCreateResponseSchema.parse({ workCenter: detail, audit: { auditEventId: 'audit-1' }, idempotent: false }).idempotent).toBe(false);
   });
 
   it('validates stable web link scopes and request/session contracts', () => {

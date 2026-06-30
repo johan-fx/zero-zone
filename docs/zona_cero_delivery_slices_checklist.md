@@ -30,7 +30,7 @@ Usar este reparto como contrato de trabajo para todas las slices. La clave es qu
 | 0 | Monorepo foundation | 🟢 | 🟢 | 🟢 | Hecho |
 | 1 | Contratos compartidos | 🟢 | 🟢 | 🟢 | Hecho |
 | 2 | Incidentes + identidad básica | 🟢 | 🟢 | 🟢 | Hecho |
-| 3 | Centros de trabajo | ⬜ | ⬜ | ⬜ | No iniciado |
+| 3 | Centros de trabajo | 🟢 | 🟢 | 🟢 | Hecho |
 | 4 | Recursos + logística | ⬜ | ⬜ | ⬜ | No iniciado |
 | 5 | SOS conectado + nativo crítico | ⬜ | ⬜ | ⬜ | No iniciado |
 | 6 | Reunificación familiar web | ⬜ | ⬜ | ⬜ | No iniciado |
@@ -171,18 +171,29 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 
 | Equipo | Checklist |
 |---|---|
-| A | ⬜ Flow Telegram para reportar centro mínimo. |
-| A | ⬜ Web UI con mapa online/detalle de centro. |
-| B | ⬜ Endpoint/operation `work_center.create`. |
-| B | ⬜ Estado derivado y auditoría de centro. |
-| C | ⬜ Crear centro desde mapa/offline usando outbox local. |
-| C | ⬜ Mostrar frescura/confianza/riesgo en UI nativa. |
+| A | 🟢 Flow Telegram para reportar centro mínimo. |
+| A | 🟢 Web UI con mapa online/detalle de centro. |
+| B | 🟢 Endpoint/operation `work_center.create`. |
+| B | 🟢 Estado derivado y auditoría de centro. |
+| C | 🟢 Crear centro desde mapa/offline usando outbox local. |
+| C | 🟢 Mostrar frescura/confianza/riesgo en UI nativa. |
 
 **Definition of Done**
 
 - Un centro creado por Telegram aparece en backend/web/mobile cuando hay sync.
 - Un centro creado offline en mobile se materializa localmente y se sincroniza después.
 - El centro no pasa a `active` por una sola señal.
+
+**Cierre Slice 3**
+
+- `packages/contracts` define contratos canónicos de Work Centers: payload de `work_center.create`, list/detail/create responses, estados derivados, errores estables y compatibilidad de operación `version: 1`.
+- `packages/domain` contiene las reglas puras de activación, frescura, confianza y riesgo; el centro no puede pasar a `active` por una sola señal débil.
+- `services/api` expone `POST /incidents/:incidentId/work-centers`, `GET /incidents/:incidentId/work-centers` y `GET /incidents/:incidentId/work-centers/:workCenterId` con D1, señales, auditoría/sync y recomputación backend de frescura/riesgo en lectura.
+- `/sync/push` materializa operaciones firmadas `work_center.create`, acepta duplicados idempotentes y rechaza versiones/payloads incompatibles con errores estables.
+- Telegram añade el flow real `/workcenter` conectado al webhook con estado persistido y limpieza de estados terminales para no interferir con `/start`.
+- Web UI muestra listado/detalle/mapa ligero consumiendo estado backend; no calcula activación, frescura, confianza ni riesgo localmente.
+- Mobile usa `WorkCenterCreatePayloadSchema`, mantiene creación offline mediante outbox/materializer/local DB y marca centros locales como provisionales hasta sincronizar estado canónico.
+- Verificación ejecutada: `pnpm contracts:test:strict`, `pnpm api:test:strict`, `pnpm telegram:test:strict`, `pnpm web:test:strict`, `pnpm mobile:test:strict`, `pnpm test:strict`, `git diff --check` y `pnpm e2e`.
 
 ## Slice 4 - Recursos + logística
 

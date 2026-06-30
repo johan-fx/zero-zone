@@ -1,5 +1,7 @@
 /// <reference types="jest" />
 
+import { WorkCenterCreatePayloadSchema } from '@zona-cero/contracts';
+import { validWorkCenterCreateOperationFixture, validWorkCenterCreatePayloadFixture } from '@zona-cero/testing';
 import { createSignedOperation, FakeOperationSigner, type OperationType, type SignedOperation } from '@/infrastructure/security/operation-signer';
 import { materializeOperations } from './materializer';
 
@@ -29,7 +31,7 @@ describe('operation materializer', () => {
       name: 'North school',
       centerType: 'shelter',
       priority: 'high',
-      location: { lat: 41.38, lng: 2.17 },
+      location: { latitude: 41.38, longitude: 2.17 },
     });
 
     const views = materializeOperations([incident, center]);
@@ -38,9 +40,31 @@ describe('operation materializer', () => {
       expect.objectContaining({ incidentId: 'incident-1', title: 'Local incident', status: 'unverified', syncState: 'pending' }),
     ]);
     expect(views.workCenters).toEqual([
-      expect.objectContaining({ centerId: 'center-1', name: 'North school', status: 'pending', activationState: 'requires_evidence' }),
+      expect.objectContaining({ centerId: 'center-1', name: 'North school', status: 'pending', provisional: true, provisionalReason: 'offline_pending_sync' }),
     ]);
     expect(views.localSummaries[0]).toMatchObject({ incidentId: 'incident-1', cellId: 'cell-a', pendingOperations: 2 });
+  });
+
+
+
+  it('materializes the shared canonical work center create fixture without mobile-only payload fields', () => {
+    expect(WorkCenterCreatePayloadSchema.parse(validWorkCenterCreatePayloadFixture)).toEqual(validWorkCenterCreatePayloadFixture);
+
+    const views = materializeOperations([validWorkCenterCreateOperationFixture]);
+
+    expect(views.workCenters).toEqual([
+      expect.objectContaining({
+        centerId: validWorkCenterCreateOperationFixture.entityId,
+        name: validWorkCenterCreatePayloadFixture.name,
+        priority: validWorkCenterCreatePayloadFixture.priority,
+        location: validWorkCenterCreatePayloadFixture.location,
+        provisional: true,
+        provisionalReason: 'offline_pending_sync',
+      }),
+    ]);
+    expect(views.workCenters[0]).not.toHaveProperty('confidence');
+    expect(views.workCenters[0]).not.toHaveProperty('risk');
+    expect(views.workCenters[0]).not.toHaveProperty('staleFields');
   });
 
   it('keeps duplicate operation replay idempotent across centers and reports', async () => {

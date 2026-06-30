@@ -112,14 +112,40 @@ type OperationEnvelope = {
 | Código | Uso | Mapping visible |
 |---|---|---|
 | `invalid_payload` | Request u operación mal formada, incompleta o no JSON-compatible. | `telegram.error.invalid_payload` / `web.error.invalid_payload` |
+| `invalid_operation_version` | Versión de operación firmada no soportada; la versión `1` sigue aceptada. | `telegram.error.invalid_operation_version` / `web.error.invalid_operation_version` |
 | `invalid_signature` | La firma no verifica contra el payload canónico y la clave esperada. | `telegram.error.invalid_signature` / `web.error.invalid_signature` |
 | `unauthorized_operation` | Actor, rol, device o identidad de canal no autorizada para la operación. | `telegram.error.unauthorized_operation` / `web.error.unauthorized_operation` |
+| `permission_denied` | Identidad conocida sin permisos suficientes para la operación en el incidente. | `telegram.error.permission_denied` / `web.error.permission_denied` |
 | `stale_cursor` | Cursor de sync demasiado antiguo o fuera de ventana compatible. | `telegram.error.stale_cursor` / `web.error.stale_cursor` |
 | `duplicate_operation` | Operación ya aceptada o procesada para el mismo límite de idempotencia. | `telegram.error.duplicate_operation` / `web.error.duplicate_operation` |
+| `operation_conflict` | `opId` o entidad existente con payload/ownership incompatible. | `telegram.error.operation_conflict` / `web.error.operation_conflict` |
+| `not_found` | Incidente, entidad o destino de sync inexistente. | `telegram.error.not_found` / `web.error.not_found` |
 | `unsupported_operation_type` | Operation type fuera del vocabulario compartido estable. | `telegram.error.unsupported_operation_type` / `web.error.unsupported_operation_type` |
 | `link_expired` | Enlace web caducado, consumido o fuera de TTL. | `telegram.error.link_expired` / `web.error.link_expired` |
 | `invalid_link_scope` | Scope de enlace desconocido o no permitido para el flow/entidad. | `telegram.error.invalid_link_scope` / `web.error.invalid_link_scope` |
 | `link_correlation_mismatch` | La correlación del link no coincide con el flow que lo originó. | `telegram.error.link_correlation_mismatch` / `web.error.link_correlation_mismatch` |
+
+## Slice 3 Work Center contract update
+
+`@zona-cero/contracts` is the canonical source for Work Center payloads, derived state enums, list/detail/create responses, and stable sync errors.
+
+| Contract | Rule |
+|---|---|
+| `WorkCenterCreatePayload` | Requires `name`; accepts optional `centerType`, `description`, `priority`, `initialNeed`, `surplus`, `location`, and `reportedAt`. Default priority is `medium`. |
+| `WorkCenterActivationState` | `pending_corroboration`, `active`, `needs_review`. Backend/domain owns the transition. |
+| Activation rule | A single weak signal never activates a center. At least two distinct corroborating signal types are required. |
+| `/sync/push` compatibility | Signed operation `version: 1` remains accepted. Unknown versions are rejected per operation with `invalid_operation_version`. |
+| Idempotency | Duplicate `opId` with the same payload is accepted. Duplicate `opId` or entity with incompatible payload/ownership returns `operation_conflict`. |
+| Observability | Work Center mutations log `channel`, `opType`, `opId`, `entityId`, `result`, `errorCode`, and `latencyMs` when practical. |
+
+## Breaking-change procedure
+
+1. Add or update the shared schema in `@zona-cero/contracts` first.
+2. Add happy/error fixtures in `@zona-cero/testing` for Telegram, Web, and Mobile consumers.
+3. Keep signed operation `version: 1` compatible unless all consumers approve a new version.
+4. Reject unknown versions with `invalid_operation_version`; do not silently coerce payloads.
+5. Update API contract integration tests before consumer teams adopt the change.
+6. Run at minimum `pnpm contracts:test:strict`, `pnpm api:test:strict`, and `pnpm test:packages`.
 
 ## Tests contractuales recomendados
 

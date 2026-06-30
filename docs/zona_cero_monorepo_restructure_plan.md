@@ -2,9 +2,9 @@
 
 Este documento propone cómo evolucionar el repo actual hacia un monorepo que permita trabajar en paralelo a tres equipos: Telegram + Web UI, Backend + Cloudflare y App nativa.
 
-## Estado actual tras Fase 1
+## Estado actual tras Fase 5
 
-El repo ya funciona como monorepo pnpm. La app Expo vive en `apps/mobile` y la raíz queda como orquestador de scripts.
+El repo ya funciona como monorepo pnpm. La app Expo vive en `apps/mobile`, el backend Cloudflare vive en `services/api`, Telegram/Web UI tienen implementaciones reales para slices conectadas y la raíz queda como orquestador de scripts.
 
 Estructura actual relevante:
 
@@ -21,9 +21,9 @@ Estructura actual relevante:
         features/           # Features mobile actuales
         infrastructure/     # local-db, maps, oplog, security
         shared/             # theme/ui compartido dentro de mobile
-    web-ui/                 # Placeholder Equipo A
-    telegram-channel/       # Placeholder Equipo A
-  services/api/             # Placeholder Equipo B
+    web-ui/                 # React/Vite Web UI para paneles ligeros y Work Centers
+    telegram-channel/       # Flujos puros Telegram consumidos por el webhook API
+  services/api/             # Cloudflare Worker Hono + D1 + webhook Telegram
   packages/                 # Placeholders compartidos
   docs/
   scripts/
@@ -109,12 +109,29 @@ Estructura actual relevante:
 - Crear `apps/web-ui` para enlaces seguros y formularios.
 - Validar primer slice end-to-end: alta + reporte de centro.
 
+**Avance Fase 4**
+
+- `apps/telegram-channel` contiene handlers puros para alta de incidente y reporte de Work Centers, con tests de flujo y contratos de consumidor.
+- `services/api` conecta el webhook Telegram real con `/start` y `/workcenter`, usando estado conversacional D1 con claves separadas por flow.
+- `apps/web-ui` evolucionó de shell inicial a panel online de Work Centers con listado, detalle y mapa ligero consumiendo contratos compartidos.
+- El smoke E2E valida Web UI, API health y webhook Telegram sobre `wrangler dev` + Vite.
+
 ### Fase 5 - Endurecer integración multi-cliente
 
 - Añadir contract tests por consumidor.
 - Añadir compatibilidad de versiones.
 - Añadir observabilidad por canal.
 - Documentar procedimiento para cambios breaking.
+
+**Cierre Fase 5**
+
+- Contract tests por consumidor cubren API, Telegram, Web UI, Mobile y paquetes compartidos mediante fixtures de `@zona-cero/testing`.
+- La compatibilidad de operaciones firmadas mantiene `version: 1`; versiones desconocidas se rechazan con `invalid_operation_version`.
+- Work Centers usan contratos canónicos en `@zona-cero/contracts` y reglas puras en `@zona-cero/domain`; clientes no duplican activación, frescura, confianza ni riesgo.
+- `services/api` registra eventos estructurados por canal/operación con `channel`, `opType`, `opId`, `entityId`, `result`, `errorCode` y `latencyMs` cuando aplica.
+- `docs/zona_cero_api_contracts.md` documenta errores estables, contrato Work Center, idempotencia, observabilidad y procedimiento de cambios breaking.
+- Playwright E2E prepara D1 local con migraciones + seed antes de arrancar `wrangler dev`, y el smoke de slice pasa contra API + Web UI + webhook Telegram.
+- Verificación ejecutada: `pnpm contracts:test:strict`, `pnpm api:test:strict`, `pnpm telegram:test:strict`, `pnpm web:test:strict`, `pnpm mobile:test:strict`, `pnpm test:strict`, `git diff --check` y `pnpm e2e`.
 
 ## Reglas de oro
 

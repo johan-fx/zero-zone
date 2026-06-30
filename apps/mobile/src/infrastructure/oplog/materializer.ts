@@ -1,3 +1,4 @@
+import { WorkCenterCreatePayloadSchema } from '@zona-cero/contracts';
 import type { SignedOperation } from '@/infrastructure/security/operation-signer';
 
 export type IncidentView = {
@@ -18,14 +19,11 @@ export type WorkCenterMaterializedView = {
   description?: string;
   priority?: string;
   initialNeed?: string;
-  confidence?: string;
-  risk?: string;
   surplus?: string;
-  roleCount?: number;
-  staleFields?: string[];
   location?: { latitude: number; longitude: number };
   status: 'pending';
-  activationState: 'requires_evidence';
+  provisional: true;
+  provisionalReason: 'offline_pending_sync';
   syncState: string;
   updatedAt: string;
 };
@@ -118,19 +116,10 @@ export function materializeOperations(operations: readonly SignedOperation[]): M
           centerId: operation.entityId,
           incidentId: operation.incidentId,
           cellId: operation.cellId,
-          name: stringValue(payload.name, 'Pending work center'),
-          centerType: stringValue(payload.centerType, 'Work center'),
-          description: stringValue(payload.description, ''),
-          priority: stringValue(payload.priority, 'normal'),
-          initialNeed: stringValue(payload.initialNeed, 'Water'),
-          confidence: stringValue(payload.confidence, 'local estimate'),
-          risk: stringValue(payload.risk, 'precaution'),
-          surplus: stringValue(payload.surplus, 'none reported'),
-          roleCount: numberValue(payload.roleCount, 0),
-          staleFields: stringArrayValue(payload.staleFields),
-          location: locationValue(payload.location),
+          ...materializeWorkCenterCreatePayload(payload),
           status: 'pending',
-          activationState: 'requires_evidence',
+          provisional: true,
+          provisionalReason: 'offline_pending_sync',
           syncState: operation.syncState,
           updatedAt: operation.createdAtDevice,
         });
@@ -282,20 +271,23 @@ function numberValue(value: unknown, fallback: number): number {
   return typeof value === 'number' ? value : fallback;
 }
 
-function stringArrayValue(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) {
-    return undefined;
+function materializeWorkCenterCreatePayload(payload: Record<string, unknown>): Pick<WorkCenterMaterializedView, 'name' | 'centerType' | 'description' | 'priority' | 'initialNeed' | 'surplus' | 'location'> {
+  const parsedPayload = WorkCenterCreatePayloadSchema.safeParse(payload);
+
+  if (!parsedPayload.success) {
+    return {
+      name: stringValue(payload.name, 'Pending work center'),
+      centerType: stringValue(payload.centerType, 'Work center'),
+      description: optionalStringValue(payload.description),
+      priority: stringValue(payload.priority, 'medium'),
+      initialNeed: optionalStringValue(payload.initialNeed),
+      surplus: optionalStringValue(payload.surplus),
+    };
   }
 
-  const strings = value.filter((item): item is string => typeof item === 'string');
-
-  return strings.length > 0 ? strings : undefined;
+  return parsedPayload.data;
 }
 
-function locationValue(value: unknown): { latitude: number; longitude: number } | undefined {
-  const record = asRecord(value);
-  const latitude = record.latitude ?? record.lat;
-  const longitude = record.longitude ?? record.lng;
-
-  return typeof latitude === 'number' && typeof longitude === 'number' ? { latitude, longitude } : undefined;
+function optionalStringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }

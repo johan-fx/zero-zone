@@ -9,6 +9,11 @@ import type {
   SyncPushRequest,
   WebLinkRequest,
   WebLinkSession,
+  WorkCenterConnectedCreateRequest,
+  WorkCenterCreatePayload,
+  WorkCenterCreateResponse,
+  WorkCenterDetailResponse,
+  WorkCenterListResponse,
 } from '@zona-cero/contracts';
 
 export function createSignedOperationFixture(overrides: Partial<SignedOperation> = {}): SignedOperation {
@@ -48,9 +53,44 @@ export const validSyncPushRequestFixture: SyncPushRequest = {
   cursor: 'cursor-fixture-1',
 };
 
+export const validWorkCenterCreatePayloadFixture: WorkCenterCreatePayload = {
+  name: 'North triage point',
+  centerType: 'Medical post',
+  description: 'Triage and water distribution near the north gate.',
+  priority: 'high',
+  initialNeed: 'Water',
+  surplus: 'none reported',
+  location: { latitude: 41.38, longitude: 2.17 },
+  reportedAt: '2026-06-30T10:00:00.000Z',
+};
+
+export const invalidWorkCenterCreatePayloadFixture = {
+  ...validWorkCenterCreatePayloadFixture,
+  name: '',
+  priority: 'urgent',
+  location: { latitude: 120, longitude: 2.17 },
+} as const;
+
+export const validWorkCenterCreateOperationFixture: PendingSignedOperation = {
+  ...createSignedOperationFixture({
+    opId: 'op-work-center-create-1',
+    incidentId: 'incident-zc-demo',
+    cellId: 'cell-zc-demo',
+    entityId: 'center-north-triage',
+    entityType: 'work_center',
+    opType: 'work_center.create',
+    payload: validWorkCenterCreatePayloadFixture,
+  }),
+  syncState: 'pending',
+};
+
 export const invalidSyncPushRequestFixture = {
   operations: [createSignedOperationFixture({ opId: 'op-invalid-sync-state', syncState: 'sent' })],
   cursor: 'cursor-fixture-1',
+} as const;
+
+export const incompatibleVersionSyncPushRequestFixture = {
+  operations: [{ ...validWorkCenterCreateOperationFixture, version: 2 }],
 } as const;
 
 export const validWebLinkRequestFixture: WebLinkRequest = {
@@ -345,5 +385,92 @@ export const incidentJoinFixtures = {
   mobile: {
     happy: { request: mobileIncidentJoinRequestFixture, response: mobileIncidentJoinResponseFixture },
     error: { ...mobileIncidentJoinRequestFixture, externalId: '', role: 'medical' },
+  },
+} as const;
+
+export const telegramWorkCenterCreateRequestFixture: WorkCenterConnectedCreateRequest = {
+  channel: 'telegram',
+  externalId: 'telegram-user-1001',
+  displayName: 'Field Telegram',
+  payload: validWorkCenterCreatePayloadFixture,
+};
+
+export const webWorkCenterCreateRequestFixture: WorkCenterConnectedCreateRequest = {
+  channel: 'web-ui',
+  externalId: 'web-user-1001',
+  displayName: 'Field Web',
+  payload: {
+    ...validWorkCenterCreatePayloadFixture,
+    name: 'Web logistics desk',
+    centerType: 'Logistics desk',
+    priority: 'medium',
+  },
+};
+
+export const mobileWorkCenterCreateSyncPushFixture: SyncPushRequest = {
+  operations: [validWorkCenterCreateOperationFixture],
+  cursor: 'cursor-work-center-mobile-1',
+};
+
+export const workCenterListHappyFixture: WorkCenterListResponse = {
+  workCenters: [
+    {
+      workCenterId: 'center-north-triage',
+      incidentId: 'incident-zc-demo',
+      cellId: 'cell-zc-demo',
+      name: 'North triage point',
+      centerType: 'Medical post',
+      priority: 'high',
+      location: { latitude: 41.38, longitude: 2.17 },
+      status: 'reported',
+      activationState: 'pending_corroboration',
+      freshness: 'fresh',
+      confidence: 'low',
+      risk: 'medium',
+      signalCount: 1,
+      corroboratingSignalCount: 1,
+      sourceChannel: 'telegram',
+      createdAt: '2026-06-30T10:00:00.000Z',
+      updatedAt: '2026-06-30T10:00:00.000Z',
+    },
+  ],
+};
+
+export const workCenterDetailHappyFixture: WorkCenterDetailResponse = {
+  workCenter: {
+    ...workCenterListHappyFixture.workCenters[0],
+    description: validWorkCenterCreatePayloadFixture.description,
+    initialNeed: validWorkCenterCreatePayloadFixture.initialNeed,
+    surplus: validWorkCenterCreatePayloadFixture.surplus,
+    latestSignals: [
+      {
+        signalId: 'sig-center-north-triage-creator',
+        signalType: 'creator_report',
+        sourceChannel: 'telegram',
+        sourceId: 'telegram-user-1001',
+        createdAt: '2026-06-30T10:00:00.000Z',
+      },
+    ],
+  },
+};
+
+export const workCenterCreateResponseHappyFixture: WorkCenterCreateResponse = {
+  workCenter: workCenterDetailHappyFixture.workCenter,
+  audit: { auditEventId: 'audit_work_center_created_incident-zc-demo_center-north-triage' },
+  idempotent: false,
+};
+
+export const workCenterApiFixtures = {
+  telegram: {
+    happy: { request: telegramWorkCenterCreateRequestFixture, response: workCenterCreateResponseHappyFixture },
+    error: { ...telegramWorkCenterCreateRequestFixture, payload: invalidWorkCenterCreatePayloadFixture },
+  },
+  web: {
+    happy: { request: webWorkCenterCreateRequestFixture },
+    error: { ...webWorkCenterCreateRequestFixture, externalId: '' },
+  },
+  mobile: {
+    happy: { request: mobileWorkCenterCreateSyncPushFixture },
+    error: incompatibleVersionSyncPushRequestFixture,
   },
 } as const;

@@ -3,11 +3,22 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   createSignedOperationFixture,
+  incompatibleVersionSyncPushRequestFixture,
+  mobileWorkCenterCreateSyncPushFixture,
   mobileIncidentJoinRequestFixture,
   telegramIncidentJoinRequestFixture,
   telegramStartUpdateFixture,
+  telegramWorkCenterCreateRequestFixture,
+  validWorkCenterCreateOperationFixture,
 } from '@zona-cero/testing';
-import { IncidentJoinResponseSchema, TelegramWebhookResultSchema } from '@zona-cero/contracts';
+import {
+  IncidentJoinResponseSchema,
+  SyncPushResponseSchema,
+  TelegramWebhookResultSchema,
+  WorkCenterCreateResponseSchema,
+  WorkCenterDetailResponseSchema,
+  WorkCenterListResponseSchema,
+} from '@zona-cero/contracts';
 import { app } from './index';
 import { resetApiTestDatabase } from './test-support';
 
@@ -16,6 +27,25 @@ async function request(path: string, init?: RequestInit): Promise<Response> {
   const response = await app.fetch(new Request(`http://local.test${path}`, init), env as Env, ctx);
   await waitOnExecutionContext(ctx);
   return response;
+}
+
+async function postTelegramMessage(telegramUserId: number, text: string, firstName = 'Webhook'): Promise<ReturnType<typeof TelegramWebhookResultSchema.parse>> {
+  const response = await request('/telegram/webhook', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      update_id: telegramUserId,
+      message: {
+        message_id: 1,
+        text,
+        chat: { id: telegramUserId, type: 'private' },
+        from: { id: telegramUserId, is_bot: false, first_name: firstName },
+      },
+    }),
+  });
+
+  expect(response.status).toBe(200);
+  return TelegramWebhookResultSchema.parse(await response.json());
 }
 
 describe('api worker', () => {
@@ -37,6 +67,118 @@ describe('api worker', () => {
     });
 
     await expect(response.json()).resolves.toEqual({ results: [{ opId: 'op-api-1', status: 'accepted' }] });
+  });
+
+  it('materializes work center create operations from sync push', async () => {
+    const response = await request('/sync/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(mobileWorkCenterCreateSyncPushFixture),
+    });
+
+    expect(response.status).toBe(200);
+    expect(SyncPushResponseSchema.parse(await response.json())).toEqual({
+      results: [{ opId: 'op-work-center-create-1', status: 'accepted' }],
+    });
+
+    const list = WorkCenterListResponseSchema.parse(await (await request('/incidents/incident-zc-demo/work-centers')).json());
+    expect(list.workCenters).toHaveLength(1);
+    expect(list.workCenters[0]).toMatchObject({
+      workCenterId: 'center-north-triage',
+      activationState: 'pending_corroboration',
+      status: 'reported',
+      confidence: 'low',
+    });
+
+    const detail = WorkCenterDetailResponseSchema.parse(
+      await (await request('/incidents/incident-zc-demo/work-centers/center-north-triage')).json(),
+    );
+    expect(detail.workCenter.latestSignals[0]).toMatchObject({ signalType: 'creator_report', sourceChannel: 'mobile' });
+  });
+
+  it('recomputes work center freshness and risk on API reads instead of returning stale persisted values', async () => {
+    await request('/sync/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(mobileWorkCenterCreateSyncPushFixture),
+    });
+
+    const oldUpdatedAt = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    await (env as Env).DB.prepare('UPDATE work_centers SET updated_at = ?, freshness = ?, risk = ? WHERE work_center_id = ?')
+      .bind(oldUpdatedAt, 'fresh', 'low', 'center-north-triage')
+      .run();
+
+    const list = WorkCenterListResponseSchema.parse(await (await request('/incidents/incident-zc-demo/work-centers')).json());
+    expect(list.workCenters[0]).toMatchObject({
+      workCenterId: 'center-north-triage',
+      freshness: 'stale',
+      risk: 'medium',
+      updatedAt: oldUpdatedAt,
+    });
+
+    const detail = WorkCenterDetailResponseSchema.parse(
+      await (await request('/incidents/incident-zc-demo/work-centers/center-north-triage')).json(),
+    );
+    expect(detail.workCenter).toMatchObject({
+      workCenterId: 'center-north-triage',
+      freshness: 'stale',
+      risk: 'medium',
+      updatedAt: oldUpdatedAt,
+    });
+
+    const persisted = await (env as Env).DB.prepare('SELECT freshness, risk FROM work_centers WHERE work_center_id = ?')
+      .bind('center-north-triage')
+      .first<{ freshness: string; risk: string }>();
+    expect(persisted).toEqual({ freshness: 'fresh', risk: 'low' });
+  });
+
+  it('idempotently accepts duplicate work center sync operations and rejects incompatible duplicate opIds', async () => {
+    const first = await request('/sync/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(mobileWorkCenterCreateSyncPushFixture),
+    });
+    const duplicate = await request('/sync/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(mobileWorkCenterCreateSyncPushFixture),
+    });
+    const conflict = await request('/sync/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        operations: [
+          {
+            ...validWorkCenterCreateOperationFixture,
+            payload: { ...validWorkCenterCreateOperationFixture.payload, name: 'Changed center name' },
+          },
+        ],
+      }),
+    });
+
+    expect(SyncPushResponseSchema.parse(await first.json()).results[0]).toMatchObject({ status: 'accepted' });
+    expect(SyncPushResponseSchema.parse(await duplicate.json()).results[0]).toMatchObject({ status: 'accepted' });
+    expect(SyncPushResponseSchema.parse(await conflict.json()).results[0]).toMatchObject({ status: 'rejected', code: 'operation_conflict' });
+
+    const count = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM work_centers WHERE work_center_id = ?')
+      .bind('center-north-triage')
+      .first<{ count: number }>();
+    expect(count?.count).toBe(1);
+  });
+
+  it('rejects unknown sync operation versions with a stable error result', async () => {
+    const response = await request('/sync/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(incompatibleVersionSyncPushRequestFixture),
+    });
+
+    expect(response.status).toBe(200);
+    expect(SyncPushResponseSchema.parse(await response.json()).results[0]).toMatchObject({
+      opId: 'op-work-center-create-1',
+      status: 'rejected',
+      code: 'invalid_operation_version',
+    });
   });
 
   it('routes Telegram webhook updates through the telegram-channel workspace', async () => {
@@ -138,6 +280,122 @@ describe('api worker', () => {
       .bind(stateKey)
       .first<{ count: number }>();
     expect(terminalState?.count).toBe(0);
+  });
+
+  it('drives Telegram webhook /workcenter through the real connected work center create flow after membership exists', async () => {
+    const telegramUserId = 25001;
+    await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ...telegramIncidentJoinRequestFixture,
+        externalId: String(telegramUserId),
+        displayName: 'Work Center Reporter',
+      }),
+    });
+
+    await expect(postTelegramMessage(telegramUserId, '/workcenter', 'Reporter')).resolves.toMatchObject({
+      accepted: true,
+      command: '/workcenter',
+      responseText: expect.stringContaining('Choose an incident before reporting a work center'),
+    });
+
+    const stateKey = `flow:workcenter:chat:${telegramUserId}:from:${telegramUserId}`;
+    const startedState = await (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?')
+      .bind(stateKey)
+      .first<{ step: string }>();
+    expect(startedState).toMatchObject({ step: 'awaitingIncident' });
+
+    await expect(postTelegramMessage(telegramUserId, '1', 'Reporter')).resolves.toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining('Send the work center name'),
+    });
+
+    await expect(postTelegramMessage(telegramUserId, 'Telegram staging center', 'Reporter')).resolves.toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining('Confirm work center report'),
+    });
+
+    const created = await postTelegramMessage(telegramUserId, 'yes', 'Reporter');
+    expect(created).toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining('Work center reported: Telegram staging center.'),
+    });
+
+    const workCenterId = `wc_incident-zc-demo_telegram_${telegramUserId}_Telegram-staging-center`;
+    const detail = WorkCenterDetailResponseSchema.parse(
+      await (await request(`/incidents/incident-zc-demo/work-centers/${workCenterId}`)).json(),
+    );
+    expect(detail.workCenter).toMatchObject({
+      workCenterId,
+      name: 'Telegram staging center',
+      sourceChannel: 'telegram',
+      signalCount: 1,
+    });
+
+    const terminalState = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM telegram_conversation_states WHERE state_key = ?')
+      .bind(stateKey)
+      .first<{ count: number }>();
+    expect(terminalState?.count).toBe(0);
+  });
+
+  it('clears denied /workcenter state so /start incident join replies are not hijacked', async () => {
+    const telegramUserId = 25002;
+
+    await postTelegramMessage(telegramUserId, '/workcenter', 'NoMember');
+    await postTelegramMessage(telegramUserId, '1', 'NoMember');
+    await postTelegramMessage(telegramUserId, 'Unjoined staging center', 'NoMember');
+
+    const denied = await postTelegramMessage(telegramUserId, 'yes', 'NoMember');
+    expect(denied).toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining('Permission denied'),
+    });
+    expect(denied.responseText).toContain('Join this incident first with /start');
+
+    const clearedWorkCenterState = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM telegram_conversation_states WHERE state_key = ?')
+      .bind(`flow:workcenter:chat:${telegramUserId}:from:${telegramUserId}`)
+      .first<{ count: number }>();
+    expect(clearedWorkCenterState?.count).toBe(0);
+
+    await expect(postTelegramMessage(telegramUserId, '/start', 'NoMember')).resolves.toMatchObject({
+      accepted: true,
+      command: '/start',
+      responseText: expect.stringContaining('incident-zc-demo'),
+    });
+    await expect(postTelegramMessage(telegramUserId, '1', 'NoMember')).resolves.toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining('What pseudonym'),
+    });
+    await expect(postTelegramMessage(telegramUserId, 'Recovered Volunteer', 'NoMember')).resolves.toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining('Choose your role'),
+    });
+
+    const joined = await postTelegramMessage(telegramUserId, '1', 'NoMember');
+    expect(joined).toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining('Joined Zona Cero Demo Incident as volunteer.'),
+    });
+
+    const membership = await (env as Env).DB.prepare(
+      'SELECT role FROM incident_memberships WHERE incident_id = ? AND channel_identity_id = ?',
+    )
+      .bind('incident-zc-demo', `chid_telegram_${telegramUserId}`)
+      .first<{ role: string }>();
+    expect(membership).toMatchObject({ role: 'volunteer' });
+
+    const workCenter = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM work_centers WHERE name = ?')
+      .bind('Unjoined staging center')
+      .first<{ count: number }>();
+    expect(workCenter?.count).toBe(0);
   });
 
   it('resets corrupt Telegram conversation state before handling updates', async () => {
@@ -314,6 +572,49 @@ describe('api worker', () => {
       membership: { role: 'medical', permissions: { canManageMedical: true } },
       idempotent: false,
     });
+  });
+
+  it('creates connected-channel work centers for joined identities', async () => {
+    await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(telegramIncidentJoinRequestFixture),
+    });
+
+    const response = await request('/incidents/incident-zc-demo/work-centers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(telegramWorkCenterCreateRequestFixture),
+    });
+
+    expect(response.status).toBe(200);
+    const body = WorkCenterCreateResponseSchema.parse(await response.json());
+    expect(body).toMatchObject({
+      workCenter: {
+        name: 'North triage point',
+        sourceChannel: 'telegram',
+        activationState: 'pending_corroboration',
+        status: 'reported',
+        signalCount: 1,
+      },
+      idempotent: false,
+    });
+
+    const audit = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM audit_events WHERE audit_event_id = ?')
+      .bind(body.audit.auditEventId)
+      .first<{ count: number }>();
+    expect(audit?.count).toBe(1);
+  });
+
+  it('rejects connected-channel work center creation for non-members', async () => {
+    const response = await request('/incidents/incident-zc-demo/work-centers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(telegramWorkCenterCreateRequestFixture),
+    });
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: 'permission_denied' });
   });
 
   it('returns 404 for missing incidents', async () => {

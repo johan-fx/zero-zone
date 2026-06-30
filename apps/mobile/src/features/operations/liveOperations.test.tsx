@@ -1,5 +1,7 @@
 /// <reference types="jest" />
 
+import { WorkCenterCreatePayloadSchema } from '@zona-cero/contracts';
+import { validWorkCenterCreatePayloadFixture } from '@zona-cero/testing';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { Theme, TamaguiProvider } from 'tamagui';
 
@@ -8,7 +10,7 @@ import { appendSignedOperationAndMaterialize } from '@/infrastructure/oplog/outb
 import { FakeOperationSigner } from '@/infrastructure/security';
 import { OperationalThemeProvider } from '@/shared/theme';
 import { tamaguiConfig } from '../../../tamagui.config';
-import { LiveOperationalEntryScreen } from './liveOperations';
+import { LiveOperationalEntryScreen, createOfflineWorkCenter } from './liveOperations';
 
 async function renderLiveOperations(input: {
   database?: ReturnType<typeof createInMemoryLocalOperationDatabase>;
@@ -114,11 +116,29 @@ describe('live operational flow wiring', () => {
 
     const operations = await database.syncOps.findByIncident('incident-local');
     expect(operations.map((operation) => operation.opType)).toEqual(['incident.create', 'work_center.create']);
+    expect(operations[1]).toEqual(
+      expect.objectContaining({
+        opType: 'work_center.create',
+        version: 1,
+        payload: WorkCenterCreatePayloadSchema.parse({
+          name: 'North triage point',
+          centerType: 'Medical post',
+          description: 'Triage and water distribution near the north gate.',
+          priority: 'high',
+          initialNeed: 'Water',
+          surplus: 'none reported',
+          location: { latitude: 41.38, longitude: 2.17 },
+          reportedAt: '2026-06-29T09:00:00.000Z',
+        }),
+      }),
+    );
+    expect(operations[1].payload).not.toHaveProperty('confidence');
+    expect(operations[1].payload).not.toHaveProperty('risk');
     expect(await database.views.workCenters.findByIncident('incident-local')).toEqual([
-      expect.objectContaining({ centerId: 'center-local-1', name: 'North triage point', status: 'pending', syncState: 'pending' }),
+      expect.objectContaining({ centerId: 'center-local-1', name: 'North triage point', status: 'pending', syncState: 'pending', provisional: true, location: { latitude: 41.38, longitude: 2.17 } }),
     ]);
-    expect(screen.getAllByText('Pending sync').length).toBeGreaterThan(0);
-    expect(screen.getByText('Activation requires sufficient evidence')).toBeTruthy();
+    expect(screen.getAllByText('Offline provisional').length).toBeGreaterThan(0);
+    expect(screen.getByText('Activation: offline provisional')).toBeTruthy();
     expect(screen.getByText('Dev spike storage: in-memory route only')).toBeTruthy();
   });
 
@@ -136,6 +156,28 @@ describe('live operational flow wiring', () => {
     expect(new Set(centers.map((center) => center.centerId)).size).toBe(2);
   });
 
+
+  it('accepts the shared canonical work center payload fixture for offline signing', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    await seedPreparedIncident(database);
+
+    await createOfflineWorkCenter({
+      database,
+      signer: new FakeOperationSigner('canonical-work-center-fixture-tests'),
+      incidentId: 'incident-prepared',
+      cellId: 'cell-a7',
+      centerId: 'center-fixture-1',
+      payload: validWorkCenterCreatePayloadFixture,
+    });
+
+    const operations = await database.syncOps.findByIncident('incident-prepared');
+    const centerOperation = operations.find((operation) => operation.opType === 'work_center.create');
+    expect(centerOperation).toEqual(expect.objectContaining({ version: 1, payload: validWorkCenterCreatePayloadFixture, signature: expect.stringContaining('fake-signature') }));
+    expect(await database.views.workCenters.findByIncident('incident-prepared')).toContainEqual(
+      expect.objectContaining({ centerId: 'center-fixture-1', location: validWorkCenterCreatePayloadFixture.location, provisional: true }),
+    );
+  });
+
   it('prevents false activation and exposes selected-center fields without volunteer identities', async () => {
     const { screen } = await renderLiveOperations();
 
@@ -146,9 +188,9 @@ describe('live operational flow wiring', () => {
     await waitFor(() => expect(screen.getByText('State: pending')).toBeTruthy());
 
     expect(screen.queryByText('State: active')).toBeNull();
-    expect(screen.getByText('Confidence: local estimate')).toBeTruthy();
-    expect(screen.getByText('Freshness: local pending')).toBeTruthy();
-    expect(screen.getByText('Risk: precaution')).toBeTruthy();
+    expect(screen.getByText('Confidence: offline provisional')).toBeTruthy();
+    expect(screen.getByText('Freshness: offline provisional')).toBeTruthy();
+    expect(screen.getByText('Risk: offline provisional')).toBeTruthy();
     expect(screen.getByText('Need: Water')).toBeTruthy();
     expect(screen.getByText('Surplus: none reported')).toBeTruthy();
     expect(screen.getByText('Roles: 0 active')).toBeTruthy();
@@ -228,7 +270,7 @@ describe('live operational flow wiring', () => {
     expect(presenceOperations.map((operation) => operation.hlc)).toEqual([...presenceOperations.map((operation) => operation.hlc)].sort());
   });
 
-  it('adds local active presence to the base role count instead of replacing it', async () => {
+  it('keeps role counts local and provisional until backend-derived counts sync', async () => {
     const database = createInMemoryLocalOperationDatabase();
     await seedPreparedIncident(database);
     await appendSignedOperationAndMaterialize({
@@ -241,20 +283,20 @@ describe('live operational flow wiring', () => {
         cellId: 'cell-a7',
         entityId: 'center-role-1',
         opType: 'work_center.create',
-        payload: { name: 'Role summary point', roleCount: 3 },
+        payload: { name: 'Role summary point' },
         hlc: '2026-06-29T09:02:00.000Z-0002-device-1',
         createdAtDevice: '2026-06-29T09:02:00.000Z',
       },
     });
 
     const { screen } = await renderLiveOperations({ database, initialIncidentId: 'incident-prepared' });
-    await waitFor(() => expect(screen.getByText('Roles: 3 active')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Roles: 0 active')).toBeTruthy());
     await pressAndFlush(screen.getByTestId('presence_check_in_button'));
 
-    await waitFor(() => expect(screen.getByText('Roles: 4 active')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Roles: 1 active')).toBeTruthy());
   });
 
-  it('degrades stale selected-center role, need, surplus, and confidence data textually', async () => {
+  it('uses provisional labels for selected-center confidence, freshness, and risk while offline', async () => {
     const database = createInMemoryLocalOperationDatabase();
     await seedPreparedIncident(database);
     await appendSignedOperationAndMaterialize({
@@ -271,10 +313,7 @@ describe('live operational flow wiring', () => {
           name: 'Stale logistics point',
           centerType: 'Supply point',
           initialNeed: 'Water',
-          confidence: 'local estimate',
           surplus: 'blankets reported',
-          roleCount: 3,
-          staleFields: ['confidence', 'roles', 'need', 'surplus'],
         },
         hlc: '2026-06-29T09:02:00.000Z-0002-device-1',
         createdAtDevice: '2026-06-29T09:02:00.000Z',
@@ -283,27 +322,29 @@ describe('live operational flow wiring', () => {
 
     const { screen } = await renderLiveOperations({ database, initialIncidentId: 'incident-prepared' });
 
-    await waitFor(() => expect(screen.getByText('Stale center data: confidence, roles, need, surplus need verification before action')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Activation: offline provisional')).toBeTruthy());
 
-    expect(screen.getByText('Confidence: local estimate — stale, verify before acting')).toBeTruthy();
-    expect(screen.getByText('Need: Water — stale, verify before acting')).toBeTruthy();
-    expect(screen.getByText('Surplus: blankets reported — stale, verify before acting')).toBeTruthy();
-    expect(screen.getByText('Roles: 3 active — stale, verify before acting')).toBeTruthy();
-    expect(screen.queryByText('Freshness: local pending')).toBeNull();
+    expect(screen.getByText('Confidence: offline provisional')).toBeTruthy();
+    expect(screen.getByText('Freshness: offline provisional')).toBeTruthy();
+    expect(screen.getByText('Risk: offline provisional')).toBeTruthy();
+    expect(screen.getByText('Need: Water')).toBeTruthy();
+    expect(screen.getByText('Surplus: blankets reported')).toBeTruthy();
+    expect(screen.getByText('Roles: 0 active')).toBeTruthy();
   });
 
-  it('seeds a stale-center dev scenario for deterministic E2E coverage', async () => {
+  it('seeds a provisional center dev scenario for deterministic E2E coverage', async () => {
     const { screen } = await renderLiveOperations({ devScenario: 'stale-center-data' });
 
     await waitFor(() => expect(screen.getByText('Incident: Prepared stale response')).toBeTruthy());
 
     expect(screen.getAllByText('Stale logistics point')).toHaveLength(2);
     expect(screen.getByText('State: pending')).toBeTruthy();
-    expect(screen.getByText('Stale center data: confidence, roles, need, surplus need verification before action')).toBeTruthy();
-    expect(screen.getByText('Confidence: local estimate — stale, verify before acting')).toBeTruthy();
-    expect(screen.getByText('Need: Water — stale, verify before acting')).toBeTruthy();
-    expect(screen.getByText('Surplus: blankets reported — stale, verify before acting')).toBeTruthy();
-    expect(screen.getByText('Roles: 3 active — stale, verify before acting')).toBeTruthy();
+    expect(screen.getByText('Activation: offline provisional')).toBeTruthy();
+    expect(screen.getByText('Confidence: offline provisional')).toBeTruthy();
+    expect(screen.getByText('Freshness: offline provisional')).toBeTruthy();
+    expect(screen.getByText('Risk: offline provisional')).toBeTruthy();
+    expect(screen.getByText('Need: Water')).toBeTruthy();
+    expect(screen.getByText('Surplus: blankets reported')).toBeTruthy();
   });
 
   it('explains when a requested incident is not available locally while offline', async () => {

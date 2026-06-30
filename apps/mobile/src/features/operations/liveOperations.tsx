@@ -1,3 +1,4 @@
+import { WorkCenterCreatePayloadSchema, type WorkCenterCreatePayload } from '@zona-cero/contracts';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
 import { Paragraph, Text, XStack, YStack } from 'tamagui';
@@ -52,19 +53,7 @@ type MapPreparationSummary = {
   explanation: string;
 };
 
-type WorkCenterPayload = {
-  name: string;
-  centerType: string;
-  description: string;
-  priority: string;
-  initialNeed: string;
-  confidence: string;
-  risk: string;
-  surplus: string;
-  roleCount: number;
-  staleFields: string[];
-  location: { latitude: number; longitude: number };
-};
+type WorkCenterPayload = WorkCenterCreatePayload;
 
 type PresenceAction = 'check_in' | 'pause' | 'check_out';
 
@@ -383,7 +372,7 @@ function LiveMapLibreSurface({ centers, indicator }: { centers: WorkCenterView[]
         <View accessibilityLabel="MapLibre native surface placeholder" testID="maplibre-native-surface" />
         {centers.map((center) => (
           <XStack key={center.centerId} items="center" gap="$2">
-            <StatusBadge tone="pending" label="Pending sync" />
+            <StatusBadge tone="pending" label={center.provisional ? 'Offline provisional' : 'Pending sync'} />
             <Text color="$text" fontSize="$sm" fontWeight="800">
               {center.name}
             </Text>
@@ -395,11 +384,13 @@ function LiveMapLibreSurface({ centers, indicator }: { centers: WorkCenterView[]
 }
 
 function LiveSelectedCenterPanel({ center, onPresenceAction, presence }: { center: WorkCenterView; onPresenceAction: (action: PresenceAction) => void; presence: PresenceLocalView | null }) {
-  const centerRecord = center as WorkCenterView & Partial<WorkCenterPayload> & { activationState?: string };
-  const staleFields = centerRecord.staleFields ?? [];
-  const hasStaleFields = staleFields.length > 0;
+  const centerRecord = center as WorkCenterView & Partial<WorkCenterPayload>;
   const trackingLabel = presence?.status === 'active' ? 'Tracking: active' : presence?.status === 'paused' ? 'Tracking: paused' : presence?.status === 'checked_out' ? 'Tracking: stopped' : 'Tracking: stopped';
-  const roleSummary = resolveRoleSummary(centerRecord.roleCount ?? 0, presence);
+  const roleSummary = resolveRoleSummary(presence);
+  const activationLabel = center.activationState ? `Activation: ${formatCanonicalValue(center.activationState)}` : 'Activation: offline provisional';
+  const freshnessLabel = center.freshness ? `Freshness: ${formatCanonicalValue(center.freshness)}` : 'Freshness: offline provisional';
+  const confidenceLabel = center.confidence ? `Confidence: ${formatCanonicalValue(center.confidence)}` : 'Confidence: offline provisional';
+  const riskLabel = center.risk ? `Risk: ${formatCanonicalValue(center.risk)}` : 'Risk: offline provisional';
 
   return (
     <OperationalCard testID="live-selected-center-panel">
@@ -413,38 +404,31 @@ function LiveSelectedCenterPanel({ center, onPresenceAction, presence }: { cente
               {centerRecord.centerType ?? 'Work center'}
             </Text>
           </YStack>
-          <StatusBadge tone="pending" label="Pending sync" />
+          <StatusBadge tone="pending" label={center.provisional ? 'Offline provisional' : 'Pending sync'} />
         </XStack>
 
-        <StatusBadge tone="pending" label="Activation requires sufficient evidence" />
-        {hasStaleFields ? <StatusBadge tone="stale" label={`Stale center data: ${staleFields.join(', ')} need verification before action`} /> : null}
+        <StatusBadge tone="pending" label={activationLabel} />
         <StatusBadge tone={presence?.status === 'active' ? 'success' : presence?.status === 'paused' ? 'warning' : 'stale'} label={trackingLabel} />
         <Text color="$text" fontSize="$sm" fontWeight="800">
           State: {center.status}
         </Text>
         <Text color="$text" fontSize="$sm" fontWeight="800">
-          {formatMaybeStaleField('Confidence', centerRecord.confidence ?? 'local estimate', staleFields.includes('confidence'))}
-        </Text>
-        {hasStaleFields ? (
-          <Text color="$stale" fontSize="$sm" fontWeight="800">
-            Freshness: stale fields require verification
-          </Text>
-        ) : (
-          <Text color="$text" fontSize="$sm" fontWeight="800">
-            Freshness: local pending
-          </Text>
-        )}
-        <Text color="$text" fontSize="$sm" fontWeight="800">
-          Risk: {centerRecord.risk ?? 'precaution'}
+          {confidenceLabel}
         </Text>
         <Text color="$text" fontSize="$sm" fontWeight="800">
-          {formatMaybeStaleField('Need', centerRecord.initialNeed ?? 'Water', staleFields.includes('need'))}
+          {freshnessLabel}
         </Text>
         <Text color="$text" fontSize="$sm" fontWeight="800">
-          {formatMaybeStaleField('Surplus', centerRecord.surplus ?? 'none reported', staleFields.includes('surplus'))}
+          {riskLabel}
         </Text>
         <Text color="$text" fontSize="$sm" fontWeight="800">
-          {formatMaybeStaleField('Roles', roleSummary.value, staleFields.includes('roles') || roleSummary.isStale)}
+          Need: {centerRecord.initialNeed ?? 'not reported'}
+        </Text>
+        <Text color="$text" fontSize="$sm" fontWeight="800">
+          Surplus: {centerRecord.surplus ?? 'not reported'}
+        </Text>
+        <Text color="$text" fontSize="$sm" fontWeight="800">
+          {formatMaybeStaleField('Roles', roleSummary.value, roleSummary.isStale)}
         </Text>
 
         <XStack flexWrap="wrap" gap="$2">
@@ -485,40 +469,37 @@ function MapPreparationPanel({ preparation }: { preparation: MapPreparationSumma
 }
 
 function createDefaultWorkCenterPayload(overrides: Partial<WorkCenterPayload> = {}): WorkCenterPayload {
-  return {
+  return WorkCenterCreatePayloadSchema.parse({
     name: 'North triage point',
     centerType: 'Medical post',
     description: 'Triage and water distribution near the north gate.',
     priority: 'high',
     initialNeed: 'Water',
-    confidence: 'local estimate',
-    risk: 'precaution',
     surplus: 'none reported',
-    roleCount: 0,
-    staleFields: [],
     location: { latitude: 41.38, longitude: 2.17 },
+    reportedAt: DEFAULT_TIMESTAMP,
     ...overrides,
-  };
+  });
 }
 
 function formatMaybeStaleField(label: string, value: string, isStale: boolean): string {
   return `${label}: ${value}${isStale ? ' — stale, verify before acting' : ''}`;
 }
 
-function resolveRoleSummary(baseRoleCount: number, presence: PresenceLocalView | null): { value: string; isStale: boolean } {
+function resolveRoleSummary(presence: PresenceLocalView | null): { value: string; isStale: boolean } {
   if (presence?.status === 'active') {
-    return { value: `${baseRoleCount + 1} active`, isStale: false };
+    return { value: '1 active', isStale: false };
   }
 
   if (presence?.status === 'paused') {
-    return { value: baseRoleCount > 0 ? `${baseRoleCount} active, 1 paused` : '1 paused', isStale: true };
+    return { value: '1 paused', isStale: true };
   }
 
-  if (presence?.status === 'checked_out') {
-    return { value: `${baseRoleCount} active`, isStale: false };
-  }
+  return { value: '0 active', isStale: false };
+}
 
-  return { value: `${baseRoleCount} active`, isStale: false };
+function formatCanonicalValue(value: string): string {
+  return value.replaceAll('_', ' ');
 }
 
 function resolveInitialIncidentId(devScenario: LiveOperationsDevScenario | undefined, initialIncidentId: string | undefined): string {
@@ -565,10 +546,7 @@ async function seedStaleCenterData(database: LocalOperationDatabase, signer: Ope
       name: 'Stale logistics point',
       centerType: 'Supply point',
       initialNeed: 'Water',
-      confidence: 'local estimate',
       surplus: 'blankets reported',
-      roleCount: 3,
-      staleFields: ['confidence', 'roles', 'need', 'surplus'],
     },
   });
 }

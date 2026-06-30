@@ -53,7 +53,7 @@ describe('local operation database contract', () => {
     expect(localDbSchemas.sync_ops.required).toEqual(
       expect.arrayContaining(['opId', 'version', 'actorKeyId', 'deviceId', 'incidentId', 'cellId', 'entityType', 'entityId', 'opType', 'payload', 'hlc', 'createdAtDevice', 'signature', 'syncState']),
     );
-    expect(Object.keys(localDbSchemas.work_centers.properties)).toEqual(expect.arrayContaining(['centerType', 'description', 'priority', 'initialNeed', 'confidence', 'risk', 'surplus', 'roleCount', 'staleFields', 'activationState', 'location']));
+    expect(Object.keys(localDbSchemas.work_centers.properties)).toEqual(expect.arrayContaining(['centerType', 'description', 'priority', 'initialNeed', 'surplus', 'activationState', 'freshness', 'confidence', 'risk', 'signalCount', 'corroboratingSignalCount', 'provisional', 'provisionalReason', 'location']));
     expect(Object.keys(localDbSchemas.presence.properties)).toEqual(expect.arrayContaining(['actorId', 'role', 'centerId']));
     expect(Object.keys(localDbSchemas.resource_reports.properties)).toEqual(expect.arrayContaining(['quantity', 'syncState']));
     expect(Object.keys(localDbSchemas.dispatch_events.properties)).toEqual(expect.arrayContaining(['eventType']));

@@ -29,6 +29,7 @@ export type LocalDbSchema = {
 const stringProperty = { type: 'string' } as const;
 const nullableStringProperty = { type: ['string', 'null'] } as const;
 const numberProperty = { type: 'number' } as const;
+const booleanProperty = { type: 'boolean' } as const;
 const objectProperty = { type: 'object' } as const;
 const arrayProperty = { type: 'array' } as const;
 
@@ -95,12 +96,15 @@ export type WorkCenterView = {
   description?: string;
   priority?: string;
   initialNeed?: string;
+  surplus?: string;
+  activationState?: string;
+  freshness?: string;
   confidence?: string;
   risk?: string;
-  surplus?: string;
-  roleCount?: number;
-  staleFields?: string[];
-  activationState?: string;
+  signalCount?: number;
+  corroboratingSignalCount?: number;
+  provisional?: boolean;
+  provisionalReason?: string;
   location?: { latitude: number; longitude: number };
   status: string;
   syncState: string;
@@ -423,9 +427,12 @@ function createSchema(title: string, primaryKey: string, required: string[]): Lo
       confidence: stringProperty,
       risk: stringProperty,
       surplus: stringProperty,
-      roleCount: numberProperty,
-      staleFields: arrayProperty,
       activationState: stringProperty,
+      freshness: stringProperty,
+      signalCount: numberProperty,
+      corroboratingSignalCount: numberProperty,
+      provisional: booleanProperty,
+      provisionalReason: stringProperty,
       location: objectProperty,
       actorId: stringProperty,
       role: stringProperty,
