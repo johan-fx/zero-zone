@@ -96,30 +96,36 @@ type OperationEnvelope = {
 | Campo | Regla |
 |---|---|
 | `token` | Opaco, firmado o referenciado server-side. |
-| `scope` | Mínimo: pantalla, incidente, entidad y acción permitida. |
+| `scope` | Scope estable del contrato: `incident.join`, `work_center.detail` o `family_reunification.search`. |
+| `incidentId` | Obligatorio; todo enlace queda acotado a un incidente. |
+| `entityId` | Opcional; obligatorio para scopes que apuntan a una entidad concreta. |
+| `channelIdentityId` | Vincula el enlace al actor/canal. |
+| `correlationId` | Obligatorio; conecta el link con el flow conversacional o web que lo originó. |
+| `returnState` | Opcional; estado al que Telegram/Web debe volver tras completar o fallar el flujo. |
+| `ttlSeconds` | Obligatorio en la request; entero positivo y corto. |
 | `expiresAt` | Obligatorio y corto. |
 | `singleUse` | Sí para flujos sensibles. |
-| `channelIdentityId` | Vincula el enlace al actor/canal. |
 | `auditContext` | Guarda origen: comando, mensaje, entidad y propósito. |
 
 ## Errores estables
 
-| Código | Uso |
-|---|---|
-| `unauthorized` | Actor no autenticado o sesión inválida. |
-| `forbidden_role` | Rol insuficiente. |
-| `requires_verified_role` | Acción requiere validación. |
-| `incident_closed` | Incidente no acepta nuevas operaciones. |
-| `stale_data` | La acción depende de datos demasiado antiguos. |
-| `unsafe_for_role` | Recomendación o acción no segura para el rol. |
-| `duplicate_operation` | Operación ya procesada. |
-| `conflict_requires_review` | Conflicto administrativo o sensible. |
-| `link_expired` | Enlace web caducado. |
-| `rate_limited` | Protección anti-abuso. |
+| Código | Uso | Mapping visible |
+|---|---|---|
+| `invalid_payload` | Request u operación mal formada, incompleta o no JSON-compatible. | `telegram.error.invalid_payload` / `web.error.invalid_payload` |
+| `invalid_signature` | La firma no verifica contra el payload canónico y la clave esperada. | `telegram.error.invalid_signature` / `web.error.invalid_signature` |
+| `unauthorized_operation` | Actor, rol, device o identidad de canal no autorizada para la operación. | `telegram.error.unauthorized_operation` / `web.error.unauthorized_operation` |
+| `stale_cursor` | Cursor de sync demasiado antiguo o fuera de ventana compatible. | `telegram.error.stale_cursor` / `web.error.stale_cursor` |
+| `duplicate_operation` | Operación ya aceptada o procesada para el mismo límite de idempotencia. | `telegram.error.duplicate_operation` / `web.error.duplicate_operation` |
+| `unsupported_operation_type` | Operation type fuera del vocabulario compartido estable. | `telegram.error.unsupported_operation_type` / `web.error.unsupported_operation_type` |
+| `link_expired` | Enlace web caducado, consumido o fuera de TTL. | `telegram.error.link_expired` / `web.error.link_expired` |
+| `invalid_link_scope` | Scope de enlace desconocido o no permitido para el flow/entidad. | `telegram.error.invalid_link_scope` / `web.error.invalid_link_scope` |
+| `link_correlation_mismatch` | La correlación del link no coincide con el flow que lo originó. | `telegram.error.link_correlation_mismatch` / `web.error.link_correlation_mismatch` |
 
 ## Tests contractuales recomendados
 
 - Fixtures compartidas para operaciones firmadas.
+- Fixtures compartidas válidas e inválidas para sync push y Web links.
+- Golden compatibility vectors para canonicalización, firma y `opId`.
 - Tests de serialización/deserialización por canal.
 - Tests de idempotencia por `opId` e `idempotencyKey`.
 - Tests de permisos por rol y canal.

@@ -1,55 +1,12 @@
-export type SyncState = 'pending' | 'sent' | 'confirmed' | 'conflict' | 'rejected';
+import { operationTypeFamilies } from '@zona-cero/contracts/operation-vocabulary';
+import type { OperationInput, SignedOperation } from '@zona-cero/contracts';
 
-export type OperationFamily = 'incident' | 'work_center' | 'presence' | 'resource_report' | 'dispatch_event' | 'sos';
-
-export type OperationType =
-  | 'incident.create'
-  | 'work_center.create'
-  | 'presence.check_in'
-  | 'presence.pause'
-  | 'presence.check_out'
-  | 'resource_report.create'
-  | 'dispatch_event.create'
-  | 'dispatch_event.update'
-  | 'sos.create'
-  | 'sos.cancel';
+export { operationTypeFamilies } from '@zona-cero/contracts/operation-vocabulary';
+export type { OperationFamily, OperationInput, OperationType, SignedOperation, SyncState } from '@zona-cero/contracts';
 
 export type OperationSigner = {
   sign(input: { canonicalPayload: string; actorKeyId: string }): Promise<string>;
 };
-
-export type OperationInput = {
-  version?: 1;
-  actorKeyId: string;
-  deviceId: string;
-  incidentId: string;
-  cellId: string;
-  entityId: string;
-  opType: OperationType;
-  payload: unknown;
-  hlc: string;
-  createdAtDevice: string;
-};
-
-export type SignedOperation = Required<OperationInput> & {
-  opId: string;
-  entityType: OperationFamily;
-  signature: string;
-  syncState: SyncState;
-};
-
-export const operationTypeFamilies = {
-  'incident.create': 'incident',
-  'work_center.create': 'work_center',
-  'presence.check_in': 'presence',
-  'presence.pause': 'presence',
-  'presence.check_out': 'presence',
-  'resource_report.create': 'resource_report',
-  'dispatch_event.create': 'dispatch_event',
-  'dispatch_event.update': 'dispatch_event',
-  'sos.create': 'sos',
-  'sos.cancel': 'sos',
-} as const satisfies Record<OperationType, OperationFamily>;
 
 export class SigningUnavailableError extends Error {
   constructor(message = 'Signing material is unavailable') {

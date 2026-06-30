@@ -10,10 +10,10 @@ describe('domain package', () => {
 
   it('prevents web-ui from inventing native presence operations', () => {
     expect(canChannelSubmitOperation('web-ui', 'presence.check_in')).toBe(false);
-    expect(canChannelSubmitOperation('telegram', 'resource.report_need')).toBe(true);
+    expect(canChannelSubmitOperation('telegram', 'resource_report.create')).toBe(true);
   });
 
   it('marks SOS as a critical operation family', () => {
-    expect(isCriticalOperation('sos.raise')).toBe(true);
+    expect(isCriticalOperation('sos.create')).toBe(true);
   });
 });

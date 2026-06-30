@@ -446,7 +446,7 @@ Mostrar:
 
 1. Usuario toca `SOS`.
 2. Pantalla de confirmación breve con cuenta regresiva cancelable.
-3. Se crea `sos.raise` firmado.
+3. Se crea `sos.create` firmado.
 4. Se muestra estado de propagación:
    - local,
    - sync backend,
@@ -648,7 +648,7 @@ sequenceDiagram
   participant Q as Cola crítica
   participant S as Sync/Mesh
   U->>A: Confirmar SOS
-  A->>Q: Firma y prioriza sos.raise
+  A->>Q: Firma y prioriza sos.create
   Q-->>U: SOS en cola crítica
   Q->>S: Envía por transporte disponible
 ```

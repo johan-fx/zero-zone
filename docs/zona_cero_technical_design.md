@@ -186,14 +186,13 @@ type SignedOperation = {
 | `work_center.update_status` | Cambia estado con evidencia. |
 | `work_center.report_duplicate` | Reporta posible duplicado. |
 | `presence.check_in` | Inicia presencia. |
-| `presence.heartbeat` | Señal periódica adaptativa. |
+| `presence.pause` | Pausa presencia offline. |
 | `presence.check_out` | Cierra presencia. |
-| `resource.report_need` | Reporta faltante. |
-| `resource.report_surplus` | Reporta sobrante. |
-| `dispatch.create` | Crea traslado. |
-| `dispatch.accept` | Acepta traslado. |
-| `sos.raise` | Emite SOS. |
-| `sos.ack` | Acuse de recibo. |
+| `resource_report.create` | Reporta faltante o sobrante; el payload distingue el estado. |
+| `dispatch_event.create` | Crea evento de dispatch. |
+| `dispatch_event.update` | Actualiza evento de dispatch. |
+| `sos.create` | Emite SOS. |
+| `sos.cancel` | Cancela SOS local cuando corresponde. |
 | `role.claim` | Rol autodeclarado. |
 | `role.attest` | Atestación social de rol. |
 | `role.org_verify` | Validación por organización. |

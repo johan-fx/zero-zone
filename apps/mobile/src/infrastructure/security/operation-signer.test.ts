@@ -1,5 +1,8 @@
 /// <reference types="jest" />
 
+import { SignedOperationSchema } from '@zona-cero/contracts';
+import { operationTypeFamilies as zodFreeOperationTypeFamilies } from '@zona-cero/contracts/operation-vocabulary';
+import { signedOperationGoldenVector } from '@zona-cero/testing';
 import {
   FakeOperationSigner,
   SigningUnavailableError,
@@ -20,6 +23,18 @@ const baseInput = {
 } as const;
 
 describe('operation signing contract', () => {
+  it('matches the shared golden vector for canonical payload, fake signature and opId', async () => {
+    const signer = new FakeOperationSigner(signedOperationGoldenVector.signerKeyMaterial);
+
+    expect(createCanonicalPayload(signedOperationGoldenVector.input)).toBe(signedOperationGoldenVector.canonicalPayload);
+
+    await expect(createSignedOperation(signedOperationGoldenVector.input, signer)).resolves.toMatchObject({
+      signature: signedOperationGoldenVector.signature,
+      opId: signedOperationGoldenVector.opId,
+      syncState: 'pending',
+    });
+  });
+
   it('builds a stable canonical payload independent from object insertion order', () => {
     const first = createCanonicalPayload({
       version: 1,
@@ -72,6 +87,7 @@ describe('operation signing contract', () => {
     });
     expect(operation.signature).toMatch(/^fake-signature:actor-key-1:[a-f0-9]{64}$/);
     expect(operation.opId).toMatch(/^op_[a-f0-9]{64}$/);
+    expect(SignedOperationSchema.parse(operation)).toEqual(operation);
 
     await expect(
       createSignedOperation(
@@ -155,6 +171,7 @@ describe('operation signing contract', () => {
     );
 
     expect(operationTypeFamilies).toEqual(expectedFamilies);
+    expect(operationTypeFamilies).toBe(zodFreeOperationTypeFamilies);
     expect(operations.map((operation) => [operation.opType, operation.entityType])).toEqual(
       Object.entries(expectedFamilies),
     );

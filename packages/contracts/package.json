@@ -9,6 +9,11 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./operation-vocabulary": {
+      "types": "./src/operation-vocabulary.ts",
+      "import": "./src/operation-vocabulary.ts",
+      "default": "./src/operation-vocabulary.ts"
     }
   },
   "scripts": {

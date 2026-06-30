@@ -28,7 +28,7 @@ Usar este reparto como contrato de trabajo para todas las slices. La clave es qu
 | Slice | Objetivo | Equipo A | Equipo B | Equipo C | Estado |
 |---|---|---:|---:|---:|---|
 | 0 | Monorepo foundation | 🟢 | 🟢 | 🟢 | Hecho |
-| 1 | Contratos compartidos | ⬜ | ⬜ | ⬜ | No iniciado |
+| 1 | Contratos compartidos | 🟢 | 🟢 | 🟢 | Hecho |
 | 2 | Incidentes + identidad básica | ⬜ | ⬜ | ⬜ | No iniciado |
 | 3 | Centros de trabajo | ⬜ | ⬜ | ⬜ | No iniciado |
 | 4 | Recursos + logística | ⬜ | ⬜ | ⬜ | No iniciado |
@@ -92,18 +92,33 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 
 | Equipo | Checklist |
 |---|---|
-| A | ⬜ Revisar contratos necesarios para bot flows y web links. |
-| B | ⬜ Crear `packages/contracts` con operation types, errores y schemas iniciales. |
-| B | ⬜ Crear fixtures de operaciones firmadas. |
-| C | ⬜ Migrar o adaptar tipos actuales de operaciones firmadas. |
-| C | ⬜ Confirmar que tests de outbox/materializer siguen pasando. |
-| Todos | ⬜ Aprobar política de cambios breaking. |
+| A | 🟢 Revisar contratos necesarios para bot flows y web links. |
+| B | 🟢 Crear `packages/contracts` con operation types, errores y schemas iniciales. |
+| B | 🟢 Crear fixtures de operaciones firmadas. |
+| B | 🟢 Añadir fixtures compartidas happy/error para operación firmada, sync push y web links. |
+| B | 🟢 Añadir golden compatibility vectors para canonicalización, firma y `opId`. |
+| C | 🟢 Migrar o adaptar tipos actuales de operaciones firmadas. |
+| C | 🟢 Confirmar que tests de outbox/materializer siguen pasando. |
+| Todos | 🟢 Aprobar política de cambios breaking. |
 
 **Definition of Done**
 
 - Contratos consumibles por mobile, backend y Telegram/Web.
 - Tests contractuales mínimos.
 - Errores estables documentados.
+
+**Avance Slice 1**
+
+- `packages/contracts` contiene vocabulario canónico reconciliado con mobile, schemas de operación firmada, errores estables y schema de sync push.
+- `packages/contracts` añade schemas de Web links con scopes estables, TTL, correlación, retorno, expiración, single-use y auditoría.
+- Los errores canónicos incluyen semántica estable y mapping visible Telegram/Web.
+- Mobile consume tipos compartidos desde `@zona-cero/contracts` y mantiene la firma/canonical payload local.
+- `SyncPushRequestSchema` acepta solo operaciones `pending`.
+- El vocabulario runtime compartido vive en `@zona-cero/contracts/operation-vocabulary` para evitar cargar Zod en mobile cuando solo hacen falta constantes.
+- Fixtures y tests contractuales actualizados con operación firmada válida/inválida, sync push válido/inválido, web link request/session válidos/inválidos, fixtures happy/error por scope final de Equipo A y golden vector de canonicalización/firma/`opId`.
+- Evidencias añadidas y aprobadas por A/B/C para cerrar la política de cambios breaking.
+- Verificación ejecutada: `pnpm contracts:test`, `pnpm --filter @zona-cero/mobile test:strict`, `pnpm test:strict` y export Expo iOS.
+- Aprobación explícita recibida: Equipo A, Equipo B y Equipo C aprobaron la política de cambios breaking tras revalidar los artefactos.
 
 ## Slice 2 - Incidentes + identidad básica
 
@@ -310,3 +325,10 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 - ⬜ Auditoría y errores estables implementados.
 - ⬜ Demo multi-canal validada si aplica.
 - ⬜ Checklist de riesgos actualizado.
+
+**Cierre Slice 1**
+
+- Equipo A aprobó la política breaking tras validar Web links, scopes finales y fixtures happy/error por scope.
+- Equipo B aprobó la política breaking tras validar golden vectors, fixtures compartidas y semántica estable de errores.
+- Equipo C aprobó la política breaking tras validar sync push pending-only y runtime Zod-free para mobile.
+- `pnpm test:strict` queda como gate raíz de cierre de Slice 1.
