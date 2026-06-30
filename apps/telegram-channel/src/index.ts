@@ -1,8 +1,11 @@
 import { Bot, type Context } from 'grammy';
 
 import {
+  IncidentConfigResponseSchema,
   IncidentJoinRequestSchema,
+  IncidentJoinResponseSchema,
   IncidentRoleSchema,
+  IncidentSummarySchema,
   type IncidentConfigResponse,
   type IncidentJoinRequest,
   type IncidentJoinResponse,
@@ -33,6 +36,133 @@ export type TelegramIncidentJoinState =
   | { step: 'awaitingRole'; config: IncidentConfigResponse; externalUserId: string; pseudonym: string }
   | { step: 'joined'; response: IncidentJoinResponse }
   | { step: 'cancelled' };
+
+type TelegramIncidentJoinStateParseResult =
+  | { success: true; data: TelegramIncidentJoinState }
+  | { success: false; error: Error };
+
+export const TelegramIncidentJoinStateSchema = {
+  parse: parseTelegramIncidentJoinState,
+  safeParse: safeParseTelegramIncidentJoinState,
+} as const;
+
+export function parseTelegramIncidentJoinState(value: unknown): TelegramIncidentJoinState {
+  const parsed = parseTelegramIncidentJoinStateValue(value);
+  if (!parsed) {
+    throw new Error('Invalid TelegramIncidentJoinState');
+  }
+
+  return parsed;
+}
+
+export function safeParseTelegramIncidentJoinState(value: unknown): TelegramIncidentJoinStateParseResult {
+  try {
+    return { success: true, data: parseTelegramIncidentJoinState(value) };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error : new Error('Invalid TelegramIncidentJoinState') };
+  }
+}
+
+export function isTerminalTelegramIncidentJoinState(
+  state: TelegramIncidentJoinState,
+): state is Extract<TelegramIncidentJoinState, { step: 'joined' | 'cancelled' }> {
+  return state.step === 'joined' || state.step === 'cancelled';
+}
+
+function parseTelegramIncidentJoinStateValue(value: unknown): TelegramIncidentJoinState | null {
+  if (!isRecord(value) || typeof value.step !== 'string') {
+    return null;
+  }
+
+  if (value.step === 'idle') {
+    return hasOnlyKeys(value, ['step']) ? { step: 'idle' } : null;
+  }
+
+  if (value.step === 'cancelled') {
+    return hasOnlyKeys(value, ['step']) ? { step: 'cancelled' } : null;
+  }
+
+  if (value.step === 'awaitingIncident') {
+    if (
+      !hasOnlyKeys(value, ['step', 'incidents', 'externalUserId']) ||
+      typeof value.externalUserId !== 'string' ||
+      value.externalUserId.length === 0 ||
+      !Array.isArray(value.incidents)
+    ) {
+      return null;
+    }
+
+    const incidents: IncidentSummary[] = [];
+    for (const incidentValue of value.incidents) {
+      const incident = IncidentSummarySchema.safeParse(incidentValue);
+      if (!incident.success) {
+        return null;
+      }
+      incidents.push(incident.data);
+    }
+
+    return {
+      step: 'awaitingIncident',
+      incidents,
+      externalUserId: value.externalUserId,
+    };
+  }
+
+  if (value.step === 'awaitingPseudonym') {
+    const incident = IncidentSummarySchema.safeParse(value.incident);
+    if (
+      !hasOnlyKeys(value, ['step', 'incident', 'externalUserId']) ||
+      typeof value.externalUserId !== 'string' ||
+      value.externalUserId.length === 0 ||
+      !incident.success
+    ) {
+      return null;
+    }
+
+    return { step: 'awaitingPseudonym', incident: incident.data, externalUserId: value.externalUserId };
+  }
+
+  if (value.step === 'awaitingRole') {
+    const config = IncidentConfigResponseSchema.safeParse(value.config);
+    if (
+      !hasOnlyKeys(value, ['step', 'config', 'externalUserId', 'pseudonym']) ||
+      typeof value.externalUserId !== 'string' ||
+      value.externalUserId.length === 0 ||
+      typeof value.pseudonym !== 'string' ||
+      value.pseudonym.length === 0 ||
+      !config.success
+    ) {
+      return null;
+    }
+
+    return {
+      step: 'awaitingRole',
+      config: config.data,
+      externalUserId: value.externalUserId,
+      pseudonym: value.pseudonym,
+    };
+  }
+
+  if (value.step === 'joined') {
+    const response = IncidentJoinResponseSchema.safeParse(value.response);
+    if (!hasOnlyKeys(value, ['step', 'response']) || !response.success) {
+      return null;
+    }
+
+    return { step: 'joined', response: response.data };
+  }
+
+  return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, keys: string[]): boolean {
+  const allowedKeys = new Set(keys);
+  return Object.keys(value).every((key) => allowedKeys.has(key));
+}
 
 export type TelegramIncidentJoinFlowResult = {
   state: TelegramIncidentJoinState;

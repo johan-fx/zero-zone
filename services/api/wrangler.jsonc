@@ -7,6 +7,10 @@
   "vars": {
     "API_VERSION": "0.0.0-boilerplate",
   },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+  },
   "durable_objects": {
     "bindings": [
       {
@@ -29,4 +33,38 @@
       "migrations_dir": "migrations",
     },
   ],
+  "env": {
+    "staging": {
+      "name": "zona-cero-api-staging",
+      "vars": {
+        "API_VERSION": "0.0.0-staging",
+      },
+      "observability": {
+        "enabled": true,
+        "head_sampling_rate": 1,
+      },
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "INCIDENT_CELL_OBJECTS",
+            "class_name": "IncidentCellObject",
+          },
+        ],
+      },
+      "migrations": [
+        {
+          "tag": "v1",
+          "new_sqlite_classes": ["IncidentCellObject"],
+        },
+      ],
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "zona-cero-api-staging",
+          "database_id": "d713202e-fd04-485c-913f-793644d79383",
+          "migrations_dir": "migrations",
+        },
+      ],
+    },
+  },
 }

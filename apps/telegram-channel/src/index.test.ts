@@ -7,9 +7,13 @@ import {
   telegramStartUpdateFixture,
 } from '@zona-cero/testing';
 import {
+  TelegramIncidentJoinStateSchema,
   handleTelegramIncidentJoinFlow,
   handleTelegramWebhookUpdate,
+  isTerminalTelegramIncidentJoinState,
+  parseTelegramIncidentJoinState,
   resolveTelegramCommand,
+  safeParseTelegramIncidentJoinState,
   type TelegramIncidentJoinPorts,
   type TelegramIncidentJoinState,
 } from './index';
@@ -30,6 +34,15 @@ function createPorts(overrides: Partial<TelegramIncidentJoinPorts> = {}): Telegr
     ...overrides,
   };
 }
+
+const validJoinStates = [
+  { step: 'idle' },
+  { step: 'awaitingIncident', incidents: incidentListHappyFixture.incidents, externalUserId: '1001' },
+  { step: 'awaitingPseudonym', incident: incidentListHappyFixture.incidents[0], externalUserId: '1001' },
+  { step: 'awaitingRole', config: incidentConfigHappyFixture, externalUserId: '1001', pseudonym: 'Field Telegram' },
+  { step: 'joined', response: telegramIncidentJoinResponseFixture },
+  { step: 'cancelled' },
+] satisfies TelegramIncidentJoinState[];
 
 async function advance(
   inputs: string[],
@@ -58,6 +71,46 @@ describe('telegram channel flows', () => {
       command: '/start',
       responseText: expect.stringContaining('Zona Cero'),
     });
+  });
+
+  it('parses every valid incident join state variant and round-trips through JSON', () => {
+    for (const state of validJoinStates) {
+      const jsonState = JSON.parse(JSON.stringify(state));
+
+      expect(TelegramIncidentJoinStateSchema.safeParse(jsonState).success).toBe(true);
+      expect(safeParseTelegramIncidentJoinState(jsonState)).toEqual({ success: true, data: state });
+      expect(parseTelegramIncidentJoinState(jsonState)).toEqual(state);
+    }
+  });
+
+  it('rejects corrupt or unknown persisted incident join state', () => {
+    const corruptStates = [
+      null,
+      { step: 'unknown' },
+      { step: 'idle', unexpected: true },
+      { step: 'awaitingIncident', incidents: [], externalUserId: '' },
+      { step: 'awaitingPseudonym', incident: { incidentId: '' }, externalUserId: '1001' },
+      { step: 'awaitingRole', config: incidentConfigHappyFixture, externalUserId: '1001' },
+      { step: 'joined', response: { incident: incidentListHappyFixture.incidents[0] } },
+    ];
+
+    for (const state of corruptStates) {
+      expect(safeParseTelegramIncidentJoinState(state).success).toBe(false);
+      expect(TelegramIncidentJoinStateSchema.safeParse(state).success).toBe(false);
+    }
+  });
+
+  it('identifies terminal incident join states', () => {
+    expect(isTerminalTelegramIncidentJoinState({ step: 'joined', response: telegramIncidentJoinResponseFixture })).toBe(true);
+    expect(isTerminalTelegramIncidentJoinState({ step: 'cancelled' })).toBe(true);
+    expect(isTerminalTelegramIncidentJoinState({ step: 'idle' })).toBe(false);
+    expect(
+      isTerminalTelegramIncidentJoinState({
+        step: 'awaitingIncident',
+        incidents: incidentListHappyFixture.incidents,
+        externalUserId: '1001',
+      }),
+    ).toBe(false);
   });
 
   it('runs the /start conversational join happy path with an injected port', async () => {

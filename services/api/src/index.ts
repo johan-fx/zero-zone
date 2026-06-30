@@ -19,7 +19,9 @@ import {
 } from '@zona-cero/contracts';
 import {
   handleTelegramIncidentJoinFlow,
+  isTerminalTelegramIncidentJoinState,
   resolveTelegramCommand,
+  safeParseTelegramIncidentJoinState,
   type TelegramIncidentJoinPorts,
   type TelegramIncidentJoinState,
   type TelegramUpdateLike,
@@ -37,9 +39,7 @@ export const app = new Hono<{ Bindings: Env }>();
 
 const roles: IncidentRole[] = ['volunteer', 'coordinator', 'logistics', 'medical'];
 const channels: Channel[] = ['telegram', 'mobile', 'web-ui'];
-// Minimal in-process conversation state for the Slice 2 webhook path.
-// Durable/remote storage is intentionally deferred; Worker isolates may evict this map.
-const telegramConversationStates = new Map<string, TelegramIncidentJoinState>();
+const telegramConversationStateTtlMs = 30 * 60 * 1000;
 
 const permissionSnapshots: IncidentConfigResponse['permissionSnapshots'] = {
   volunteer: {
@@ -85,14 +85,12 @@ app.get('/health', (c) => {
 });
 
 app.get('/incidents', async (c) => {
-  await ensureIncidentStore(c.env.DB);
   const results = await listIncidents(c.env.DB);
 
   return c.json(IncidentListResponseSchema.parse({ incidents: results }));
 });
 
 app.get('/incidents/:incidentId/config', async (c) => {
-  await ensureIncidentStore(c.env.DB);
   const incident = await findIncident(c.env.DB, c.req.param('incidentId'));
 
   if (!incident) {
@@ -103,7 +101,6 @@ app.get('/incidents/:incidentId/config', async (c) => {
 });
 
 app.post('/incidents/:incidentId/join', async (c) => {
-  await ensureIncidentStore(c.env.DB);
   const incident = await findIncident(c.env.DB, c.req.param('incidentId'));
 
   if (!incident) {
@@ -142,15 +139,18 @@ app.get('/sync/pull', (c) => {
 
 app.post('/telegram/webhook', async (c) => {
   const update = (await c.req.json().catch(() => ({}))) as TelegramUpdateLike;
-  await ensureIncidentStore(c.env.DB);
 
   const stateKey = getTelegramConversationStateKey(update);
-  const currentState: TelegramIncidentJoinState = stateKey ? (telegramConversationStates.get(stateKey) ?? { step: 'idle' }) : { step: 'idle' };
+  const currentState = stateKey ? await loadTelegramConversationState(c.env.DB, stateKey) : ({ step: 'idle' } satisfies TelegramIncidentJoinState);
   const ports = createTelegramIncidentJoinPorts(c.env.DB);
   const result = await handleTelegramIncidentJoinFlow(currentState, update, ports);
 
   if (stateKey) {
-    telegramConversationStates.set(stateKey, result.state);
+    if (isTerminalTelegramIncidentJoinState(result.state)) {
+      await deleteTelegramConversationState(c.env.DB, stateKey);
+    } else {
+      await persistTelegramConversationState(c.env.DB, stateKey, result.state);
+    }
   }
 
   return c.json(
@@ -161,27 +161,6 @@ app.post('/telegram/webhook', async (c) => {
     }),
   );
 });
-
-async function ensureIncidentStore(db: D1Database): Promise<void> {
-  const statements = [
-    `CREATE TABLE IF NOT EXISTS incidents (incident_id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('active', 'closed')), starts_at TEXT NOT NULL, location_name TEXT NOT NULL)`,
-    `CREATE TABLE IF NOT EXISTS channel_identities (channel_identity_id TEXT PRIMARY KEY, channel TEXT NOT NULL CHECK (channel IN ('telegram', 'mobile', 'web-ui')), external_id TEXT NOT NULL, display_name TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE (channel, external_id))`,
-    `CREATE TABLE IF NOT EXISTS incident_memberships (incident_membership_id TEXT PRIMARY KEY, incident_id TEXT NOT NULL REFERENCES incidents(incident_id), channel_identity_id TEXT NOT NULL REFERENCES channel_identities(channel_identity_id), role TEXT NOT NULL CHECK (role IN ('volunteer', 'coordinator', 'logistics', 'medical')), permissions_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE (incident_id, channel_identity_id, role))`,
-    `CREATE TABLE IF NOT EXISTS audit_events (audit_event_id TEXT PRIMARY KEY, incident_id TEXT NOT NULL REFERENCES incidents(incident_id), channel_identity_id TEXT NOT NULL REFERENCES channel_identities(channel_identity_id), incident_membership_id TEXT NOT NULL REFERENCES incident_memberships(incident_membership_id), event_type TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, payload_json TEXT NOT NULL)`,
-  ];
-
-  for (const statement of statements) {
-    await db.exec(statement);
-  }
-
-  await db
-    .prepare(
-      `INSERT OR IGNORE INTO incidents (incident_id, name, status, starts_at, location_name)
-       VALUES (?, ?, ?, ?, ?)`,
-    )
-    .bind('incident-zc-demo', 'Zona Cero Demo Incident', 'active', '2026-06-30T09:00:00.000Z', 'Operations Base')
-    .run();
-}
 
 async function findIncident(db: D1Database, incidentId: string): Promise<IncidentSummary | null> {
   return db
@@ -237,6 +216,58 @@ function getTelegramConversationStateKey(update: TelegramUpdateLike): string | n
   }
 
   return `chat:${chatId ?? 'unknown'}:from:${fromId ?? 'unknown'}`;
+}
+
+async function loadTelegramConversationState(db: D1Database, stateKey: string): Promise<TelegramIncidentJoinState> {
+  const row = await db
+    .prepare('SELECT state_json AS stateJson, expires_at AS expiresAt FROM telegram_conversation_states WHERE state_key = ?')
+    .bind(stateKey)
+    .first<{ stateJson: string; expiresAt: string }>();
+
+  if (!row) {
+    return { step: 'idle' };
+  }
+
+  const expiresAt = Date.parse(row.expiresAt);
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    await deleteTelegramConversationState(db, stateKey);
+    return { step: 'idle' };
+  }
+
+  try {
+    const parsed = safeParseTelegramIncidentJoinState(JSON.parse(row.stateJson));
+    if (parsed.success) {
+      return parsed.data;
+    }
+  } catch {
+    // Corrupt JSON is treated like missing state and removed below.
+  }
+
+  await deleteTelegramConversationState(db, stateKey);
+  return { step: 'idle' };
+}
+
+async function persistTelegramConversationState(db: D1Database, stateKey: string, state: TelegramIncidentJoinState): Promise<void> {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const expiresAtIso = new Date(now.getTime() + telegramConversationStateTtlMs).toISOString();
+
+  await db
+    .prepare(
+      `INSERT INTO telegram_conversation_states (state_key, state_json, step, created_at, updated_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(state_key) DO UPDATE SET
+         state_json = excluded.state_json,
+         step = excluded.step,
+         updated_at = excluded.updated_at,
+         expires_at = excluded.expires_at`,
+    )
+    .bind(stateKey, JSON.stringify(state), state.step, nowIso, nowIso, expiresAtIso)
+    .run();
+}
+
+async function deleteTelegramConversationState(db: D1Database, stateKey: string): Promise<void> {
+  await db.prepare('DELETE FROM telegram_conversation_states WHERE state_key = ?').bind(stateKey).run();
 }
 
 async function joinIncident(

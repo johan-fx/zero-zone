@@ -11,7 +11,12 @@
     "test": "vitest run",
     "test:integration": "vitest run src/contracts.integration.test.ts",
     "test:strict": "pnpm typecheck && pnpm test",
-    "build": "wrangler deploy --dry-run"
+    "build": "wrangler deploy --dry-run",
+    "migrate:local": "wrangler d1 migrations apply zona-cero-api-staging --local",
+    "seed:local": "wrangler d1 execute zona-cero-api-staging --local --file ./seeds/incident-zc-demo.sql",
+    "migrate:staging": "wrangler d1 migrations apply zona-cero-api-staging --remote --env staging",
+    "seed:staging": "wrangler d1 execute zona-cero-api-staging --remote --env staging --file ./seeds/incident-zc-demo.sql --yes",
+    "deploy:staging": "wrangler deploy --env staging"
   },
   "dependencies": {
     "@zona-cero/contracts": "workspace:*",

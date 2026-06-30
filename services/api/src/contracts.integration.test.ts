@@ -1,9 +1,10 @@
 import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { HealthResponseSchema, IncidentConfigResponseSchema, IncidentJoinResponseSchema, IncidentListResponseSchema } from '@zona-cero/contracts';
 import { telegramIncidentJoinRequestFixture } from '@zona-cero/testing';
 import { app } from './index';
+import { resetApiTestDatabase } from './test-support';
 
 async function request(path: string, init?: RequestInit): Promise<Response> {
   const ctx = createExecutionContext();
@@ -13,6 +14,10 @@ async function request(path: string, init?: RequestInit): Promise<Response> {
 }
 
 describe('api contract integration', () => {
+  beforeEach(async () => {
+    await resetApiTestDatabase((env as Env).DB);
+  });
+
   it('returns health payloads accepted by shared contracts', async () => {
     const response = await request('/health');
     expect(HealthResponseSchema.parse(await response.json()).version).toBe('0.0.0-boilerplate');

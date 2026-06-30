@@ -1,5 +1,5 @@
 import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   createSignedOperationFixture,
@@ -9,6 +9,7 @@ import {
 } from '@zona-cero/testing';
 import { IncidentJoinResponseSchema, TelegramWebhookResultSchema } from '@zona-cero/contracts';
 import { app } from './index';
+import { resetApiTestDatabase } from './test-support';
 
 async function request(path: string, init?: RequestInit): Promise<Response> {
   const ctx = createExecutionContext();
@@ -18,6 +19,10 @@ async function request(path: string, init?: RequestInit): Promise<Response> {
 }
 
 describe('api worker', () => {
+  beforeEach(async () => {
+    await resetApiTestDatabase((env as Env).DB);
+  });
+
   it('serves a stable health response', async () => {
     const response = await request('/health');
 
@@ -66,17 +71,40 @@ describe('api worker', () => {
       return TelegramWebhookResultSchema.parse(await response.json());
     };
 
+    const beforeFirstStateMs = Date.now() - 1000;
     await expect(postTelegramMessage('/start')).resolves.toMatchObject({
       accepted: true,
       command: '/start',
       responseText: expect.stringContaining('incident-zc-demo'),
     });
 
+    const stateKey = `chat:${telegramUserId}:from:${telegramUserId}`;
+    const firstState = await (env as Env).DB.prepare(
+      'SELECT step, updated_at AS updatedAt, expires_at AS expiresAt FROM telegram_conversation_states WHERE state_key = ?',
+    )
+      .bind(stateKey)
+      .first<{ step: string; updatedAt: string; expiresAt: string }>();
+    expect(firstState).toMatchObject({ step: 'awaitingIncident' });
+    const firstUpdatedAtMs = Date.parse(firstState?.updatedAt ?? '');
+    const firstExpiresAtMs = Date.parse(firstState?.expiresAt ?? '');
+    expect(Number.isFinite(firstUpdatedAtMs)).toBe(true);
+    expect(firstUpdatedAtMs).toBeGreaterThanOrEqual(beforeFirstStateMs);
+    expect(firstExpiresAtMs).toBeGreaterThan(Date.now());
+
     await expect(postTelegramMessage('1')).resolves.toMatchObject({
       accepted: true,
       command: null,
       responseText: expect.stringContaining('What pseudonym'),
     });
+
+    const refreshedState = await (env as Env).DB.prepare(
+      'SELECT step, updated_at AS updatedAt, expires_at AS expiresAt FROM telegram_conversation_states WHERE state_key = ?',
+    )
+      .bind(stateKey)
+      .first<{ step: string; updatedAt: string; expiresAt: string }>();
+    expect(refreshedState).toMatchObject({ step: 'awaitingPseudonym' });
+    expect(Date.parse(refreshedState?.updatedAt ?? '')).toBeGreaterThanOrEqual(firstUpdatedAtMs);
+    expect(Date.parse(refreshedState?.expiresAt ?? '')).toBeGreaterThan(Date.now());
 
     await expect(postTelegramMessage('Webhook Volunteer')).resolves.toMatchObject({
       accepted: true,
@@ -105,6 +133,140 @@ describe('api worker', () => {
       .bind(channelIdentityId)
       .first<{ count: number }>();
     expect(audit?.count).toBe(1);
+
+    const terminalState = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM telegram_conversation_states WHERE state_key = ?')
+      .bind(stateKey)
+      .first<{ count: number }>();
+    expect(terminalState?.count).toBe(0);
+  });
+
+  it('resets corrupt Telegram conversation state before handling updates', async () => {
+    const telegramUserId = 24002;
+    const stateKey = `chat:${telegramUserId}:from:${telegramUserId}`;
+    await (env as Env).DB.prepare(
+      `INSERT INTO telegram_conversation_states (state_key, state_json, step, expires_at)
+       VALUES (?, ?, ?, ?)`,
+    )
+      .bind(stateKey, '{"step":"awaitingRole"', 'awaitingRole', new Date(Date.now() + 30 * 60 * 1000).toISOString())
+      .run();
+
+    const response = await request('/telegram/webhook', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        update_id: 24002,
+        message: {
+          message_id: 1,
+          text: '/start',
+          chat: { id: telegramUserId, type: 'private' },
+          from: { id: telegramUserId, is_bot: false, first_name: 'Corrupt' },
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      accepted: true,
+      command: '/start',
+      responseText: expect.stringContaining('incident-zc-demo'),
+    });
+
+    const repairedState = await (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?')
+      .bind(stateKey)
+      .first<{ step: string }>();
+    expect(repairedState).toMatchObject({ step: 'awaitingIncident' });
+  });
+
+  it('resets invalid-expiry Telegram conversation state before handling updates', async () => {
+    const telegramUserId = 24004;
+    const stateKey = `chat:${telegramUserId}:from:${telegramUserId}`;
+    const staleCreatedAt = '2000-01-01T00:00:00.000Z';
+    await (env as Env).DB.prepare(
+      `INSERT INTO telegram_conversation_states (state_key, state_json, step, created_at, updated_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(
+        stateKey,
+        JSON.stringify({ step: 'awaitingIncident', incidents: [], externalUserId: String(telegramUserId) }),
+        'awaitingIncident',
+        staleCreatedAt,
+        staleCreatedAt,
+        'not-a-date',
+      )
+      .run();
+
+    const response = await request('/telegram/webhook', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        update_id: 24004,
+        message: {
+          message_id: 1,
+          text: '/start',
+          chat: { id: telegramUserId, type: 'private' },
+          from: { id: telegramUserId, is_bot: false, first_name: 'InvalidExpiry' },
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      accepted: true,
+      command: '/start',
+      responseText: expect.stringContaining('incident-zc-demo'),
+    });
+
+    const repairedState = await (env as Env).DB.prepare(
+      'SELECT step, created_at AS createdAt, updated_at AS updatedAt, expires_at AS expiresAt FROM telegram_conversation_states WHERE state_key = ?',
+    )
+      .bind(stateKey)
+      .first<{ step: string; createdAt: string; updatedAt: string; expiresAt: string }>();
+    expect(repairedState).toMatchObject({ step: 'awaitingIncident' });
+    expect(repairedState?.createdAt).not.toBe(staleCreatedAt);
+    expect(Date.parse(repairedState?.updatedAt ?? '')).toBeGreaterThan(Date.parse(staleCreatedAt));
+    expect(Date.parse(repairedState?.expiresAt ?? '')).toBeGreaterThan(Date.now());
+  });
+
+  it('resets expired Telegram conversation state before handling updates', async () => {
+    const telegramUserId = 24003;
+    const stateKey = `chat:${telegramUserId}:from:${telegramUserId}`;
+    await (env as Env).DB.prepare(
+      `INSERT INTO telegram_conversation_states (state_key, state_json, step, expires_at)
+       VALUES (?, ?, ?, ?)`,
+    )
+      .bind(
+        stateKey,
+        JSON.stringify({ step: 'awaitingIncident', incidents: [], externalUserId: String(telegramUserId) }),
+        'awaitingIncident',
+        new Date(Date.now() - 1000).toISOString(),
+      )
+      .run();
+
+    const response = await request('/telegram/webhook', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        update_id: 24003,
+        message: {
+          message_id: 1,
+          text: '/start',
+          chat: { id: telegramUserId, type: 'private' },
+          from: { id: telegramUserId, is_bot: false, first_name: 'Expired' },
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      accepted: true,
+      command: '/start',
+      responseText: expect.stringContaining('incident-zc-demo'),
+    });
+
+    const repairedState = await (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?')
+      .bind(stateKey)
+      .first<{ step: string }>();
+    expect(repairedState).toMatchObject({ step: 'awaitingIncident' });
   });
 
   it('lists seeded incidents and exposes incident config', async () => {
