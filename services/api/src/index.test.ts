@@ -5,10 +5,14 @@ import {
   createSignedOperationFixture,
   incompatibleVersionSyncPushRequestFixture,
   mobileWorkCenterCreateSyncPushFixture,
+  mobileSosCancelSyncPushFixture,
+  mobileSosCreateSyncPushFixture,
   mobileIncidentJoinRequestFixture,
+  telegramSosCreateRequestFixture,
   telegramIncidentJoinRequestFixture,
   telegramStartUpdateFixture,
   telegramWorkCenterCreateRequestFixture,
+  validSosCreateOperationFixture,
   validWorkCenterCreateOperationFixture,
 } from '@zona-cero/testing';
 import {
@@ -18,6 +22,8 @@ import {
   ResourceReportCreateResponseSchema,
   ResourceReportListResponseSchema,
   ResourceReportMatchResponseSchema,
+  SosAlertCreateResponseSchema,
+  SosAlertStatusResponseSchema,
   SyncPushResponseSchema,
   TelegramWebhookResultSchema,
   WorkCenterCreateResponseSchema,
@@ -858,6 +864,195 @@ describe('api worker', () => {
     expect(list.dispatchTasks[0]?.status).toBe('delivered');
   });
 
+  it('creates connected SOS alerts for joined identities and queues observable fan-out only', async () => {
+    await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(telegramIncidentJoinRequestFixture),
+    });
+
+    const response = await request('/incidents/incident-zc-demo/sos', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(telegramSosCreateRequestFixture),
+    });
+
+    expect(response.status).toBe(200);
+    const body = SosAlertCreateResponseSchema.parse(await response.json());
+    expect(body).toMatchObject({
+      sosAlert: { severity: 'critical', status: 'open', sourceChannel: 'telegram' },
+      fanout: { total: 3, queued: 3, pending: 0, failed: 0, cancelled: 0 },
+      idempotent: false,
+    });
+
+    const list = SosAlertStatusResponseSchema.parse(await (await request('/incidents/incident-zc-demo/sos')).json());
+    expect(list.sosAlerts[0]).toMatchObject({ sosAlertId: body.sosAlert.sosAlertId, status: 'open' });
+    expect(list.fanout).toMatchObject({ total: 3, queued: 3 });
+  });
+
+  it('allows the seeded Web UI demo membership to create connected SOS alerts', async () => {
+    const response = await request('/incidents/incident-zc-demo/sos', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        channel: 'web-ui',
+        externalId: 'web-user-1001',
+        displayName: 'Field Web',
+        payload: { severity: 'critical', reportedAt: '2026-06-30T11:00:00.000Z' },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = SosAlertCreateResponseSchema.parse(await response.json());
+    expect(body).toMatchObject({
+      sosAlert: { sourceChannel: 'web-ui', severity: 'critical', status: 'open' },
+      fanout: { total: 3, queued: 3 },
+      idempotent: false,
+    });
+  });
+
+  it('drives Telegram webhook /sos through persisted state and exact confirmation', async () => {
+    const telegramUserId = 27001;
+    await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ...telegramIncidentJoinRequestFixture,
+        externalId: String(telegramUserId),
+        displayName: 'SOS Reporter',
+      }),
+    });
+
+    await expect(postTelegramMessage(telegramUserId, '/sos', 'SOS')).resolves.toMatchObject({
+      accepted: true,
+      command: '/sos',
+      responseText: expect.stringContaining('Choose an incident before starting SOS'),
+    });
+
+    const stateKey = `flow:sos:chat:${telegramUserId}:from:${telegramUserId}`;
+    await expect(
+      (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?').bind(stateKey).first<{ step: string }>(),
+    ).resolves.toMatchObject({ step: 'awaitingIncident' });
+
+    await expect(postTelegramMessage(telegramUserId, '1', 'SOS')).resolves.toMatchObject({
+      responseText: expect.stringContaining('Reply exactly CONFIRM SOS'),
+    });
+
+    const persisted = await (env as Env).DB.prepare('SELECT state_json AS stateJson FROM telegram_conversation_states WHERE state_key = ?')
+      .bind(stateKey)
+      .first<{ stateJson: string }>();
+    const persistedRequest = JSON.parse(persisted?.stateJson ?? '{}') as { request?: { payload?: { reportedAt?: string } } };
+    expect(persistedRequest.request?.payload?.reportedAt).toEqual(expect.any(String));
+
+    const created = await postTelegramMessage(telegramUserId, 'CONFIRM SOS', 'SOS');
+    expect(created).toMatchObject({
+      accepted: true,
+      responseText: expect.stringContaining('Backend recording confirmed only'),
+    });
+
+    await expect(
+      (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?').bind(stateKey).first<{ step: string }>(),
+    ).resolves.toBeNull();
+
+    const list = SosAlertStatusResponseSchema.parse(await (await request('/incidents/incident-zc-demo/sos')).json());
+    expect(list.sosAlerts).toHaveLength(1);
+    expect(list.sosAlerts[0]).toMatchObject({ sourceChannel: 'telegram', status: 'open' });
+    expect(list.fanout).toMatchObject({ total: 3, queued: 3 });
+  });
+
+  it('rejects connected SOS invalid payloads, missing incidents and non-members', async () => {
+    const invalid = await request('/incidents/incident-zc-demo/sos', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...telegramSosCreateRequestFixture, payload: { severity: 'handled' } }),
+    });
+    expect(invalid.status).toBe(400);
+    await expect(invalid.json()).resolves.toMatchObject({ error: 'invalid_payload' });
+
+    const missing = await request('/incidents/missing-incident/sos', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(telegramSosCreateRequestFixture),
+    });
+    expect(missing.status).toBe(404);
+
+    const denied = await request('/incidents/incident-zc-demo/sos', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(telegramSosCreateRequestFixture),
+    });
+    expect(denied.status).toBe(403);
+    await expect(denied.json()).resolves.toEqual({ error: 'permission_denied' });
+  });
+
+  it('sync push materializes SOS create/cancel with idempotency, conflicts and persistent fan-out', async () => {
+    const first = await request('/sync/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(mobileSosCreateSyncPushFixture),
+    });
+    const duplicate = await request('/sync/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(mobileSosCreateSyncPushFixture),
+    });
+    const sameOpConflict = await request('/sync/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        operations: [{
+          ...validSosCreateOperationFixture,
+          payload: { ...validSosCreateOperationFixture.payload, message: 'Changed critical details' },
+        }],
+      }),
+    });
+    const entityConflict = await request('/sync/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        operations: [{
+          ...validSosCreateOperationFixture,
+          opId: 'op-sos-create-conflict-entity',
+        }],
+      }),
+    });
+    const invalidPayload = await request('/sync/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ operations: [{ ...validSosCreateOperationFixture, opId: 'op-sos-invalid', entityId: 'sos-invalid', payload: { severity: 'handled' } }] }),
+    });
+    const cancel = await request('/sync/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(mobileSosCancelSyncPushFixture),
+    });
+
+    expect(SyncPushResponseSchema.parse(await first.json()).results[0]).toMatchObject({ opId: 'op-sos-create-1', status: 'accepted' });
+    expect(SyncPushResponseSchema.parse(await duplicate.json()).results[0]).toMatchObject({ opId: 'op-sos-create-1', status: 'accepted' });
+    expect(SyncPushResponseSchema.parse(await sameOpConflict.json()).results[0]).toMatchObject({ opId: 'op-sos-create-1', status: 'rejected', code: 'operation_conflict' });
+    expect(SyncPushResponseSchema.parse(await entityConflict.json()).results[0]).toMatchObject({ opId: 'op-sos-create-conflict-entity', status: 'rejected', code: 'operation_conflict' });
+    expect(SyncPushResponseSchema.parse(await invalidPayload.json()).results[0]).toMatchObject({ opId: 'op-sos-invalid', status: 'rejected', code: 'invalid_payload' });
+    expect(SyncPushResponseSchema.parse(await cancel.json()).results[0]).toMatchObject({ opId: 'op-sos-cancel-1', status: 'accepted' });
+
+    const list = SosAlertStatusResponseSchema.parse(await (await request('/incidents/incident-zc-demo/sos')).json());
+    expect(list.sosAlerts).toHaveLength(1);
+    expect(list.sosAlerts[0]).toMatchObject({ sosAlertId: 'sos-mobile-critical-1', status: 'cancelled', cancelReason: 'false alarm' });
+    expect(list.fanout).toMatchObject({ total: 6, queued: 3, cancelled: 3 });
+  });
+
+  it('rejects SOS cancel sync for missing alerts without accepting false backend state', async () => {
+    const response = await request('/sync/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(mobileSosCancelSyncPushFixture),
+    });
+
+    expect(SyncPushResponseSchema.parse(await response.json()).results[0]).toMatchObject({
+      opId: 'op-sos-cancel-1',
+      status: 'rejected',
+      code: 'not_found',
+    });
+  });
 
   it('drives Telegram webhook /resource through persisted state and clears terminal state', async () => {
     const telegramUserId = 26001;

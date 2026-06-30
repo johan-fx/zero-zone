@@ -530,6 +530,88 @@ export const DispatchTaskConnectedUpdateRequestSchema = z.object({
 }).strict();
 export type DispatchTaskConnectedUpdateRequest = z.infer<typeof DispatchTaskConnectedUpdateRequestSchema>;
 
+export const sosSeverities = ['critical', 'medical', 'security', 'trapped', 'other'] as const;
+export const SosSeveritySchema = z.enum(sosSeverities);
+export type SosSeverity = z.infer<typeof SosSeveritySchema>;
+
+export const sosAlertStatuses = ['open', 'cancelled'] as const;
+export const SosAlertStatusSchema = z.enum(sosAlertStatuses);
+export type SosAlertStatus = z.infer<typeof SosAlertStatusSchema>;
+
+export const sosFanoutJobStatuses = ['queued', 'pending', 'failed', 'cancelled'] as const;
+export const SosFanoutJobStatusSchema = z.enum(sosFanoutJobStatuses);
+export type SosFanoutJobStatus = z.infer<typeof SosFanoutJobStatusSchema>;
+
+export const SosLocationSchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  accuracyMeters: z.number().nonnegative().optional(),
+}).strict();
+export type SosLocation = z.infer<typeof SosLocationSchema>;
+
+export const SosCreatePayloadSchema = z.object({
+  severity: SosSeveritySchema.default('critical'),
+  message: z.string().min(1).optional(),
+  location: SosLocationSchema.optional(),
+  reportedAt: z.string().min(1).optional(),
+}).strict();
+export type SosCreatePayload = z.infer<typeof SosCreatePayloadSchema>;
+
+export const SosCancelPayloadSchema = z.object({
+  reason: z.string().min(1).optional(),
+  cancelledAt: z.string().min(1).optional(),
+}).strict();
+export type SosCancelPayload = z.infer<typeof SosCancelPayloadSchema>;
+
+export const SosAlertSchema = z.object({
+  sosAlertId: z.string().min(1),
+  incidentId: z.string().min(1),
+  cellId: z.string().min(1),
+  severity: SosSeveritySchema,
+  message: z.string().min(1).optional(),
+  location: SosLocationSchema.optional(),
+  status: SosAlertStatusSchema,
+  sourceChannel: ChannelSchema.optional(),
+  sourceOperationId: z.string().min(1).optional(),
+  actorKeyId: z.string().min(1).optional(),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+  cancelledAt: z.string().min(1).optional(),
+  cancelReason: z.string().min(1).optional(),
+}).strict();
+export type SosAlert = z.infer<typeof SosAlertSchema>;
+
+export const SosFanoutStatusSchema = z.object({
+  total: z.number().int().nonnegative(),
+  queued: z.number().int().nonnegative(),
+  pending: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  cancelled: z.number().int().nonnegative(),
+}).strict();
+export type SosFanoutStatus = z.infer<typeof SosFanoutStatusSchema>;
+
+export const SosAlertStatusResponseSchema = z.object({
+  sosAlerts: z.array(SosAlertSchema),
+  fanout: SosFanoutStatusSchema,
+}).strict();
+export type SosAlertStatusResponse = z.infer<typeof SosAlertStatusResponseSchema>;
+
+export const SosAlertCreateResponseSchema = z.object({
+  sosAlert: SosAlertSchema,
+  fanout: SosFanoutStatusSchema,
+  audit: AuditReferenceSchema.optional(),
+  idempotent: z.boolean(),
+}).strict();
+export type SosAlertCreateResponse = z.infer<typeof SosAlertCreateResponseSchema>;
+
+export const SosConnectedCreateRequestSchema = z.object({
+  channel: ChannelSchema,
+  externalId: z.string().min(1),
+  displayName: z.string().min(1).optional(),
+  payload: SosCreatePayloadSchema,
+}).strict();
+export type SosConnectedCreateRequest = z.infer<typeof SosConnectedCreateRequestSchema>;
+
 export const IncidentSummarySchema = z.object({
   incidentId: z.string().min(1),
   name: z.string().min(1),

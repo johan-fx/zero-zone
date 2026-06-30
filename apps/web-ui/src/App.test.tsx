@@ -1,8 +1,8 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { DispatchTaskListResponse, DispatchTaskResponse, ResourceReportListResponse } from '@zona-cero/contracts';
-import { workCenterDetailHappyFixture, workCenterListHappyFixture } from '../../../packages/testing/src';
+import type { DispatchTaskListResponse, DispatchTaskResponse, ResourceReportListResponse, SosAlertCreateResponse, SosAlertStatusResponse } from '@zona-cero/contracts';
+import { sosAlertCreateResponseHappyFixture, sosAlertStatusHappyFixture, workCenterDetailHappyFixture, workCenterListHappyFixture } from '../../../packages/testing/src';
 import { App } from './App';
 
 
@@ -70,8 +70,22 @@ const dispatchTaskResponseFixture: DispatchTaskResponse = {
   idempotent: false,
 };
 
+const sosStatusFixture: SosAlertStatusResponse = sosAlertStatusHappyFixture;
+const sosCreateFixture: SosAlertCreateResponse = {
+  ...sosAlertCreateResponseHappyFixture,
+  sosAlert: {
+    ...sosAlertCreateResponseHappyFixture.sosAlert,
+    sosAlertId: 'sos-web-critical-1',
+    sourceChannel: 'web-ui',
+  },
+};
+
 beforeEach(() => {
   vi.restoreAllMocks();
+});
+
+afterEach(() => {
+  cleanup();
 });
 
 describe('web ui work center shell', () => {
@@ -96,6 +110,9 @@ describe('web ui work center shell', () => {
       if (url.endsWith('/incidents/incident-zc-demo/dispatch-tasks/dispatch-task-water-1')) {
         return jsonResponse(dispatchTaskResponseFixture);
       }
+      if (url.endsWith('/incidents/incident-zc-demo/sos')) {
+        return jsonResponse(sosStatusFixture);
+      }
       return new Response('not found', { status: 404 });
     });
 
@@ -115,6 +132,10 @@ describe('web ui work center shell', () => {
     expect(screen.getByText('10 boxes · Urgency medium')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Dispatch tasks' })).toBeInTheDocument();
     expect(screen.getByText('20 bottles · Status pending')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Connected SOS' })).toBeInTheDocument();
+    expect(screen.getByText('SOS ID: sos-mobile-critical-1')).toBeInTheDocument();
+    expect(screen.getByText('Status: open · Severity critical')).toBeInTheDocument();
+    expect(screen.getByLabelText('SOS backend fan-out status')).toBeInTheDocument();
 
     const status = screen.getAllByLabelText('North triage point backend status')[0];
     expect(within(status).getByText('reported')).toBeInTheDocument();
@@ -175,6 +196,9 @@ describe('web ui work center shell', () => {
       if (url.endsWith('/incidents/incident-zc-demo/dispatch-tasks')) {
         return jsonResponse(dispatchTaskListFixture);
       }
+      if (url.endsWith('/incidents/incident-zc-demo/sos')) {
+        return jsonResponse(sosStatusFixture);
+      }
       return jsonResponse(backendOnlyDetail);
     });
 
@@ -184,6 +208,122 @@ describe('web ui work center shell', () => {
     expect(screen.getAllByText('expired').length).toBeGreaterThan(0);
     expect(screen.getAllByText('high').length).toBeGreaterThan(0);
     expect(screen.getAllByText('low').length).toBeGreaterThan(0);
+  });
+
+  it('requires exact SOS confirmation before calling the backend', async () => {
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/health')) return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
+      if (url.endsWith('/incidents/incident-zc-demo/work-centers')) return jsonResponse(workCenterListHappyFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/work-centers/center-north-triage')) return jsonResponse(workCenterDetailHappyFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) return jsonResponse(resourceReportListFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/dispatch-tasks')) return jsonResponse(dispatchTaskListFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/sos') && init?.method === 'POST') return jsonResponse(sosCreateFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/sos')) return jsonResponse(sosStatusFixture);
+      return new Response('not found', { status: 404 });
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Connected SOS' })).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText('Type CONFIRM SOS to submit'), { target: { value: 'confirm' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit SOS' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Type CONFIRM SOS exactly');
+    expect(fetcher).not.toHaveBeenCalledWith(
+      'http://127.0.0.1:8787/incidents/incident-zc-demo/sos',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('submits SOS and renders the backend acknowledgement honestly', async () => {
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/health')) return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
+      if (url.endsWith('/incidents/incident-zc-demo/work-centers')) return jsonResponse(workCenterListHappyFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/work-centers/center-north-triage')) return jsonResponse(workCenterDetailHappyFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) return jsonResponse(resourceReportListFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/dispatch-tasks')) return jsonResponse(dispatchTaskListFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/sos') && init?.method === 'POST') return jsonResponse(sosCreateFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/sos')) return jsonResponse({ sosAlerts: [], fanout: { total: 0, queued: 0, pending: 0, failed: 0, cancelled: 0 } });
+      return new Response('not found', { status: 404 });
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Connected SOS' })).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText('Type CONFIRM SOS to submit'), { target: { value: 'CONFIRM SOS' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit SOS' }));
+
+    const status = await screen.findByRole('status');
+    expect(status).toHaveTextContent('SOS ID: sos-web-critical-1');
+    expect(status).toHaveTextContent('Backend recording only');
+    expect(screen.getByText('SOS ID: sos-web-critical-1')).toBeInTheDocument();
+
+    const postCall = fetcher.mock.calls.find(([url, init]) => String(url).endsWith('/incidents/incident-zc-demo/sos') && init?.method === 'POST');
+    expect(postCall).toBeDefined();
+    const payload = JSON.parse(String(postCall?.[1]?.body)) as { externalId: string; displayName?: string; payload: { reportedAt?: string } };
+    expect(payload.externalId).toBe('web-user-1001');
+    expect(payload.displayName).toBe('Field Web');
+    expect(payload.payload.reportedAt).toEqual(expect.any(String));
+  });
+
+
+
+  it('blocks duplicate SOS submits while the request is in-flight', async () => {
+    let resolvePost: (response: Response) => void = () => undefined;
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/health')) return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
+      if (url.endsWith('/incidents/incident-zc-demo/work-centers')) return jsonResponse(workCenterListHappyFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/work-centers/center-north-triage')) return jsonResponse(workCenterDetailHappyFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) return jsonResponse(resourceReportListFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/dispatch-tasks')) return jsonResponse(dispatchTaskListFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/sos') && init?.method === 'POST') {
+        return new Promise<Response>((resolve) => {
+          resolvePost = resolve;
+        });
+      }
+      if (url.endsWith('/incidents/incident-zc-demo/sos')) return jsonResponse({ sosAlerts: [], fanout: { total: 0, queued: 0, pending: 0, failed: 0, cancelled: 0 } });
+      return new Response('not found', { status: 404 });
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Connected SOS' })).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText('Type CONFIRM SOS to submit'), { target: { value: 'CONFIRM SOS' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit SOS' }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Submitting SOS…' })).toBeDisabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Submitting SOS…' }));
+
+    const postCalls = fetcher.mock.calls.filter(([url, init]) => String(url).endsWith('/incidents/incident-zc-demo/sos') && init?.method === 'POST');
+    expect(postCalls).toHaveLength(1);
+
+    resolvePost(jsonResponse(sosCreateFixture));
+    expect(await screen.findByRole('status')).toHaveTextContent('SOS ID: sos-web-critical-1');
+  });
+
+  it('shows SOS backend errors without inventing delivery state', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/health')) return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
+      if (url.endsWith('/incidents/incident-zc-demo/work-centers')) return jsonResponse(workCenterListHappyFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/work-centers/center-north-triage')) return jsonResponse(workCenterDetailHappyFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) return jsonResponse(resourceReportListFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/dispatch-tasks')) return jsonResponse(dispatchTaskListFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/sos') && init?.method === 'POST') return new Response(JSON.stringify({ error: 'permission_denied' }), { status: 403 });
+      if (url.endsWith('/incidents/incident-zc-demo/sos')) return jsonResponse(sosStatusFixture);
+      return new Response('not found', { status: 404 });
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Connected SOS' })).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText('Type CONFIRM SOS to submit'), { target: { value: 'CONFIRM SOS' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit SOS' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent('SOS creation failed with status 403');
   });
 });
 

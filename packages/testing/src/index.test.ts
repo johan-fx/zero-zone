@@ -7,6 +7,10 @@ import {
   IncidentListResponseSchema,
   PendingSignedOperationSchema,
   SignedOperationSchema,
+  SosAlertCreateResponseSchema,
+  SosAlertStatusResponseSchema,
+  SosConnectedCreateRequestSchema,
+  SosCreatePayloadSchema,
   SyncPushRequestSchema,
   WebLinkRequestSchema,
   WebLinkSessionSchema,
@@ -25,16 +29,26 @@ import {
   incidentListErrorFixture,
   incidentListHappyFixture,
   invalidSignedOperationFixture,
+  invalidSosCreatePayloadFixture,
   invalidSyncPushRequestFixture,
   invalidWorkCenterCreatePayloadFixture,
   mobileWorkCenterCreateSyncPushFixture,
+  mobileSosCancelSyncPushFixture,
+  mobileSosCreateSyncPushFixture,
   invalidWebLinkRequestFixture,
   invalidWebLinkSessionFixture,
   signedOperationGoldenVector,
+  sosAlertCreateResponseHappyFixture,
+  sosAlertStatusHappyFixture,
+  sosApiFixtures,
   telegramIncidentJoinRequestFixture,
+  telegramSosCreateRequestFixture,
   telegramStartUpdateFixture,
   telegramWorkCenterCreateRequestFixture,
   validSignedOperationFixture,
+  validSosCancelOperationFixture,
+  validSosCreateOperationFixture,
+  validSosCreatePayloadFixture,
   validSyncPushRequestFixture,
   validWorkCenterCreateOperationFixture,
   validWorkCenterCreatePayloadFixture,
@@ -70,6 +84,26 @@ describe('testing package', () => {
       entityType: 'work_center',
     });
     expect(SyncPushRequestSchema.parse(mobileWorkCenterCreateSyncPushFixture).operations[0]?.opType).toBe('work_center.create');
+  });
+
+  it('exposes canonical SOS fixtures for connected and mobile critical flows', () => {
+    expect(SosCreatePayloadSchema.parse(validSosCreatePayloadFixture).severity).toBe('critical');
+    expect(SosCreatePayloadSchema.safeParse(invalidSosCreatePayloadFixture).success).toBe(false);
+    expect(PendingSignedOperationSchema.parse(validSosCreateOperationFixture)).toMatchObject({
+      opType: 'sos.create',
+      entityType: 'sos',
+    });
+    expect(PendingSignedOperationSchema.parse(validSosCancelOperationFixture)).toMatchObject({
+      opType: 'sos.cancel',
+      entityType: 'sos',
+    });
+    expect(SyncPushRequestSchema.parse(mobileSosCreateSyncPushFixture).operations[0]?.opType).toBe('sos.create');
+    expect(SyncPushRequestSchema.parse(mobileSosCancelSyncPushFixture).operations[0]?.opType).toBe('sos.cancel');
+    expect(SosConnectedCreateRequestSchema.parse(telegramSosCreateRequestFixture).channel).toBe('telegram');
+    expect(SosAlertStatusResponseSchema.parse(sosAlertStatusHappyFixture).fanout.queued).toBe(3);
+    expect(SosAlertCreateResponseSchema.parse(sosAlertCreateResponseHappyFixture).sosAlert.status).toBe('open');
+    expect(SosConnectedCreateRequestSchema.safeParse(sosApiFixtures.telegram.error).success).toBe(false);
+    expect(SyncPushRequestSchema.safeParse(sosApiFixtures.mobile.error).success).toBe(true);
   });
 
   it('exposes shared valid and invalid web link request/session fixtures', () => {

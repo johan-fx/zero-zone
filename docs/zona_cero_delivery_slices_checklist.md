@@ -32,7 +32,7 @@ Usar este reparto como contrato de trabajo para todas las slices. La clave es qu
 | 2 | Incidentes + identidad básica | 🟢 | 🟢 | 🟢 | Hecho |
 | 3 | Centros de trabajo | 🟢 | 🟢 | 🟢 | Hecho |
 | 4 | Recursos + logística | 🟢 | 🟢 | 🟢 | Hecho |
-| 5 | SOS conectado + nativo crítico | ⬜ | ⬜ | ⬜ | No iniciado |
+| 5 | SOS conectado + nativo crítico | 🟢 | 🟢 | 🟢 | Hecho |
 | 6 | Reunificación familiar web | ⬜ | ⬜ | ⬜ | No iniciado |
 | 7 | Sync/offline hardening | ⬜ | ⬜ | ⬜ | No iniciado |
 | 8 | Observabilidad + seguridad | ⬜ | ⬜ | ⬜ | No iniciado |
@@ -247,19 +247,29 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 
 | Equipo | Checklist |
 |---|---|
-| A | ⬜ Comando/botón SOS conectado con confirmación. |
-| A | ⬜ Acuse de recibo desde Telegram. |
-| B | ⬜ Cola crítica, estado SOS y auditoría. |
-| B | ⬜ Notificaciones/fan-out con prioridad. |
-| C | ⬜ SOS nativo de acceso rápido. |
-| C | ⬜ Cola local y comportamiento sin red. |
-| C | ⬜ Spike/adapter Meshtastic según fase. |
+| A | 🟢 Comando/botón SOS conectado con confirmación. |
+| A | 🟢 Acuse de recibo desde Telegram. |
+| B | 🟢 Cola crítica, estado SOS y auditoría. |
+| B | 🟢 Notificaciones/fan-out con prioridad. |
+| C | 🟢 SOS nativo de acceso rápido. |
+| C | 🟢 Cola local y comportamiento sin red. |
+| C | 🟢 Spike/adapter Meshtastic según fase. |
 
 **Definition of Done**
 
 - SOS con red se propaga y recibe acuse.
 - SOS nativo queda en cola si no hay red.
 - La UI nunca promete profundidad exacta ni precisión falsa.
+
+**Cierre Slice 5**
+
+- `packages/contracts` define contratos canónicos de SOS: payload de creación/cancelación, alerta, estado, fan-out observable y request/response conectado.
+- `services/api` añade persistencia crítica con `sos_alerts`, `sos_events` y `critical_fanout_jobs`; `/sync/push` materializa `sos.create` y `sos.cancel` sin falsos accepted.
+- Telegram expone `/sos` con confirmación explícita `CONFIRM SOS`, estado namespaced y acuse honesto desde el webhook real.
+- Web UI añade SOS conectado con confirmación fuerte, idempotencia de submit, identidad demo con membership sembrada y render de estado/fan-out backend.
+- Mobile añade SOS nativo local-first, cancelación local, materialización visible de estado pendiente y transporte Meshtastic como adapter seguro sin prometer ACK.
+- El copy de todos los canales distingue guardado local, registro backend y fan-out observable; no promete entrega, rescate, prioridad absoluta ni ubicación exacta.
+- Verificación ejecutada: `git diff --check`, `pnpm contracts:test:strict`, `pnpm api:test:strict`, `pnpm telegram:test:strict`, `pnpm web:test:strict`, `pnpm mobile:test:strict`, `pnpm test:strict` y fresh-context review sin P0/P1/P2.
 
 ## Slice 6 - Reunificación familiar web
 

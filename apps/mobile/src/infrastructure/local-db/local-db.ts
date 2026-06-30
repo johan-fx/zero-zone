@@ -1,5 +1,6 @@
 import type { MapPackMetadata } from '@/infrastructure/maps/offline-map-packs';
 import type { SignedOperation } from '@/infrastructure/security/operation-signer';
+import type { SosLocation } from '@zona-cero/contracts';
 
 export const zeroZoneSpikeDbName = 'zero_zone_offline_spike';
 
@@ -161,7 +162,11 @@ export type SosSignalLocalView = {
   cellId: string;
   severity: string;
   message: string;
+  location?: SosLocation;
   status: string;
+  syncState: string;
+  provisional?: boolean;
+  provisionalReason?: string;
   updatedAt: string;
 };
 

@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { type FormEvent, useEffect, useState } from 'react';
 
-import type { DispatchTask, DispatchTaskStatus, HealthResponse, ResourceReportSummary, WorkCenterDetail, WorkCenterSummary } from '@zona-cero/contracts';
-import { fetchApiHealth, fetchDispatchTasks, fetchResourceReports, fetchWorkCenterDetail, fetchWorkCenters, updateDispatchTask } from './api';
+import type { DispatchTask, DispatchTaskStatus, HealthResponse, ResourceReportSummary, SosAlert, SosAlertStatusResponse, SosFanoutStatus, WorkCenterDetail, WorkCenterSummary } from '@zona-cero/contracts';
+import { createSosAlert, fetchApiHealth, fetchDispatchTasks, fetchResourceReports, fetchSosStatus, fetchWorkCenterDetail, fetchWorkCenters, updateDispatchTask } from './api';
 import './styles.css';
 
 type HealthState =
@@ -24,7 +24,15 @@ type DispatchState =
   | { status: 'ready'; tasks: DispatchTask[]; actionMessage?: string }
   | { status: 'error'; message: string };
 
+type SosState =
+  | { status: 'loading' }
+  | { status: 'ready'; response: SosAlertStatusResponse; actionMessage?: string }
+  | { status: 'error'; message: string };
+
 const defaultIncidentId = 'incident-zc-demo';
+const defaultWebExternalId = 'web-user-1001';
+const defaultWebDisplayName = 'Field Web';
+const strongSosConfirmation = 'CONFIRM SOS';
 const dispatchActions: { label: string; status: Exclude<DispatchTaskStatus, 'pending'> }[] = [
   { label: 'Accept', status: 'accepted' },
   { label: 'En route', status: 'en_route' },
@@ -34,10 +42,16 @@ const dispatchActions: { label: string; status: Exclude<DispatchTaskStatus, 'pen
 
 export function App() {
   const incidentId = import.meta.env.VITE_INCIDENT_ID || defaultIncidentId;
+  const webExternalId = import.meta.env.VITE_WEB_EXTERNAL_ID || defaultWebExternalId;
+  const webDisplayName = import.meta.env.VITE_WEB_DISPLAY_NAME || defaultWebDisplayName;
   const [healthState, setHealthState] = useState<HealthState>({ status: 'loading' });
   const [workCenterState, setWorkCenterState] = useState<WorkCenterState>({ status: 'loading' });
   const [resourceState, setResourceState] = useState<ResourceState>({ status: 'loading' });
   const [dispatchState, setDispatchState] = useState<DispatchState>({ status: 'loading' });
+  const [sosState, setSosState] = useState<SosState>({ status: 'loading' });
+  const [sosConfirmation, setSosConfirmation] = useState('');
+  const [isSosSubmitting, setIsSosSubmitting] = useState(false);
+  const [sosPendingReportedAt, setSosPendingReportedAt] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -78,6 +92,11 @@ export function App() {
       if (active) setDispatchState({ status: 'ready', tasks: dispatchTasks });
     }
 
+    async function loadSosStatus() {
+      const response = await fetchSosStatus(incidentId);
+      if (active) setSosState({ status: 'ready', response });
+    }
+
     loadWorkCenters().catch((error: unknown) => {
       if (active) setWorkCenterState({ status: 'error', message: errorMessage(error) });
     });
@@ -86,6 +105,9 @@ export function App() {
     });
     loadDispatchTasks().catch((error: unknown) => {
       if (active) setDispatchState({ status: 'error', message: errorMessage(error) });
+    });
+    loadSosStatus().catch((error: unknown) => {
+      if (active) setSosState({ status: 'error', message: errorMessage(error) });
     });
 
     return () => {
@@ -99,7 +121,7 @@ export function App() {
     try {
       const response = await updateDispatchTask(incidentId, task.dispatchTaskId, {
         channel: 'web-ui',
-        externalId: 'web-ui-operator',
+        externalId: webExternalId,
         status,
       });
       setDispatchState({
@@ -111,6 +133,47 @@ export function App() {
       });
     } catch (error: unknown) {
       setDispatchState({ ...dispatchState, actionMessage: errorMessage(error) });
+    }
+  }
+
+  async function handleSosSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (sosState.status !== 'ready' || isSosSubmitting) return;
+
+    if (sosConfirmation.trim() !== strongSosConfirmation) {
+      setSosState({
+        ...sosState,
+        actionMessage: `Type ${strongSosConfirmation} exactly before submitting SOS. Backend recording does not confirm delivery or rescue.`,
+      });
+      return;
+    }
+
+    const reportedAt = sosPendingReportedAt ?? new Date().toISOString();
+    setSosPendingReportedAt(reportedAt);
+    setIsSosSubmitting(true);
+
+    try {
+      const response = await createSosAlert(incidentId, {
+        channel: 'web-ui',
+        externalId: webExternalId,
+        displayName: webDisplayName,
+        payload: { severity: 'critical', reportedAt },
+      });
+
+      setSosState({
+        status: 'ready',
+        response: {
+          sosAlerts: upsertSosAlert(sosState.response.sosAlerts, response.sosAlert),
+          fanout: response.fanout,
+        },
+        actionMessage: `SOS ID: ${response.sosAlert.sosAlertId}. Status: ${response.sosAlert.status}. ${formatFanout(response.fanout)} Backend recording only; delivery, rescue, and exact location are not confirmed.`,
+      });
+      setSosConfirmation('');
+      setSosPendingReportedAt(null);
+    } catch (error: unknown) {
+      setSosState({ ...sosState, actionMessage: errorMessage(error) });
+    } finally {
+      setIsSosSubmitting(false);
     }
   }
 
@@ -158,6 +221,28 @@ export function App() {
         {resourceState.status === 'ready' ? <ResourceReportView reports={resourceState.reports} /> : null}
       </section>
 
+      <section className="status-card sos-card" aria-labelledby="sos-title" aria-live="polite">
+        <div className="section-header">
+          <div>
+            <p className="eyebrow">Critical</p>
+            <h2 id="sos-title">Connected SOS</h2>
+          </div>
+          {sosState.status === 'ready' ? <strong>{sosState.response.sosAlerts.length} alerts</strong> : null}
+        </div>
+        <p className="summary">Records SOS in the backend and shows backend fan-out state. It does not confirm delivery or rescue.</p>
+        {sosState.status === 'loading' ? <p>Loading SOS status…</p> : null}
+        {sosState.status === 'error' ? <p role="alert">{sosState.message}</p> : null}
+        {sosState.status === 'ready' ? (
+          <SosPanel
+            state={sosState}
+            confirmation={sosConfirmation}
+            onConfirmationChange={setSosConfirmation}
+            isSubmitting={isSosSubmitting}
+            onSubmit={handleSosSubmit}
+          />
+        ) : null}
+      </section>
+
       <section className="status-card" aria-labelledby="dispatch-title" aria-live="polite">
         <div className="section-header">
           <div>
@@ -173,6 +258,72 @@ export function App() {
         ) : null}
       </section>
     </main>
+  );
+}
+
+function SosPanel({
+  state,
+  confirmation,
+  onConfirmationChange,
+  isSubmitting,
+  onSubmit,
+}: {
+  state: Extract<SosState, { status: 'ready' }>;
+  confirmation: string;
+  onConfirmationChange: (value: string) => void;
+  isSubmitting: boolean;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <div>
+      {state.actionMessage ? <p role="status">{state.actionMessage}</p> : null}
+      <FanoutStrip fanout={state.response.fanout} />
+      <form className="sos-form" onSubmit={onSubmit}>
+        <label htmlFor="sos-confirmation">Type CONFIRM SOS to submit</label>
+        <input
+          id="sos-confirmation"
+          name="sos-confirmation"
+          value={confirmation}
+          onChange={(event) => onConfirmationChange(event.currentTarget.value)}
+          aria-describedby="sos-copy"
+          disabled={isSubmitting}
+        />
+        <p id="sos-copy">No delivery, rescue, or exact-location confirmation is implied by this action.</p>
+        <button type="submit" disabled={isSubmitting}>{isSubmitting ? 'Submitting SOS…' : 'Submit SOS'}</button>
+      </form>
+      <SosAlertList alerts={state.response.sosAlerts} />
+    </div>
+  );
+}
+
+function FanoutStrip({ fanout }: { fanout: SosFanoutStatus }) {
+  return (
+    <dl className="status-strip" aria-label="SOS backend fan-out status">
+      <div><dt>Total</dt><dd>{fanout.total}</dd></div>
+      <div><dt>Queued</dt><dd>{fanout.queued}</dd></div>
+      <div><dt>Pending</dt><dd>{fanout.pending}</dd></div>
+      <div><dt>Failed</dt><dd>{fanout.failed}</dd></div>
+      <div><dt>Cancelled</dt><dd>{fanout.cancelled}</dd></div>
+    </dl>
+  );
+}
+
+function SosAlertList({ alerts }: { alerts: SosAlert[] }) {
+  if (alerts.length === 0) return <p>No SOS alerts recorded for this incident.</p>;
+
+  return (
+    <ul className="work-center-list">
+      {alerts.map((alert) => (
+        <li key={alert.sosAlertId}>
+          <article className="work-center-card">
+            <h4>SOS ID: {alert.sosAlertId}</h4>
+            <p>Status: {alert.status} · Severity {alert.severity}</p>
+            <p>Source: {alert.sourceChannel ?? 'unknown'}</p>
+            <p>{formatSosAlertLocation(alert)}</p>
+          </article>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -328,6 +479,21 @@ function StatusStrip({ workCenter }: { workCenter: WorkCenterSummary | WorkCente
 function formatLocation(location: WorkCenterSummary['location']): string {
   if (!location) return 'No coordinates';
   return `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`;
+}
+
+function formatSosAlertLocation(alert: SosAlert): string {
+  if (!alert.location) return 'Location: not reported';
+  if (alert.location.accuracyMeters !== undefined) return `Location: reported with ${alert.location.accuracyMeters}m accuracy`;
+  return 'Location: reported by backend';
+}
+
+function formatFanout(fanout: SosFanoutStatus): string {
+  return `Fan-out: total ${fanout.total}, queued ${fanout.queued}, pending ${fanout.pending}, failed ${fanout.failed}, cancelled ${fanout.cancelled}.`;
+}
+
+function upsertSosAlert(alerts: SosAlert[], alert: SosAlert): SosAlert[] {
+  const existing = alerts.filter((candidate) => candidate.sosAlertId !== alert.sosAlertId);
+  return [alert, ...existing];
 }
 
 function errorMessage(error: unknown): string {

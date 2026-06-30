@@ -33,6 +33,28 @@ describe('durable signed outbox service', () => {
     expect(result.views.localSummaries).toEqual([expect.objectContaining({ pendingOperations: 1, operationFreshness: 'local_pending' })]);
   });
 
+  it('persists SOS operations before exposing provisional local SOS views', async () => {
+    const writeOrder: string[] = [];
+    const db = createRxdbLocalOperationDatabase({ collections: createFakeRxdbCollections(writeOrder) });
+
+    const result = await appendSignedOperationAndMaterialize({
+      database: db,
+      input: {
+        ...operationInput,
+        entityId: 'sos-1',
+        opType: 'sos.create',
+        payload: { severity: 'critical', message: 'Need support', location: { latitude: 41.38, longitude: 2.17, accuracyMeters: 250 } },
+      },
+      signer: new FakeOperationSigner('outbox-sos-tests'),
+    });
+
+    expect(writeOrder.slice(0, 2)).toEqual(['sync_ops', 'sos_signals']);
+    expect(await db.syncOps.findByIncident('incident-1')).toEqual([expect.objectContaining({ opId: result.operation.opId, opType: 'sos.create', syncState: 'pending' })]);
+    expect(await db.views.sosSignals.findByIncident('incident-1')).toEqual([
+      expect.objectContaining({ sosId: 'sos-1', status: 'open', syncState: 'pending', provisional: true, provisionalReason: 'offline_pending_sync' }),
+    ]);
+  });
+
   it('does not persist or materialize when signing is unavailable', async () => {
     const writeOrder: string[] = [];
     const db = createRxdbLocalOperationDatabase({ collections: createFakeRxdbCollections(writeOrder) });

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   incidentConfigHappyFixture,
   incidentListHappyFixture,
+  sosAlertCreateResponseHappyFixture,
   telegramIncidentJoinResponseFixture,
   telegramStartUpdateFixture,
   telegramWorkCenterCreateRequestFixture,
@@ -12,6 +13,7 @@ import {
 import {
   DispatchTaskConnectedUpdateRequestSchema,
   ResourceReportConnectedCreateRequestSchema,
+  SosConnectedCreateRequestSchema,
   WorkCenterConnectedCreateRequestSchema,
   type DispatchTask,
   type DispatchTaskResponse,
@@ -21,13 +23,16 @@ import {
   TelegramDispatchTaskStateSchema,
   TelegramIncidentJoinStateSchema,
   TelegramResourceReportStateSchema,
+  TelegramSosStateSchema,
   TelegramWorkCenterReportStateSchema,
   handleTelegramDispatchTaskFlow,
   handleTelegramIncidentJoinFlow,
   handleTelegramResourceReportFlow,
+  handleTelegramSosFlow,
   handleTelegramWorkCenterReportFlow,
   handleTelegramWebhookUpdate,
   isTerminalTelegramIncidentJoinState,
+  isTerminalTelegramSosState,
   isTerminalTelegramWorkCenterReportState,
   parseTelegramIncidentJoinState,
   parseTelegramWorkCenterReportState,
@@ -35,6 +40,7 @@ import {
   safeParseTelegramDispatchTaskState,
   safeParseTelegramIncidentJoinState,
   safeParseTelegramResourceReportState,
+  safeParseTelegramSosState,
   safeParseTelegramWorkCenterReportState,
   type TelegramDispatchTaskPorts,
   type TelegramDispatchTaskState,
@@ -42,6 +48,8 @@ import {
   type TelegramResourceReportPorts,
   type TelegramResourceReportState,
   type TelegramIncidentJoinState,
+  type TelegramSosPorts,
+  type TelegramSosState,
   type TelegramWorkCenterReportPorts,
   type TelegramWorkCenterReportState,
 } from './index';
@@ -133,6 +141,14 @@ function createDispatchPorts(overrides: Partial<TelegramDispatchTaskPorts> = {})
   };
 }
 
+function createSosPorts(overrides: Partial<TelegramSosPorts> = {}): TelegramSosPorts {
+  return {
+    listIncidents: vi.fn().mockResolvedValue(incidentListHappyFixture),
+    createSosAlert: vi.fn().mockResolvedValue(sosAlertCreateResponseHappyFixture),
+    ...overrides,
+  };
+}
+
 const validJoinStates = [
   { step: 'idle' },
   { step: 'awaitingIncident', incidents: incidentListHappyFixture.incidents, externalUserId: '1001' },
@@ -166,6 +182,20 @@ const validDispatchStates = [
   { step: 'updated', response: dispatchTaskResponseFixture },
   { step: 'cancelled' },
 ] satisfies TelegramDispatchTaskState[];
+
+const validSosStates = [
+  { step: 'idle' },
+  { step: 'awaitingIncident', incidents: incidentListHappyFixture.incidents, externalUserId: '1001', displayName: 'Field' },
+  {
+    step: 'awaitingConfirmation',
+    incident: incidentListHappyFixture.incidents[0],
+    externalUserId: '1001',
+    displayName: 'Field',
+    request: { channel: 'telegram', externalId: '1001', displayName: 'Field', payload: { severity: 'critical' } },
+  },
+  { step: 'submitted', response: sosAlertCreateResponseHappyFixture },
+  { step: 'cancelled' },
+] satisfies TelegramSosState[];
 
 const validWorkCenterStates = [
   { step: 'idle' },
@@ -231,6 +261,22 @@ async function advanceDispatch(
   return { state, responseText, ports };
 }
 
+async function advanceSos(
+  inputs: string[],
+  ports = createSosPorts(),
+): Promise<{ state: TelegramSosState; responseText: string; ports: TelegramSosPorts }> {
+  let state: TelegramSosState = { step: 'idle' };
+  let responseText = '';
+
+  for (const input of inputs) {
+    const result = await handleTelegramSosFlow(state, telegramUserUpdate(input), ports);
+    state = result.state;
+    responseText = result.responseText;
+  }
+
+  return { state, responseText, ports };
+}
+
 async function advanceWorkCenter(
   inputs: string[],
   ports = createWorkCenterPorts(),
@@ -257,6 +303,14 @@ describe('telegram channel flows', () => {
       accepted: true,
       command: '/start',
       responseText: expect.stringContaining('Zona Cero'),
+    });
+  });
+
+  it('returns a stable SOS command response for API webhook integration', () => {
+    expect(handleTelegramWebhookUpdate(telegramUserUpdate('/sos'))).toMatchObject({
+      accepted: true,
+      command: '/sos',
+      responseText: expect.stringContaining('CONFIRM SOS'),
     });
   });
 
@@ -471,6 +525,12 @@ describe('telegram channel flows', () => {
       expect(TelegramDispatchTaskStateSchema.safeParse(jsonState).success).toBe(true);
       expect(safeParseTelegramDispatchTaskState(jsonState)).toEqual({ success: true, data: state });
     }
+
+    for (const state of validSosStates) {
+      const jsonState = JSON.parse(JSON.stringify(state));
+      expect(TelegramSosStateSchema.safeParse(jsonState).success).toBe(true);
+      expect(safeParseTelegramSosState(jsonState)).toEqual({ success: true, data: state });
+    }
   });
 
   it('runs the /resource happy path with canonical report kind, urgency and optional work center id', async () => {
@@ -524,6 +584,54 @@ describe('telegram channel flows', () => {
     expect(state.step).toBe('awaitingStatus');
     expect(responseText).toContain('Invalid status');
     expect(ports.updateDispatchTask).not.toHaveBeenCalled();
+  });
+
+  it('runs the /sos happy path with exact strong confirmation and honest acknowledgement', async () => {
+    const ports = createSosPorts();
+    const { state, responseText } = await advanceSos(['/sos', '1', 'CONFIRM SOS'], ports);
+
+    expect(state.step).toBe('submitted');
+    expect(responseText).toContain('SOS ID: sos-mobile-critical-1');
+    expect(responseText).toContain('Status: open');
+    expect(responseText).toContain('Fan-out: total 3, queued 3, pending 0, failed 0, cancelled 0');
+    expect(responseText).toContain('does not confirm delivery, rescue, or exact location');
+    expect(ports.createSosAlert).toHaveBeenCalledWith('incident-zc-demo', {
+      channel: 'telegram',
+      externalId: '1001',
+      displayName: 'Field',
+      payload: { severity: 'critical', reportedAt: expect.any(String) },
+    });
+    const sosRequest = SosConnectedCreateRequestSchema.parse(vi.mocked(ports.createSosAlert).mock.calls[0]?.[1]);
+    expect(sosRequest.payload.severity).toBe('critical');
+    expect(sosRequest.payload.reportedAt).toEqual(expect.any(String));
+    expect(isTerminalTelegramSosState(state)).toBe(true);
+  });
+
+  it('keeps SOS state and does not call the backend when confirmation is not exact', async () => {
+    const ports = createSosPorts();
+    const { state, responseText } = await advanceSos(['/sos', '1', 'confirm'], ports);
+
+    expect(state.step).toBe('awaitingConfirmation');
+    expect(responseText).toContain('reply exactly CONFIRM SOS');
+    expect(ports.createSosAlert).not.toHaveBeenCalled();
+  });
+
+  it('cancels SOS safely before backend submission', async () => {
+    const ports = createSosPorts();
+    const { state, responseText } = await advanceSos(['/sos', '1', 'no'], ports);
+
+    expect(state).toEqual({ step: 'cancelled' });
+    expect(responseText).toContain('SOS cancelled before backend submission');
+    expect(ports.createSosAlert).not.toHaveBeenCalled();
+  });
+
+  it('keeps SOS confirmation state and reports backend errors visibly', async () => {
+    const ports = createSosPorts({ createSosAlert: vi.fn().mockRejectedValue({ error: 'permission_denied' }) });
+    const { state, responseText } = await advanceSos(['/sos', 'incident-zc-demo', 'CONFIRM SOS'], ports);
+
+    expect(state.step).toBe('awaitingConfirmation');
+    expect(responseText).toContain('Permission denied');
+    expect(responseText).toContain('Join this incident first with /start');
   });
 
 });

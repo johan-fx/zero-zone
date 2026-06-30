@@ -45,8 +45,6 @@ describe('operation materializer', () => {
     expect(views.localSummaries[0]).toMatchObject({ incidentId: 'incident-1', cellId: 'cell-a', pendingOperations: 2 });
   });
 
-
-
   it('materializes the shared canonical work center create fixture without mobile-only payload fields', () => {
     expect(WorkCenterCreatePayloadSchema.parse(validWorkCenterCreatePayloadFixture)).toEqual(validWorkCenterCreatePayloadFixture);
 
@@ -175,6 +173,39 @@ describe('operation materializer', () => {
         provisionalReason: 'local_update_pending_sync',
       }),
     ]);
-    expect(views.sosSignals).toEqual([expect.objectContaining({ sosId: 'sos-1', status: 'cancelled', message: 'Need evacuation support' })]);
+    expect(views.sosSignals).toEqual([
+      expect.objectContaining({
+        sosId: 'sos-1',
+        status: 'cancelled',
+        message: 'Need evacuation support',
+        syncState: 'pending',
+        provisional: true,
+        provisionalReason: 'offline_pending_sync',
+      }),
+    ]);
   });
+
+  it('materializes SOS create with local-first sync state and approximate last-known location', async () => {
+    const sosCreate = await op('sos.create', 'sos-2', {
+      severity: 'medical',
+      message: 'Need medical support near north gate',
+      location: { latitude: 41.3812, longitude: 2.1734, accuracyMeters: 250 },
+    });
+
+    const views = materializeOperations([sosCreate]);
+
+    expect(views.sosSignals).toEqual([
+      expect.objectContaining({
+        sosId: 'sos-2',
+        severity: 'medical',
+        message: 'Need medical support near north gate',
+        location: { latitude: 41.3812, longitude: 2.1734, accuracyMeters: 250 },
+        status: 'open',
+        syncState: 'pending',
+        provisional: true,
+        provisionalReason: 'offline_pending_sync',
+      }),
+    ]);
+  });
+
 });

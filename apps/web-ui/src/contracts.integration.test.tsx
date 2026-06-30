@@ -6,6 +6,9 @@ import {
   DispatchTaskResponseSchema,
   HealthResponseSchema,
   ResourceReportListResponseSchema,
+  SosAlertCreateResponseSchema,
+  SosAlertStatusResponseSchema,
+  SosConnectedCreateRequestSchema,
   WorkCenterConnectedCreateRequestSchema,
   WorkCenterCreateResponseSchema,
   WorkCenterDetailResponseSchema,
@@ -13,11 +16,14 @@ import {
 } from '@zona-cero/contracts';
 import {
   webWorkCenterCreateRequestFixture,
+  sosAlertCreateResponseHappyFixture,
+  sosAlertStatusHappyFixture,
+  telegramSosCreateRequestFixture,
   workCenterCreateResponseHappyFixture,
   workCenterDetailHappyFixture,
   workCenterListHappyFixture,
 } from '../../../packages/testing/src';
-import { createWorkCenter, fetchApiHealth, fetchDispatchTasks, fetchResourceReports, fetchWorkCenterDetail, fetchWorkCenters, updateDispatchTask } from './api';
+import { createSosAlert, createWorkCenter, fetchApiHealth, fetchDispatchTasks, fetchResourceReports, fetchSosStatus, fetchWorkCenterDetail, fetchWorkCenters, updateDispatchTask } from './api';
 
 
 const resourceReportListFixture = {
@@ -128,6 +134,25 @@ describe('web ui contract integration', () => {
     expect(fetcher).toHaveBeenCalledWith(
       'http://127.0.0.1:8787/incidents/incident-zc-demo/work-centers',
       expect.objectContaining({ method: 'POST', body: JSON.stringify(webWorkCenterCreateRequestFixture) }),
+    );
+  });
+
+  it('fetches and creates SOS alerts through shared schemas', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(sosAlertStatusHappyFixture))
+      .mockResolvedValueOnce(jsonResponse(sosAlertCreateResponseHappyFixture));
+
+    await expect(fetchSosStatus('incident-zc-demo', fetcher)).resolves.toEqual(SosAlertStatusResponseSchema.parse(sosAlertStatusHappyFixture));
+    await expect(createSosAlert('incident-zc-demo', telegramSosCreateRequestFixture, fetcher)).resolves.toEqual(
+      SosAlertCreateResponseSchema.parse(sosAlertCreateResponseHappyFixture),
+    );
+
+    expect(fetcher).toHaveBeenNthCalledWith(1, 'http://127.0.0.1:8787/incidents/incident-zc-demo/sos');
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:8787/incidents/incident-zc-demo/sos',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify(SosConnectedCreateRequestSchema.parse(telegramSosCreateRequestFixture)) }),
     );
   });
 });

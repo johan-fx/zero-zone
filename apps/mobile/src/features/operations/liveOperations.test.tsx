@@ -8,9 +8,10 @@ import { Theme, TamaguiProvider } from 'tamagui';
 import { createInMemoryLocalOperationDatabase } from '@/infrastructure/local-db/local-db';
 import { appendSignedOperationAndMaterialize } from '@/infrastructure/oplog/outbox-service';
 import { FakeOperationSigner } from '@/infrastructure/security';
+import type { MeshtasticSosAdapter } from '@/infrastructure/transport';
 import { OperationalThemeProvider } from '@/shared/theme';
 import { tamaguiConfig } from '../../../tamagui.config';
-import { LiveOperationalEntryScreen, createOfflineResourceReport, createOfflineWorkCenter } from './liveOperations';
+import { LiveOperationalEntryScreen, cancelOfflineSosSignal, createOfflineResourceReport, createOfflineSosSignal, createOfflineWorkCenter } from './liveOperations';
 
 async function renderLiveOperations(input: {
   database?: ReturnType<typeof createInMemoryLocalOperationDatabase>;
@@ -18,6 +19,7 @@ async function renderLiveOperations(input: {
   initialIncidentId?: string;
   networkAvailable?: boolean;
   signingKey?: string;
+  sosTransport?: MeshtasticSosAdapter;
 } = {}) {
   const database = input.database ?? createInMemoryLocalOperationDatabase();
   const signer = new FakeOperationSigner(input.signingKey ?? 'slice-b-live-tests');
@@ -26,7 +28,7 @@ async function renderLiveOperations(input: {
     <OperationalThemeProvider>
       <TamaguiProvider config={tamaguiConfig} defaultTheme="light">
         <Theme name="light">
-          <LiveOperationalEntryScreen database={database} devScenario={input.devScenario} initialIncidentId={input.initialIncidentId} networkAvailable={input.networkAvailable} signer={signer} />
+          <LiveOperationalEntryScreen database={database} devScenario={input.devScenario} initialIncidentId={input.initialIncidentId} networkAvailable={input.networkAvailable} signer={signer} sosTransport={input.sosTransport} />
         </Theme>
       </TamaguiProvider>
     </OperationalThemeProvider>,
@@ -155,7 +157,6 @@ describe('live operational flow wiring', () => {
     const centers = await database.views.workCenters.findByIncident('incident-local');
     expect(new Set(centers.map((center) => center.centerId)).size).toBe(2);
   });
-
 
   it('accepts the shared canonical work center payload fixture for offline signing', async () => {
     const database = createInMemoryLocalOperationDatabase();
@@ -406,6 +407,109 @@ describe('live operational flow wiring', () => {
     await pressAndFlush(screen.getByTestId('report_surplus_button'));
     await waitFor(() => expect(screen.getByText('Blankets · 12 units · medium')).toBeTruthy());
     expect(screen.getAllByText('Local pending · verify before acting')).toHaveLength(2);
+  });
+
+  it('creates a native local-first SOS and shows honest pending acknowledgement copy', async () => {
+    const { screen, database } = await renderLiveOperations();
+
+    await pressAndFlush(screen.getByText('Create local incident'));
+    await waitFor(() => expect(screen.getByText('Native SOS')).toBeTruthy());
+
+    await pressAndFlush(screen.getByTestId('send_local_sos_button'));
+
+    await waitFor(() => expect(screen.getByText('SOS open · critical')).toBeTruthy());
+
+    expect(screen.getByText('Saved on this device; will sync when transport is available; no acknowledgement yet.')).toBeTruthy();
+    expect(screen.getByText('Meshtastic transport unavailable; saved on this device only.')).toBeTruthy();
+    expect(screen.getByText('Approximate/last known location: unavailable on this device')).toBeTruthy();
+    expect(screen.getAllByText(/no acknowledgement yet/i).length).toBeGreaterThan(0);
+
+    const operations = await database.syncOps.findByIncident('incident-local');
+    expect(operations.map((operation) => operation.opType)).toEqual(['incident.create', 'sos.create']);
+    expect(operations[1]).toEqual(expect.objectContaining({ opType: 'sos.create', entityType: 'sos', syncState: 'pending', signature: expect.stringContaining('fake-signature') }));
+    expect(await database.views.sosSignals.findByIncident('incident-local')).toEqual([
+      expect.objectContaining({ status: 'open', syncState: 'pending', provisional: true, provisionalReason: 'offline_pending_sync' }),
+    ]);
+  });
+
+  it('keeps a locally saved SOS visible when Meshtastic transport throws', async () => {
+    const sendSos = jest.fn<ReturnType<MeshtasticSosAdapter['sendSos']>, Parameters<MeshtasticSosAdapter['sendSos']>>().mockRejectedValue(new Error('radio write failed'));
+    const { screen, database } = await renderLiveOperations({ sosTransport: { sendSos } });
+
+    await pressAndFlush(screen.getByText('Create local incident'));
+    await waitFor(() => expect(screen.getByText('Native SOS')).toBeTruthy());
+
+    await pressAndFlush(screen.getByTestId('send_local_sos_button'));
+
+    await waitFor(() => expect(screen.getByText('SOS open · critical')).toBeTruthy());
+
+    expect(screen.getByText('SOS saved locally; transport failed and no acknowledgement was received.')).toBeTruthy();
+    expect(screen.queryByText('radio write failed')).toBeNull();
+    expect(screen.queryByText('Unable to save SOS on this device')).toBeNull();
+    expect(sendSos).toHaveBeenCalledTimes(1);
+
+    const operations = await database.syncOps.findByIncident('incident-local');
+    expect(operations.map((operation) => operation.opType)).toEqual(['incident.create', 'sos.create']);
+    expect(await database.views.sosSignals.findByIncident('incident-local')).toEqual([
+      expect.objectContaining({ status: 'open', syncState: 'pending', provisional: true }),
+    ]);
+  });
+
+  it('includes approximate last-known center location and can cancel a local SOS', async () => {
+    const { screen, database } = await renderLiveOperations();
+
+    await pressAndFlush(screen.getByText('Create local incident'));
+    await waitFor(() => expect(screen.getByText('Incident: Local flood response')).toBeTruthy());
+    await pressAndFlush(screen.getByText('Create pending center'));
+    await waitFor(() => expect(screen.getByText('Send local SOS')).toBeTruthy());
+
+    await pressAndFlush(screen.getByTestId('send_local_sos_button'));
+    await waitFor(() => expect(screen.getByText('Approximate/last known location: 41.38, 2.17, approx. 250m')).toBeTruthy());
+
+    await pressAndFlush(screen.getByTestId('cancel_local_sos_button'));
+    await waitFor(() => expect(screen.getByText('SOS cancelled · critical')).toBeTruthy());
+
+    const operations = await database.syncOps.findByIncident('incident-local');
+    expect(operations.map((operation) => operation.opType)).toEqual(['incident.create', 'work_center.create', 'sos.create', 'sos.cancel']);
+    expect(await database.views.sosSignals.findByIncident('incident-local')).toEqual([
+      expect.objectContaining({ status: 'cancelled', syncState: 'pending', location: { latitude: 41.38, longitude: 2.17, accuracyMeters: 250 } }),
+    ]);
+  });
+
+  it('accepts canonical SOS create and cancel payloads for offline signing', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    await seedPreparedIncident(database);
+
+    await createOfflineSosSignal({
+      database,
+      signer: new FakeOperationSigner('canonical-sos-create-tests'),
+      incidentId: 'incident-prepared',
+      cellId: 'cell-a7',
+      sosId: 'sos-canonical-1',
+      payload: {
+        severity: 'trapped',
+        message: 'Blocked exit, need extraction',
+        location: { latitude: 41.38, longitude: 2.17, accuracyMeters: 300 },
+      },
+    });
+    await cancelOfflineSosSignal({
+      database,
+      signer: new FakeOperationSigner('canonical-sos-cancel-tests'),
+      incidentId: 'incident-prepared',
+      cellId: 'cell-a7',
+      sosId: 'sos-canonical-1',
+      payload: { reason: 'Moved to safe point' },
+    });
+
+    const operations = await database.syncOps.findByIncident('incident-prepared');
+    const sosOperations = operations.filter((operation) => operation.opType.startsWith('sos.'));
+    expect(sosOperations).toEqual([
+      expect.objectContaining({ opType: 'sos.create', entityId: 'sos-canonical-1', payload: expect.objectContaining({ severity: 'trapped', message: 'Blocked exit, need extraction' }) }),
+      expect.objectContaining({ opType: 'sos.cancel', entityId: 'sos-canonical-1', payload: expect.objectContaining({ reason: 'Moved to safe point' }) }),
+    ]);
+    expect(await database.views.sosSignals.findByIncident('incident-prepared')).toEqual([
+      expect.objectContaining({ sosId: 'sos-canonical-1', status: 'cancelled', message: 'Blocked exit, need extraction', syncState: 'pending' }),
+    ]);
   });
 
   it('accepts canonical resource report payloads for offline signing', async () => {

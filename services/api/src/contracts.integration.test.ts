@@ -6,12 +6,14 @@ import {
   IncidentConfigResponseSchema,
   IncidentJoinResponseSchema,
   IncidentListResponseSchema,
+  SosAlertCreateResponseSchema,
+  SosAlertStatusResponseSchema,
   SyncPushResponseSchema,
   WorkCenterCreateResponseSchema,
   WorkCenterDetailResponseSchema,
   WorkCenterListResponseSchema,
 } from '@zona-cero/contracts';
-import { mobileWorkCenterCreateSyncPushFixture, telegramIncidentJoinRequestFixture, telegramWorkCenterCreateRequestFixture } from '@zona-cero/testing';
+import { mobileSosCreateSyncPushFixture, mobileWorkCenterCreateSyncPushFixture, telegramIncidentJoinRequestFixture, telegramSosCreateRequestFixture, telegramWorkCenterCreateRequestFixture } from '@zona-cero/testing';
 import { app } from './index';
 import { resetApiTestDatabase } from './test-support';
 
@@ -90,5 +92,38 @@ describe('api contract integration', () => {
     );
 
     expect(response.results[0]).toMatchObject({ opId: 'op-work-center-create-1', status: 'accepted' });
+  });
+
+  it('returns SOS payloads accepted by shared contracts', async () => {
+    await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(telegramIncidentJoinRequestFixture),
+    });
+
+    const created = SosAlertCreateResponseSchema.parse(
+      await (
+        await request('/incidents/incident-zc-demo/sos', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(telegramSosCreateRequestFixture),
+        })
+      ).json(),
+    );
+    expect(created.sosAlert.status).toBe('open');
+
+    const sync = SyncPushResponseSchema.parse(
+      await (
+        await request('/sync/push', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(mobileSosCreateSyncPushFixture),
+        })
+      ).json(),
+    );
+    expect(sync.results[0]).toMatchObject({ opId: 'op-sos-create-1', status: 'accepted' });
+
+    const list = SosAlertStatusResponseSchema.parse(await (await request('/incidents/incident-zc-demo/sos')).json());
+    expect(list.fanout.total).toBeGreaterThanOrEqual(3);
   });
 });

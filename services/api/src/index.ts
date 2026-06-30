@@ -39,6 +39,19 @@ import {
   type ResourceReportDetail,
   type ResourceReportPayload,
   type ResourceReportSummary,
+  SosAlertCreateResponseSchema,
+  SosAlertStatusResponseSchema,
+  SosCancelPayloadSchema,
+  SosConnectedCreateRequestSchema,
+  SosCreatePayloadSchema,
+  type SosAlert,
+  type SosAlertCreateResponse,
+  type SosCancelPayload,
+  type SosConnectedCreateRequest,
+  type SosCreatePayload,
+  type SosFanoutStatus,
+  type SosFanoutJobStatus,
+  type SosSeverity,
   type SyncPushResponse,
   TelegramWebhookResultSchema,
   WorkCenterConnectedCreateRequestSchema,
@@ -59,15 +72,18 @@ import {
   handleTelegramDispatchTaskFlow,
   handleTelegramIncidentJoinFlow,
   handleTelegramResourceReportFlow,
+  handleTelegramSosFlow,
   handleTelegramWorkCenterReportFlow,
   isTerminalTelegramDispatchTaskState,
   isTerminalTelegramIncidentJoinState,
   isTerminalTelegramResourceReportState,
+  isTerminalTelegramSosState,
   isTerminalTelegramWorkCenterReportState,
   resolveTelegramCommand,
   safeParseTelegramDispatchTaskState,
   safeParseTelegramIncidentJoinState,
   safeParseTelegramResourceReportState,
+  safeParseTelegramSosState,
   safeParseTelegramWorkCenterReportState,
   type TelegramDispatchTaskPorts,
   type TelegramDispatchTaskState,
@@ -75,6 +91,8 @@ import {
   type TelegramIncidentJoinState,
   type TelegramResourceReportPorts,
   type TelegramResourceReportState,
+  type TelegramSosPorts,
+  type TelegramSosState,
   type TelegramUpdateLike,
   type TelegramWorkCenterReportPorts,
   type TelegramWorkCenterReportState,
@@ -366,6 +384,44 @@ app.patch('/incidents/:incidentId/dispatch-tasks/:dispatchTaskId', async (c) => 
   return c.json(DispatchTaskResponseSchema.parse(response));
 });
 
+app.post('/incidents/:incidentId/sos', async (c) => {
+  const startedAt = Date.now();
+  const incident = await findIncident(c.env.DB, c.req.param('incidentId'));
+  if (!incident) {
+    logOperationEvent({ channel: null, opType: 'sos.create', opId: null, entityId: null, result: 'rejected', errorCode: 'not_found', latencyMs: Date.now() - startedAt });
+    return c.json({ error: 'not_found' }, 404);
+  }
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = SosConnectedCreateRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    logOperationEvent({ channel: null, opType: 'sos.create', opId: null, entityId: null, result: 'rejected', errorCode: 'invalid_payload', latencyMs: Date.now() - startedAt });
+    return c.json({ error: 'invalid_payload', issues: parsed.error.issues }, 400);
+  }
+
+  const membership = await findIncidentMembershipForChannel(c.env.DB, incident.incidentId, parsed.data.channel, parsed.data.externalId);
+  if (!membership) {
+    logOperationEvent({ channel: parsed.data.channel, opType: 'sos.create', opId: null, entityId: null, result: 'rejected', errorCode: 'permission_denied', latencyMs: Date.now() - startedAt });
+    return c.json({ error: 'permission_denied' }, 403);
+  }
+
+  const response = await createConnectedSosAlert(c.env.DB, incident, parsed.data, membership);
+  logOperationEvent({ channel: parsed.data.channel, opType: 'sos.create', opId: null, entityId: response.sosAlert.sosAlertId, result: 'accepted', errorCode: null, latencyMs: Date.now() - startedAt });
+  return c.json(SosAlertCreateResponseSchema.parse(response));
+});
+
+app.get('/incidents/:incidentId/sos', async (c) => {
+  const incident = await findIncident(c.env.DB, c.req.param('incidentId'));
+  if (!incident) {
+    return c.json({ error: 'not_found' }, 404);
+  }
+
+  return c.json(SosAlertStatusResponseSchema.parse({
+    sosAlerts: await listSosAlerts(c.env.DB, incident.incidentId),
+    fanout: await getSosFanoutStatus(c.env.DB, incident.incidentId),
+  }));
+});
+
 app.post('/sync/push', async (c) => {
   const startedAt = Date.now();
   const body = await c.req.json().catch(() => null);
@@ -506,6 +562,25 @@ type ExistingDispatchTaskCreateRow = DispatchTaskRow & {
   sourceOperationId: string | null;
 };
 
+type SosAlertRow = {
+  sosAlertId: string;
+  incidentId: string;
+  cellId: string;
+  severity: SosSeverity;
+  message: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  accuracyMeters: number | null;
+  status: SosAlert['status'];
+  sourceChannel: Channel | null;
+  sourceOperationId: string | null;
+  actorKeyId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  cancelledAt: string | null;
+  cancelReason: string | null;
+};
+
 function parseSyncPushBody(body: unknown): SyncPushBodyParseResult {
   if (!body || typeof body !== 'object' || !Array.isArray((body as { operations?: unknown }).operations)) {
     return { success: false, error: { issues: [{ message: 'operations must be an array' }] } };
@@ -551,6 +626,10 @@ async function handleSyncPushOperation(db: D1Database, rawOperation: unknown, st
 
   if (parsed.data.opType === 'dispatch_event.create' || parsed.data.opType === 'dispatch_event.update') {
     return handleDispatchEventSyncOperation(db, parsed.data, startedAt);
+  }
+
+  if (parsed.data.opType === 'sos.create' || parsed.data.opType === 'sos.cancel') {
+    return handleSosSyncOperation(db, parsed.data, startedAt);
   }
 
   if (parsed.data.opType !== 'work_center.create') {
@@ -720,6 +799,51 @@ async function handleDispatchEventSyncOperation(db: D1Database, operation: Pendi
   } else if (updatePayload?.success) {
     const updated = await materializeDispatchTaskUpdateOperation(db, operation, updatePayload.data, 'mobile');
     if (!updated) {
+      await recordSyncOperation(db, operation, payloadHash, 'rejected');
+      return rejectOperation(operation, startedAt, 'not_found');
+    }
+  }
+
+  await recordSyncOperation(db, operation, payloadHash, 'accepted');
+  logOperationEvent({ channel: 'mobile', opType: operation.opType, opId: operation.opId, entityId: operation.entityId, result: 'accepted', errorCode: null, latencyMs: Date.now() - startedAt });
+  return { opId: operation.opId, status: 'accepted' };
+}
+
+async function handleSosSyncOperation(db: D1Database, operation: PendingSignedOperation, startedAt: number): Promise<SyncPushOperationResult> {
+  const createPayload = operation.opType === 'sos.create' ? SosCreatePayloadSchema.safeParse(operation.payload) : null;
+  const cancelPayload = operation.opType === 'sos.cancel' ? SosCancelPayloadSchema.safeParse(operation.payload) : null;
+  if ((operation.opType === 'sos.create' && !createPayload?.success) || (operation.opType === 'sos.cancel' && !cancelPayload?.success)) {
+    return rejectOperation(operation, startedAt, 'invalid_payload');
+  }
+
+  const incident = await findIncident(db, operation.incidentId);
+  if (!incident) {
+    return rejectOperation(operation, startedAt, 'not_found');
+  }
+
+  const payloadHash = await hashJson({ operation });
+  const existing = await resolveExistingSyncOperation(db, operation, payloadHash, startedAt);
+  if (existing) {
+    return existing;
+  }
+
+  if (createPayload?.success) {
+    const existingAlert = await getSosAlertById(db, operation.incidentId, operation.entityId);
+    if (existingAlert) {
+      if (existingAlert.sourceOperationId !== operation.opId) {
+        await recordSyncOperation(db, operation, payloadHash, 'rejected');
+        return rejectOperation(operation, startedAt, 'operation_conflict');
+      }
+
+      await recordSyncOperation(db, operation, payloadHash, 'accepted');
+      logOperationEvent({ channel: 'mobile', opType: operation.opType, opId: operation.opId, entityId: operation.entityId, result: 'accepted', errorCode: null, latencyMs: Date.now() - startedAt });
+      return { opId: operation.opId, status: 'accepted' };
+    }
+
+    await insertSosAlert(db, operation.entityId, operation.incidentId, operation.cellId, createPayload.data, 'mobile', operation.opId, operation.actorKeyId, createPayload.data.reportedAt ?? operation.createdAtDevice);
+  } else if (cancelPayload?.success) {
+    const cancelled = await cancelSosAlert(db, operation.incidentId, operation.entityId, cancelPayload.data, 'mobile', operation.opId, operation.actorKeyId, cancelPayload.data.cancelledAt ?? operation.createdAtDevice);
+    if (!cancelled) {
       await recordSyncOperation(db, operation, payloadHash, 'rejected');
       return rejectOperation(operation, startedAt, 'not_found');
     }
@@ -1372,6 +1496,207 @@ function rowToDispatchTask(row: DispatchTaskRow): DispatchTask {
   });
 }
 
+async function createConnectedSosAlert(
+  db: D1Database,
+  incident: IncidentSummary,
+  request: SosConnectedCreateRequest,
+  membership: IncidentMembershipLookup,
+): Promise<SosAlertCreateResponse> {
+  const nowIso = new Date().toISOString();
+  const timestamp = request.payload.reportedAt ?? nowIso;
+  const sosAlertId = `sos_${slug(incident.incidentId)}_${slug(request.channel)}_${slug(request.externalId)}_${slug(timestamp)}`;
+  const auditEventId = `audit_sos_created_${slug(incident.incidentId)}_${sosAlertId}`;
+  const inserted = await insertSosAlert(db, sosAlertId, incident.incidentId, `connected-${request.channel}`, request.payload, request.channel, null, null, timestamp);
+
+  await db.prepare(
+    `INSERT OR IGNORE INTO audit_events (audit_event_id, incident_id, channel_identity_id, incident_membership_id, event_type, payload_json)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).bind(auditEventId, incident.incidentId, membership.channelIdentityId, membership.incidentMembershipId, 'sos.created', JSON.stringify({ sosAlertId })).run();
+
+  const sosAlert = await getSosAlertById(db, incident.incidentId, sosAlertId);
+  if (!sosAlert) {
+    throw new Error(`SOS alert was not persisted: ${sosAlertId}`);
+  }
+
+  return SosAlertCreateResponseSchema.parse({
+    sosAlert,
+    fanout: await getSosFanoutStatusForAlert(db, sosAlertId),
+    audit: { auditEventId },
+    idempotent: !inserted,
+  });
+}
+
+async function insertSosAlert(
+  db: D1Database,
+  sosAlertId: string,
+  incidentId: string,
+  cellId: string,
+  payload: SosCreatePayload,
+  sourceChannel: Channel,
+  sourceOperationId: string | null,
+  actorKeyId: string | null,
+  timestamp: string,
+): Promise<boolean> {
+  const insert = await db.prepare(
+    `INSERT OR IGNORE INTO sos_alerts (
+      sos_alert_id, incident_id, cell_id, severity, message, latitude, longitude, accuracy_meters,
+      status, source_channel, source_operation_id, actor_key_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    sosAlertId,
+    incidentId,
+    cellId,
+    payload.severity,
+    payload.message ?? null,
+    payload.location?.latitude ?? null,
+    payload.location?.longitude ?? null,
+    payload.location?.accuracyMeters ?? null,
+    'open',
+    sourceChannel,
+    sourceOperationId,
+    actorKeyId,
+    timestamp,
+    timestamp,
+  ).run();
+
+  await insertSosEvent(db, `sos_evt_${slug(sourceOperationId ?? sosAlertId)}_created`, sosAlertId, incidentId, 'sos.created', sourceChannel, sourceOperationId, actorKeyId, timestamp, payload);
+  await enqueueCriticalFanoutJobs(db, sosAlertId, incidentId, 'sos.created', timestamp, payload);
+  return insert.meta.changes > 0;
+}
+
+async function cancelSosAlert(
+  db: D1Database,
+  incidentId: string,
+  sosAlertId: string,
+  payload: SosCancelPayload,
+  sourceChannel: Channel,
+  sourceOperationId: string | null,
+  actorKeyId: string | null,
+  timestamp: string,
+): Promise<boolean> {
+  const existing = await getSosAlertById(db, incidentId, sosAlertId);
+  if (!existing) {
+    return false;
+  }
+
+  if (existing.status !== 'cancelled') {
+    await db.prepare('UPDATE sos_alerts SET status = ?, updated_at = ?, cancelled_at = ?, cancel_reason = ? WHERE incident_id = ? AND sos_alert_id = ?')
+      .bind('cancelled', timestamp, timestamp, payload.reason ?? null, incidentId, sosAlertId)
+      .run();
+    await db.prepare("UPDATE critical_fanout_jobs SET status = ?, updated_at = ? WHERE sos_alert_id = ? AND event_type = 'sos.created' AND status IN ('queued', 'pending')")
+      .bind('cancelled', timestamp, sosAlertId)
+      .run();
+  }
+
+  await insertSosEvent(db, `sos_evt_${slug(sourceOperationId ?? `${sosAlertId}_cancelled`)}_cancelled`, sosAlertId, incidentId, 'sos.cancelled', sourceChannel, sourceOperationId, actorKeyId, timestamp, payload);
+  await enqueueCriticalFanoutJobs(db, sosAlertId, incidentId, 'sos.cancelled', timestamp, payload);
+  return true;
+}
+
+async function insertSosEvent(
+  db: D1Database,
+  sosEventId: string,
+  sosAlertId: string,
+  incidentId: string,
+  eventType: 'sos.created' | 'sos.cancelled',
+  sourceChannel: Channel,
+  sourceOperationId: string | null,
+  actorKeyId: string | null,
+  timestamp: string,
+  payload: SosCreatePayload | SosCancelPayload,
+): Promise<void> {
+  await db.prepare(
+    `INSERT OR IGNORE INTO sos_events (sos_event_id, sos_alert_id, incident_id, event_type, source_channel, source_operation_id, actor_key_id, created_at, payload_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(sosEventId, sosAlertId, incidentId, eventType, sourceChannel, sourceOperationId, actorKeyId, timestamp, JSON.stringify(payload)).run();
+}
+
+async function enqueueCriticalFanoutJobs(
+  db: D1Database,
+  sosAlertId: string,
+  incidentId: string,
+  eventType: 'sos.created' | 'sos.cancelled',
+  timestamp: string,
+  payload: SosCreatePayload | SosCancelPayload,
+): Promise<void> {
+  for (const targetChannel of channels) {
+    await db.prepare(
+      `INSERT OR IGNORE INTO critical_fanout_jobs (fanout_job_id, sos_alert_id, incident_id, event_type, target_channel, status, created_at, updated_at, payload_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      `fanout_${slug(sosAlertId)}_${slug(eventType)}_${slug(targetChannel)}`,
+      sosAlertId,
+      incidentId,
+      eventType,
+      targetChannel,
+      'queued',
+      timestamp,
+      timestamp,
+      JSON.stringify(payload),
+    ).run();
+  }
+}
+
+async function listSosAlerts(db: D1Database, incidentId: string): Promise<SosAlert[]> {
+  const { results } = await db.prepare(sosAlertSelectSql('WHERE incident_id = ? ORDER BY updated_at DESC')).bind(incidentId).all<SosAlertRow>();
+  return results.map(rowToSosAlert);
+}
+
+async function getSosAlertById(db: D1Database, incidentId: string, sosAlertId: string): Promise<SosAlert | null> {
+  const row = await db.prepare(sosAlertSelectSql('WHERE incident_id = ? AND sos_alert_id = ?')).bind(incidentId, sosAlertId).first<SosAlertRow>();
+  return row ? rowToSosAlert(row) : null;
+}
+
+function sosAlertSelectSql(whereClause: string): string {
+  return `SELECT sos_alert_id AS sosAlertId, incident_id AS incidentId, cell_id AS cellId, severity, message,
+    latitude, longitude, accuracy_meters AS accuracyMeters, status, source_channel AS sourceChannel,
+    source_operation_id AS sourceOperationId, actor_key_id AS actorKeyId, created_at AS createdAt,
+    updated_at AS updatedAt, cancelled_at AS cancelledAt, cancel_reason AS cancelReason
+    FROM sos_alerts ${whereClause}`;
+}
+
+function rowToSosAlert(row: SosAlertRow): SosAlert {
+  return SosAlertStatusResponseSchema.shape.sosAlerts.element.parse({
+    sosAlertId: row.sosAlertId,
+    incidentId: row.incidentId,
+    cellId: row.cellId,
+    severity: row.severity,
+    ...(row.message ? { message: row.message } : {}),
+    ...(row.latitude !== null && row.longitude !== null ? { location: { latitude: row.latitude, longitude: row.longitude, ...(row.accuracyMeters !== null ? { accuracyMeters: row.accuracyMeters } : {}) } } : {}),
+    status: row.status,
+    ...(row.sourceChannel ? { sourceChannel: row.sourceChannel } : {}),
+    ...(row.sourceOperationId ? { sourceOperationId: row.sourceOperationId } : {}),
+    ...(row.actorKeyId ? { actorKeyId: row.actorKeyId } : {}),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    ...(row.cancelledAt ? { cancelledAt: row.cancelledAt } : {}),
+    ...(row.cancelReason ? { cancelReason: row.cancelReason } : {}),
+  });
+}
+
+async function getSosFanoutStatus(db: D1Database, incidentId: string): Promise<SosFanoutStatus> {
+  const { results } = await db.prepare('SELECT status, COUNT(*) AS count FROM critical_fanout_jobs WHERE incident_id = ? GROUP BY status')
+    .bind(incidentId)
+    .all<{ status: SosFanoutJobStatus; count: number }>();
+  return summarizeFanout(results);
+}
+
+async function getSosFanoutStatusForAlert(db: D1Database, sosAlertId: string): Promise<SosFanoutStatus> {
+  const { results } = await db.prepare('SELECT status, COUNT(*) AS count FROM critical_fanout_jobs WHERE sos_alert_id = ? GROUP BY status')
+    .bind(sosAlertId)
+    .all<{ status: SosFanoutJobStatus; count: number }>();
+  return summarizeFanout(results);
+}
+
+function summarizeFanout(rows: { status: SosFanoutJobStatus; count: number }[]): SosFanoutStatus {
+  const summary: SosFanoutStatus = { total: 0, queued: 0, pending: 0, failed: 0, cancelled: 0 };
+  for (const row of rows) {
+    summary[row.status] = row.count;
+    summary.total += row.count;
+  }
+  return summary;
+}
+
 function parseStringArray(value: string): string[] {
   try {
     const parsed: unknown = JSON.parse(value);
@@ -1444,25 +1769,42 @@ async function handleTelegramConversation(db: D1Database, update: TelegramUpdate
   const workCenterStateKey = getTelegramWorkCenterConversationStateKey(update);
   const resourceStateKey = getTelegramResourceConversationStateKey(update);
   const dispatchStateKey = getTelegramDispatchConversationStateKey(update);
+  const sosStateKey = getTelegramSosConversationStateKey(update);
 
   if (command === '/start') {
-    await deleteTelegramConversationStates(db, [workCenterStateKey, resourceStateKey, dispatchStateKey]);
+    await deleteTelegramConversationStates(db, [workCenterStateKey, resourceStateKey, dispatchStateKey, sosStateKey]);
     return handleTelegramIncidentJoinConversation(db, update, joinStateKey);
   }
 
   if (command === '/workcenter') {
-    await deleteTelegramConversationStates(db, [resourceStateKey, dispatchStateKey]);
+    await deleteTelegramConversationStates(db, [resourceStateKey, dispatchStateKey, sosStateKey]);
     return handleTelegramWorkCenterConversation(db, update, workCenterStateKey);
   }
 
   if (command === '/resource') {
-    await deleteTelegramConversationStates(db, [workCenterStateKey, dispatchStateKey]);
+    await deleteTelegramConversationStates(db, [workCenterStateKey, dispatchStateKey, sosStateKey]);
     return handleTelegramResourceConversation(db, update, resourceStateKey);
   }
 
   if (command === '/dispatch') {
-    await deleteTelegramConversationStates(db, [workCenterStateKey, resourceStateKey]);
+    await deleteTelegramConversationStates(db, [workCenterStateKey, resourceStateKey, sosStateKey]);
     return handleTelegramDispatchConversation(db, update, dispatchStateKey);
+  }
+
+  if (command === '/sos') {
+    await deleteTelegramConversationStates(db, [workCenterStateKey, resourceStateKey, dispatchStateKey]);
+    return handleTelegramSosConversation(db, update, sosStateKey);
+  }
+
+  const routedSos = await routeExistingTelegramFlow(
+    db,
+    sosStateKey,
+    safeParseTelegramSosState,
+    { step: 'idle' } satisfies TelegramSosState,
+    (state) => handleTelegramSosConversation(db, update, sosStateKey, state),
+  );
+  if (routedSos) {
+    return routedSos;
   }
 
   const routedResource = await routeExistingTelegramFlow(
@@ -1588,6 +1930,29 @@ async function handleTelegramDispatchConversation(
   return result.responseText;
 }
 
+async function handleTelegramSosConversation(
+  db: D1Database,
+  update: TelegramUpdateLike,
+  stateKey: string | null,
+  loadedState?: TelegramSosState,
+): Promise<string> {
+  const currentState = loadedState ?? (stateKey
+    ? await loadTelegramConversationState(db, stateKey, safeParseTelegramSosState, { step: 'idle' } satisfies TelegramSosState)
+    : ({ step: 'idle' } satisfies TelegramSosState));
+  const ports = createTelegramSosPorts(db);
+  const result = await handleTelegramSosFlow(currentState, update, ports);
+
+  if (stateKey) {
+    if (isTerminalLikeTelegramSosResult(result.state, result.responseText)) {
+      await deleteTelegramConversationState(db, stateKey);
+    } else {
+      await persistTelegramConversationState(db, stateKey, result.state);
+    }
+  }
+
+  return result.responseText;
+}
+
 function isPermissionDeniedTelegramWorkCenterResult(state: TelegramWorkCenterReportState, responseText: string): boolean {
   return state.step === 'awaitingConfirmation' && responseText.includes('Permission denied');
 }
@@ -1598,6 +1963,10 @@ function isPermissionDeniedTelegramResourceResult(state: TelegramResourceReportS
 
 function isTerminalLikeTelegramDispatchResult(state: TelegramDispatchTaskState, responseText: string): boolean {
   return isTerminalTelegramDispatchTaskState(state) || responseText.includes('Permission denied') || responseText.includes('Dispatch task not found');
+}
+
+function isTerminalLikeTelegramSosResult(state: TelegramSosState, responseText: string): boolean {
+  return isTerminalTelegramSosState(state) || responseText.includes('Permission denied') || responseText.includes('Incident not found');
 }
 
 async function routeExistingTelegramFlow<TState extends { step: string }>(
@@ -1681,6 +2050,27 @@ function createTelegramResourceReportPorts(db: D1Database): TelegramResourceRepo
   };
 }
 
+function createTelegramSosPorts(db: D1Database): TelegramSosPorts {
+  return {
+    async listIncidents() {
+      return IncidentListResponseSchema.parse({ incidents: await listIncidents(db) });
+    },
+    async createSosAlert(incidentId, request) {
+      const incident = await findIncident(db, incidentId);
+      if (!incident) {
+        throw Object.assign(new Error('not_found'), { error: 'not_found' });
+      }
+
+      const membership = await findIncidentMembershipForChannel(db, incident.incidentId, request.channel, request.externalId);
+      if (!membership) {
+        throw Object.assign(new Error('permission_denied'), { error: 'permission_denied' });
+      }
+
+      return SosAlertCreateResponseSchema.parse(await createConnectedSosAlert(db, incident, request, membership));
+    },
+  };
+}
+
 function createTelegramDispatchTaskPorts(db: D1Database): TelegramDispatchTaskPorts {
   return {
     async listIncidents() {
@@ -1731,7 +2121,11 @@ function getTelegramDispatchConversationStateKey(update: TelegramUpdateLike): st
   return getTelegramNamespacedConversationStateKey(update, 'dispatch');
 }
 
-function getTelegramNamespacedConversationStateKey(update: TelegramUpdateLike, flow: 'workcenter' | 'resource' | 'dispatch'): string | null {
+function getTelegramSosConversationStateKey(update: TelegramUpdateLike): string | null {
+  return getTelegramNamespacedConversationStateKey(update, 'sos');
+}
+
+function getTelegramNamespacedConversationStateKey(update: TelegramUpdateLike, flow: 'workcenter' | 'resource' | 'dispatch' | 'sos'): string | null {
   const baseKey = getTelegramConversationBaseStateKey(update);
   return baseKey ? `flow:${flow}:${baseKey}` : null;
 }
@@ -1784,7 +2178,7 @@ async function loadTelegramConversationState<TState>(
 async function persistTelegramConversationState(
   db: D1Database,
   stateKey: string,
-  state: TelegramIncidentJoinState | TelegramWorkCenterReportState | TelegramResourceReportState | TelegramDispatchTaskState,
+  state: TelegramIncidentJoinState | TelegramWorkCenterReportState | TelegramResourceReportState | TelegramDispatchTaskState | TelegramSosState,
 ): Promise<void> {
   const now = new Date();
   const nowIso = now.toISOString();

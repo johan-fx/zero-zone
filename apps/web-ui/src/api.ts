@@ -4,6 +4,9 @@ import {
   DispatchTaskResponseSchema,
   HealthResponseSchema,
   ResourceReportListResponseSchema,
+  SosAlertCreateResponseSchema,
+  SosAlertStatusResponseSchema,
+  SosConnectedCreateRequestSchema,
   WorkCenterConnectedCreateRequestSchema,
   WorkCenterCreateResponseSchema,
   WorkCenterDetailResponseSchema,
@@ -13,6 +16,9 @@ import {
   type DispatchTaskResponse,
   type HealthResponse,
   type ResourceReportListResponse,
+  type SosAlertCreateResponse,
+  type SosAlertStatusResponse,
+  type SosConnectedCreateRequest,
   type WorkCenterConnectedCreateRequest,
   type WorkCenterCreateResponse,
   type WorkCenterDetailResponse,
@@ -102,6 +108,35 @@ export async function updateDispatchTask(
   return DispatchTaskResponseSchema.parse(await response.json());
 }
 
+export async function fetchSosStatus(incidentId: string, fetcher: Fetcher = fetch): Promise<SosAlertStatusResponse> {
+  const response = await fetcher(`${getApiBaseUrl()}${sosCollectionPath(incidentId)}`);
+
+  if (!response.ok) {
+    throw new Error(`SOS status failed with status ${response.status}`);
+  }
+
+  return SosAlertStatusResponseSchema.parse(await response.json());
+}
+
+export async function createSosAlert(
+  incidentId: string,
+  request: SosConnectedCreateRequest,
+  fetcher: Fetcher = fetch,
+): Promise<SosAlertCreateResponse> {
+  const payload = SosConnectedCreateRequestSchema.parse(request);
+  const response = await fetcher(`${getApiBaseUrl()}${sosCollectionPath(incidentId)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(`SOS creation failed with status ${response.status}`);
+  }
+
+  return SosAlertCreateResponseSchema.parse(await response.json());
+}
+
 export async function createWorkCenter(
   incidentId: string,
   request: WorkCenterConnectedCreateRequest,
@@ -140,4 +175,8 @@ function dispatchTaskCollectionPath(incidentId: string): string {
 
 function dispatchTaskDetailPath(incidentId: string, dispatchTaskId: string): string {
   return `${dispatchTaskCollectionPath(incidentId)}/${encodeURIComponent(dispatchTaskId)}`;
+}
+
+function sosCollectionPath(incidentId: string): string {
+  return `/incidents/${encodeURIComponent(incidentId)}/sos`;
 }

@@ -1,5 +1,5 @@
 import { DispatchEventCreatePayloadSchema, DispatchEventUpdatePayloadSchema, ResourceReportPayloadSchema, type DispatchTaskStatus, type ResourceReportKind, type ResourceReportUrgency } from '@zona-cero/contracts';
-import { WorkCenterCreatePayloadSchema } from '@zona-cero/contracts';
+import { SosCreatePayloadSchema, WorkCenterCreatePayloadSchema, type SosLocation } from '@zona-cero/contracts';
 import type { SignedOperation } from '@/infrastructure/security/operation-signer';
 
 export type IncidentView = {
@@ -79,7 +79,11 @@ export type SosSignalView = {
   cellId: string;
   severity: string;
   message: string;
+  location?: SosLocation;
   status: 'open' | 'cancelled';
+  syncState: string;
+  provisional: true;
+  provisionalReason: 'offline_pending_sync';
   updatedAt: string;
 };
 
@@ -182,9 +186,11 @@ export function materializeOperations(operations: readonly SignedOperation[]): M
           sosId: operation.entityId,
           incidentId: operation.incidentId,
           cellId: operation.cellId,
-          severity: stringValue(payload.severity, 'critical'),
-          message: stringValue(payload.message, ''),
+          ...materializeSosCreatePayload(payload),
           status: 'open',
+          syncState: operation.syncState,
+          provisional: true,
+          provisionalReason: 'offline_pending_sync',
           updatedAt: operation.createdAtDevice,
         });
         break;
@@ -195,8 +201,12 @@ export function materializeOperations(operations: readonly SignedOperation[]): M
           incidentId: operation.incidentId,
           cellId: operation.cellId,
           severity: existing?.severity ?? 'critical',
-          message: existing?.message ?? stringValue(payload.message, ''),
+          message: existing?.message ?? stringValue(payload.reason, ''),
+          ...(existing?.location ? { location: existing.location } : {}),
           status: 'cancelled',
+          syncState: operation.syncState,
+          provisional: true,
+          provisionalReason: 'offline_pending_sync',
           updatedAt: operation.createdAtDevice,
         });
         break;
@@ -279,6 +289,23 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function stringValue(value: unknown, fallback: string): string {
   return typeof value === 'string' ? value : fallback;
+}
+
+function materializeSosCreatePayload(payload: Record<string, unknown>): Pick<SosSignalView, 'severity' | 'message' | 'location'> {
+  const parsedPayload = SosCreatePayloadSchema.safeParse(payload);
+
+  if (!parsedPayload.success) {
+    return {
+      severity: stringValue(payload.severity, 'critical'),
+      message: stringValue(payload.message, ''),
+    };
+  }
+
+  return {
+    severity: parsedPayload.data.severity,
+    message: parsedPayload.data.message ?? '',
+    ...(parsedPayload.data.location ? { location: parsedPayload.data.location } : {}),
+  };
 }
 
 function materializeWorkCenterCreatePayload(payload: Record<string, unknown>): Pick<WorkCenterMaterializedView, 'name' | 'centerType' | 'description' | 'priority' | 'initialNeed' | 'surplus' | 'location'> {

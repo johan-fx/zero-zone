@@ -6,6 +6,10 @@ import type {
   IncidentJoinRequest,
   IncidentJoinResponse,
   IncidentListResponse,
+  SosAlertCreateResponse,
+  SosAlertStatusResponse,
+  SosConnectedCreateRequest,
+  SosCreatePayload,
   SyncPushRequest,
   WebLinkRequest,
   WebLinkSession,
@@ -64,6 +68,18 @@ export const validWorkCenterCreatePayloadFixture: WorkCenterCreatePayload = {
   reportedAt: '2026-06-30T10:00:00.000Z',
 };
 
+export const validSosCreatePayloadFixture: SosCreatePayload = {
+  severity: 'critical',
+  message: 'Need immediate evacuation support',
+  location: { latitude: 41.38, longitude: 2.17, accuracyMeters: 15 },
+  reportedAt: '2026-06-30T10:15:00.000Z',
+};
+
+export const invalidSosCreatePayloadFixture = {
+  severity: 'handled',
+  location: { latitude: 120, longitude: 2.17 },
+} as const;
+
 export const invalidWorkCenterCreatePayloadFixture = {
   ...validWorkCenterCreatePayloadFixture,
   name: '',
@@ -80,6 +96,34 @@ export const validWorkCenterCreateOperationFixture: PendingSignedOperation = {
     entityType: 'work_center',
     opType: 'work_center.create',
     payload: validWorkCenterCreatePayloadFixture,
+  }),
+  syncState: 'pending',
+};
+
+export const validSosCreateOperationFixture: PendingSignedOperation = {
+  ...createSignedOperationFixture({
+    opId: 'op-sos-create-1',
+    incidentId: 'incident-zc-demo',
+    cellId: 'cell-zc-demo',
+    entityId: 'sos-mobile-critical-1',
+    entityType: 'sos',
+    opType: 'sos.create',
+    payload: validSosCreatePayloadFixture,
+  }),
+  syncState: 'pending',
+};
+
+export const validSosCancelOperationFixture: PendingSignedOperation = {
+  ...createSignedOperationFixture({
+    opId: 'op-sos-cancel-1',
+    incidentId: 'incident-zc-demo',
+    cellId: 'cell-zc-demo',
+    entityId: 'sos-mobile-critical-1',
+    entityType: 'sos',
+    opType: 'sos.cancel',
+    payload: { reason: 'false alarm', cancelledAt: '2026-06-30T10:20:00.000Z' },
+    hlc: '2026-06-30T10:20:00.000Z-0001',
+    createdAtDevice: '2026-06-30T10:20:00.000Z',
   }),
   syncState: 'pending',
 };
@@ -412,6 +456,16 @@ export const mobileWorkCenterCreateSyncPushFixture: SyncPushRequest = {
   cursor: 'cursor-work-center-mobile-1',
 };
 
+export const mobileSosCreateSyncPushFixture: SyncPushRequest = {
+  operations: [validSosCreateOperationFixture],
+  cursor: 'cursor-sos-mobile-1',
+};
+
+export const mobileSosCancelSyncPushFixture: SyncPushRequest = {
+  operations: [validSosCancelOperationFixture],
+  cursor: 'cursor-sos-mobile-2',
+};
+
 export const workCenterListHappyFixture: WorkCenterListResponse = {
   workCenters: [
     {
@@ -472,5 +526,51 @@ export const workCenterApiFixtures = {
   mobile: {
     happy: { request: mobileWorkCenterCreateSyncPushFixture },
     error: incompatibleVersionSyncPushRequestFixture,
+  },
+} as const;
+
+export const telegramSosCreateRequestFixture: SosConnectedCreateRequest = {
+  channel: 'telegram',
+  externalId: 'telegram-user-1001',
+  displayName: 'Field Telegram',
+  payload: validSosCreatePayloadFixture,
+};
+
+export const sosAlertStatusHappyFixture: SosAlertStatusResponse = {
+  sosAlerts: [
+    {
+      sosAlertId: 'sos-mobile-critical-1',
+      incidentId: 'incident-zc-demo',
+      cellId: 'cell-zc-demo',
+      severity: 'critical',
+      message: 'Need immediate evacuation support',
+      location: { latitude: 41.38, longitude: 2.17, accuracyMeters: 15 },
+      status: 'open',
+      sourceChannel: 'mobile',
+      sourceOperationId: 'op-sos-create-1',
+      actorKeyId: 'actor-key-fixture',
+      createdAt: '2026-06-30T10:15:00.000Z',
+      updatedAt: '2026-06-30T10:15:00.000Z',
+    },
+  ],
+  fanout: { total: 3, queued: 3, pending: 0, failed: 0, cancelled: 0 },
+};
+
+export const sosAlertCreateResponseHappyFixture: SosAlertCreateResponse = {
+  sosAlert: sosAlertStatusHappyFixture.sosAlerts[0],
+  fanout: sosAlertStatusHappyFixture.fanout,
+  audit: { auditEventId: 'audit_sos_created_incident-zc-demo_sos-mobile-critical-1' },
+  idempotent: false,
+};
+
+export const sosApiFixtures = {
+  telegram: {
+    happy: { request: telegramSosCreateRequestFixture, response: sosAlertCreateResponseHappyFixture },
+    error: { ...telegramSosCreateRequestFixture, payload: invalidSosCreatePayloadFixture },
+  },
+  mobile: {
+    happy: { request: mobileSosCreateSyncPushFixture },
+    cancel: { request: mobileSosCancelSyncPushFixture },
+    error: { operations: [{ ...validSosCreateOperationFixture, payload: invalidSosCreatePayloadFixture }] },
   },
 } as const;

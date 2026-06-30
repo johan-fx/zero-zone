@@ -1,12 +1,13 @@
-import { ResourceReportPayloadSchema, WorkCenterCreatePayloadSchema, type ResourceReportKind, type ResourceReportPayload, type ResourceReportUrgency, type WorkCenterCreatePayload } from '@zona-cero/contracts';
+import { ResourceReportPayloadSchema, SosCancelPayloadSchema, SosCreatePayloadSchema, WorkCenterCreatePayloadSchema, type ResourceReportKind, type ResourceReportPayload, type ResourceReportUrgency, type SosCancelPayload, type SosCreatePayload, type WorkCenterCreatePayload } from '@zona-cero/contracts';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
 import { Paragraph, Text, XStack, YStack } from 'tamagui';
 
-import { createInMemoryLocalOperationDatabase, type DispatchEventLocalView, type LocalOperationDatabase, type PresenceLocalView, type ResourceReportLocalView, type WorkCenterView } from '@/infrastructure/local-db/local-db';
+import { createInMemoryLocalOperationDatabase, type DispatchEventLocalView, type LocalOperationDatabase, type PresenceLocalView, type ResourceReportLocalView, type SosSignalLocalView, type WorkCenterView } from '@/infrastructure/local-db/local-db';
 import { resolveMapPreparationCoverage, resolveMapRenderState, type MapPackMetadata } from '@/infrastructure/maps';
 import { appendSignedOperationAndMaterialize } from '@/infrastructure/oplog/outbox-service';
 import { FakeOperationSigner, type OperationSigner } from '@/infrastructure/security';
+import { createUnavailableMeshtasticSosAdapter, type MeshtasticSosAdapter } from '@/infrastructure/transport';
 import { ActionButton, OperationalCard, StatusBadge } from '@/shared/ui';
 
 const DEFAULT_ACTOR_KEY_ID = 'actor-key-local';
@@ -33,6 +34,7 @@ export type LiveOperationalEntryScreenProps = {
   signer?: OperationSigner;
   initialIncidentId?: string;
   networkAvailable?: boolean;
+  sosTransport?: MeshtasticSosAdapter;
 };
 
 type LiveOperationalState = {
@@ -42,6 +44,7 @@ type LiveOperationalState = {
   selectedPresence: PresenceLocalView | null;
   resourceReports: ResourceReportLocalView[];
   dispatchEvents: DispatchEventLocalView[];
+  sosSignals: SosSignalLocalView[];
   mapPack: MapPackMetadata | null;
   mapPacks: MapPackMetadata[];
   pendingOperations: number;
@@ -59,6 +62,7 @@ type WorkCenterPayload = WorkCenterCreatePayload;
 
 type PresenceAction = 'check_in' | 'pause' | 'check_out';
 type ResourceReportIntent = 'needed' | 'surplus';
+type SosTransportNotice = 'unavailable' | 'sent_to_transport' | 'failed' | null;
 
 let localOperationSequence = 0;
 
@@ -181,16 +185,83 @@ export async function createOfflineResourceReport(input: {
   });
 }
 
+export async function createOfflineSosSignal(input: {
+  database: LocalOperationDatabase;
+  signer: OperationSigner;
+  incidentId: string;
+  cellId: string;
+  sosId?: string;
+  payload?: Partial<SosCreatePayload>;
+}) {
+  const sosId = input.sosId ?? (await createNextSosSignalId(input.database, input.incidentId));
+  const stamp = nextOperationStamp('sos-create');
+  const payload = SosCreatePayloadSchema.parse({
+    severity: 'critical',
+    message: 'Local SOS requested from mobile device',
+    reportedAt: stamp.createdAtDevice,
+    ...input.payload,
+  });
+
+  return appendSignedOperationAndMaterialize({
+    database: input.database,
+    signer: input.signer,
+    input: {
+      actorKeyId: DEFAULT_ACTOR_KEY_ID,
+      deviceId: DEFAULT_DEVICE_ID,
+      incidentId: input.incidentId,
+      cellId: input.cellId,
+      entityId: sosId,
+      opType: 'sos.create',
+      payload,
+      hlc: stamp.hlc,
+      createdAtDevice: stamp.createdAtDevice,
+    },
+  });
+}
+
+export async function cancelOfflineSosSignal(input: {
+  database: LocalOperationDatabase;
+  signer: OperationSigner;
+  incidentId: string;
+  cellId: string;
+  sosId: string;
+  payload?: Partial<SosCancelPayload>;
+}) {
+  const stamp = nextOperationStamp('sos-cancel');
+  const payload = SosCancelPayloadSchema.parse({
+    reason: 'Cancelled locally from mobile device',
+    cancelledAt: stamp.createdAtDevice,
+    ...input.payload,
+  });
+
+  return appendSignedOperationAndMaterialize({
+    database: input.database,
+    signer: input.signer,
+    input: {
+      actorKeyId: DEFAULT_ACTOR_KEY_ID,
+      deviceId: DEFAULT_DEVICE_ID,
+      incidentId: input.incidentId,
+      cellId: input.cellId,
+      entityId: input.sosId,
+      opType: 'sos.cancel',
+      payload,
+      hlc: stamp.hlc,
+      createdAtDevice: stamp.createdAtDevice,
+    },
+  });
+}
+
 export async function loadLiveOperationalState(database: LocalOperationDatabase, incidentId: string): Promise<LiveOperationalState> {
   const incident = await database.views.incidents.findById(incidentId);
   const cellId = incident?.cellId ?? DEFAULT_CELL_ID;
-  const [centers, mapPacks, operations, presenceSessions, resourceReports, dispatchEvents] = await Promise.all([
+  const [centers, mapPacks, operations, presenceSessions, resourceReports, dispatchEvents, sosSignals] = await Promise.all([
     database.views.workCenters.findByIncident(incidentId),
     database.views.mapPacks.findByIncident(incidentId),
     database.syncOps.findByIncident(incidentId),
     database.views.presence.findByIncident(incidentId),
     database.views.resourceReports.findByIncident(incidentId),
     database.views.dispatchEvents.findByIncident(incidentId),
+    database.views.sosSignals.findByIncident(incidentId),
   ]);
   const pendingOperations = operations.filter((operation) => 'syncState' in operation && operation.syncState === 'pending').length;
   const selectedCenter = centers[centers.length - 1] ?? null;
@@ -203,6 +274,7 @@ export async function loadLiveOperationalState(database: LocalOperationDatabase,
     selectedPresence: selectedCenter ? presenceSessions.find((session) => session.centerId === selectedCenter.centerId) ?? null : null,
     resourceReports,
     dispatchEvents,
+    sosSignals,
     mapPack,
     mapPacks,
     pendingOperations,
@@ -215,12 +287,14 @@ export function LiveOperationalEntryScreen({
   signer = new FakeOperationSigner('live-operational-entry'),
   initialIncidentId,
   networkAvailable = false,
+  sosTransport = createUnavailableMeshtasticSosAdapter(),
 }: LiveOperationalEntryScreenProps) {
   const database = useMemo(() => providedDatabase ?? createInMemoryLocalOperationDatabase(), [providedDatabase]);
   const [activeIncidentId, setActiveIncidentId] = useState(resolveInitialIncidentId(devScenario, initialIncidentId));
   const [seededScenario, setSeededScenario] = useState<LiveOperationsDevScenario | null>(null);
   const [state, setState] = useState<LiveOperationalState | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sosTransportNotice, setSosTransportNotice] = useState<SosTransportNotice>(null);
 
   const refresh = useCallback(
     async (incidentId: string) => {
@@ -337,6 +411,63 @@ export function LiveOperationalEntryScreen({
     [database, refresh, signer, state?.incident, state?.selectedCenter],
   );
 
+  const handleCreateSos = useCallback(async () => {
+    if (!state?.incident) {
+      return;
+    }
+
+    setError(null);
+    setSosTransportNotice(null);
+    try {
+      const result = await createOfflineSosSignal({
+        database,
+        signer,
+        incidentId: state.incident.incidentId,
+        cellId: state.incident.cellId,
+        payload: createDefaultSosCreatePayload(state.selectedCenter),
+      });
+      const sosSignal = result.views.sosSignals.find((signal) => signal.sosId === result.operation.entityId);
+
+      await refresh(state.incident.incidentId);
+      if (!sosSignal) {
+        setError('SOS saved on this device; local view will refresh when available.');
+      }
+
+      try {
+        const transportResult = await sosTransport.sendSos({
+          sosId: result.operation.entityId,
+          incidentId: state.incident.incidentId,
+          cellId: state.incident.cellId,
+          payload: result.operation.payload as SosCreatePayload,
+          createdAtDevice: result.operation.createdAtDevice,
+        });
+        setSosTransportNotice(transportResult.status);
+      } catch {
+        setSosTransportNotice('failed');
+      }
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to save SOS on this device');
+    }
+  }, [database, refresh, signer, sosTransport, state?.incident, state?.selectedCenter]);
+
+  const handleCancelSos = useCallback(
+    async (sosId: string) => {
+      if (!state?.incident) {
+        return;
+      }
+
+      setError(null);
+      try {
+        await cancelOfflineSosSignal({ database, signer, incidentId: state.incident.incidentId, cellId: state.incident.cellId, sosId });
+        setSosTransportNotice(null);
+        await refresh(state.incident.incidentId);
+      } catch (caughtError) {
+        setError(caughtError instanceof Error ? caughtError.message : 'Unable to cancel SOS on this device');
+      }
+    },
+    [database, refresh, signer, state?.incident],
+  );
+
   const handleDevScenario = useCallback(
     async (scenario: LiveOperationsDevScenario) => {
       setError(null);
@@ -425,6 +556,8 @@ export function LiveOperationalEntryScreen({
 
         {mapPreparation ? <MapPreparationPanel preparation={mapPreparation} /> : null}
 
+        {state?.incident ? <SosPanel onCancelSos={handleCancelSos} onCreateSos={handleCreateSos} signals={state.sosSignals} transportNotice={sosTransportNotice} /> : null}
+
         {state?.selectedCenter ? <LiveSelectedCenterPanel center={state.selectedCenter} onPresenceAction={handlePresenceAction} onResourceReport={handleResourceReport} presence={state.selectedPresence} /> : null}
 
         {state?.selectedCenter ? <ResourceLogisticsPanel dispatchEvents={state.dispatchEvents} reports={state.resourceReports} selectedCenterId={state.selectedCenter.centerId} /> : null}
@@ -452,6 +585,68 @@ function LiveMapLibreSurface({ centers, indicator }: { centers: WorkCenterView[]
             </Text>
           </XStack>
         ))}
+      </YStack>
+    </OperationalCard>
+  );
+}
+
+function SosPanel({
+  onCancelSos,
+  onCreateSos,
+  signals,
+  transportNotice,
+}: {
+  onCancelSos: (sosId: string) => void;
+  onCreateSos: () => void;
+  signals: SosSignalLocalView[];
+  transportNotice: SosTransportNotice;
+}) {
+  const openSignal = signals.find((signal) => signal.status === 'open') ?? null;
+
+  return (
+    <OperationalCard testID="sos-panel" variant="critical">
+      <YStack gap="$3">
+        <XStack items="center" justify="space-between" gap="$3">
+          <YStack grow={1} gap="$1">
+            <Text color="$text" fontSize="$lg" fontWeight="900">
+              Native SOS
+            </Text>
+            <Text color="$textMuted" fontSize="$sm" fontWeight="700">
+              Saved on this device; will sync when transport is available; no acknowledgement yet.
+            </Text>
+          </YStack>
+          <StatusBadge tone={openSignal ? 'risk' : 'stale'} label={openSignal ? 'No acknowledgement yet' : 'No open local SOS'} />
+        </XStack>
+
+        {transportNotice === 'unavailable' ? <StatusBadge tone="stale" label="Meshtastic transport unavailable; saved on this device only." /> : null}
+        {transportNotice === 'sent_to_transport' ? <StatusBadge tone="pending" label="Sent to local transport; no acknowledgement yet." /> : null}
+        {transportNotice === 'failed' ? <StatusBadge tone="warning" label="SOS saved locally; transport failed and no acknowledgement was received." /> : null}
+
+        {signals.length === 0 ? (
+          <Text color="$textMuted" fontSize="$sm" fontWeight="700">
+            No SOS saved on this device for this incident.
+          </Text>
+        ) : (
+          signals.map((signal) => (
+            <YStack key={signal.sosId} gap="$1">
+              <Text color="$text" fontSize="$sm" fontWeight="900">
+                SOS {formatCanonicalValue(signal.status)} · {formatCanonicalValue(signal.severity)}
+              </Text>
+              <Text color="$textMuted" fontSize="$xs" fontWeight="700">
+                {signal.message || 'No local note'}
+              </Text>
+              <Text color="$textMuted" fontSize="$xs" fontWeight="700">
+                Approximate/last known location: {formatSosLocation(signal)}
+              </Text>
+              <StatusBadge tone={signal.status === 'open' ? 'pending' : 'stale'} label={`${signal.syncState === 'pending' ? 'Saved on this device' : formatCanonicalValue(signal.syncState)} · no acknowledgement yet`} />
+            </YStack>
+          ))
+        )}
+
+        <XStack flexWrap="wrap" gap="$2">
+          <ActionButton label="Send local SOS" onPress={onCreateSos} priority="critical" testID="send_local_sos_button" tone="sos" />
+          <ActionButton disabled={!openSignal} label="Cancel local SOS" onPress={() => openSignal && onCancelSos(openSignal.sosId)} testID="cancel_local_sos_button" tone="stale" />
+        </XStack>
       </YStack>
     </OperationalCard>
   );
@@ -650,6 +845,24 @@ function createDefaultResourceReportPayload(reportKind: ResourceReportIntent): R
   });
 }
 
+function createDefaultSosCreatePayload(center: WorkCenterView | null): SosCreatePayload {
+  return SosCreatePayloadSchema.parse({
+    severity: 'critical',
+    message: 'Local SOS requested from mobile device',
+    ...(center?.location ? { location: { ...center.location, accuracyMeters: 250 } } : {}),
+    reportedAt: nextOperationTimestamp(),
+  });
+}
+
+function formatSosLocation(signal: SosSignalLocalView): string {
+  if (!signal.location) {
+    return 'unavailable on this device';
+  }
+
+  const accuracy = signal.location.accuracyMeters ? `, approx. ${signal.location.accuracyMeters}m` : '';
+  return `${signal.location.latitude.toFixed(2)}, ${signal.location.longitude.toFixed(2)}${accuracy}`;
+}
+
 function formatMaybeStaleField(label: string, value: string, isStale: boolean): string {
   return `${label}: ${value}${isStale ? ' — stale, verify before acting' : ''}`;
 }
@@ -782,4 +995,10 @@ async function createNextResourceReportId(database: LocalOperationDatabase, inci
   const existingReports = await database.views.resourceReports.findByIncident(incidentId);
 
   return `resource-report-local-${existingReports.length + 1}`;
+}
+
+async function createNextSosSignalId(database: LocalOperationDatabase, incidentId: string): Promise<string> {
+  const existingSignals = await database.views.sosSignals.findByIncident(incidentId);
+
+  return `sos-local-${existingSignals.length + 1}`;
 }

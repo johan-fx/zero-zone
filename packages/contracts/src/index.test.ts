@@ -26,6 +26,12 @@ import {
   ResourceReportMatchResponseSchema,
   ResourceReportPayloadSchema,
   SignedOperationSchema,
+  SosAlertCreateResponseSchema,
+  SosAlertStatusResponseSchema,
+  SosCancelPayloadSchema,
+  SosConnectedCreateRequestSchema,
+  SosCreatePayloadSchema,
+  SosFanoutStatusSchema,
   SyncPushRequestSchema,
   SyncPushResponseSchema,
   WebLinkRequestSchema,
@@ -52,6 +58,9 @@ import {
   dispatchTaskStatuses,
   resourceReportKinds,
   resourceReportUrgencies,
+  sosAlertStatuses,
+  sosFanoutJobStatuses,
+  sosSeverities,
   workCenterStatuses,
 } from './index';
 
@@ -438,6 +447,42 @@ describe('contracts package', () => {
     expect(DispatchTaskResponseSchema.parse({ dispatchTask: task }).dispatchTask.status).toBe('pending');
     expect(DispatchTaskConnectedCreateRequestSchema.parse({ channel: 'web-ui', externalId: 'web-1', payload: createPayload }).payload.category).toBe('water');
     expect(DispatchTaskConnectedUpdateRequestSchema.parse({ channel: 'web-ui', externalId: 'web-1', status: 'accepted' }).status).toBe('accepted');
+  });
+
+  it('validates canonical SOS alert contracts without promising rescue delivery', () => {
+    expect(sosSeverities).toEqual(['critical', 'medical', 'security', 'trapped', 'other']);
+    expect(sosAlertStatuses).toEqual(['open', 'cancelled']);
+    expect(sosFanoutJobStatuses).toEqual(['queued', 'pending', 'failed', 'cancelled']);
+
+    const createPayload = SosCreatePayloadSchema.parse({
+      severity: 'critical',
+      message: 'Need immediate evacuation support',
+      location: { latitude: 41.38, longitude: 2.17, accuracyMeters: 15 },
+      reportedAt: '2026-06-30T10:00:00.000Z',
+    });
+    expect(SosCreatePayloadSchema.parse({}).severity).toBe('critical');
+    expect(SosCreatePayloadSchema.safeParse({ severity: 'handled' }).success).toBe(false);
+    expect(SosCancelPayloadSchema.parse({ reason: 'false alarm', cancelledAt: '2026-06-30T10:05:00.000Z' }).reason).toBe('false alarm');
+
+    const alert = {
+      sosAlertId: 'sos-1',
+      incidentId: 'incident-zc-demo',
+      cellId: 'cell-a',
+      severity: createPayload.severity,
+      message: createPayload.message,
+      location: createPayload.location,
+      status: 'open',
+      sourceChannel: 'mobile',
+      sourceOperationId: 'op-sos-create-1',
+      actorKeyId: 'actor-1',
+      createdAt: '2026-06-30T10:00:00.000Z',
+      updatedAt: '2026-06-30T10:00:00.000Z',
+    } as const;
+    const fanout = SosFanoutStatusSchema.parse({ total: 3, queued: 3, pending: 0, failed: 0, cancelled: 0 });
+
+    expect(SosAlertStatusResponseSchema.parse({ sosAlerts: [alert], fanout }).sosAlerts[0]?.status).toBe('open');
+    expect(SosAlertCreateResponseSchema.parse({ sosAlert: alert, fanout, idempotent: false }).fanout.queued).toBe(3);
+    expect(SosConnectedCreateRequestSchema.parse({ channel: 'telegram', externalId: 'user-1', payload: createPayload }).payload.severity).toBe('critical');
   });
 
 });

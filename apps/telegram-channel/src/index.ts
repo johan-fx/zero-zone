@@ -11,6 +11,8 @@ import {
   DispatchTaskResponseSchema,
   ResourceReportConnectedCreateRequestSchema,
   ResourceReportCreateResponseSchema,
+  SosAlertCreateResponseSchema,
+  SosConnectedCreateRequestSchema,
   WorkCenterConnectedCreateRequestSchema,
   WorkCenterCreateResponseSchema,
   type DispatchTask,
@@ -22,6 +24,8 @@ import {
   type ResourceReportCreateResponse,
   type ResourceReportKind,
   type ResourceReportUrgency,
+  type SosAlertCreateResponse,
+  type SosConnectedCreateRequest,
   type WorkCenterConnectedCreateRequest,
   type WorkCenterCreateResponse,
   type IncidentConfigResponse,
@@ -63,6 +67,11 @@ export type TelegramDispatchTaskPorts = {
   updateDispatchTask(incidentId: string, dispatchTaskId: string, request: DispatchTaskConnectedUpdateRequest): Promise<DispatchTaskResponse>;
 };
 
+export type TelegramSosPorts = {
+  listIncidents(): Promise<IncidentListResponse>;
+  createSosAlert(incidentId: string, request: SosConnectedCreateRequest): Promise<SosAlertCreateResponse>;
+};
+
 export type TelegramIncidentJoinState =
   | { step: 'idle' }
   | { step: 'awaitingIncident'; incidents: IncidentSummary[]; externalUserId: string }
@@ -91,6 +100,13 @@ export type TelegramDispatchTaskState =
   | { step: 'awaitingStatus'; incident: IncidentSummary; task: DispatchTask; externalUserId: string }
   | { step: 'awaitingConfirmation'; incident: IncidentSummary; task: DispatchTask; externalUserId: string; request: DispatchTaskConnectedUpdateRequest }
   | { step: 'updated'; response: DispatchTaskResponse }
+  | { step: 'cancelled' };
+
+export type TelegramSosState =
+  | { step: 'idle' }
+  | { step: 'awaitingIncident'; incidents: IncidentSummary[]; externalUserId: string; displayName?: string }
+  | { step: 'awaitingConfirmation'; incident: IncidentSummary; externalUserId: string; displayName?: string; request: SosConnectedCreateRequest }
+  | { step: 'submitted'; response: SosAlertCreateResponse }
   | { step: 'cancelled' };
 
 export type TelegramWorkCenterReportState =
@@ -123,6 +139,10 @@ type TelegramDispatchTaskStateParseResult =
   | { success: true; data: TelegramDispatchTaskState }
   | { success: false; error: Error };
 
+type TelegramSosStateParseResult =
+  | { success: true; data: TelegramSosState }
+  | { success: false; error: Error };
+
 export const TelegramIncidentJoinStateSchema = {
   parse: parseTelegramIncidentJoinState,
   safeParse: safeParseTelegramIncidentJoinState,
@@ -141,6 +161,11 @@ export const TelegramResourceReportStateSchema = {
 export const TelegramDispatchTaskStateSchema = {
   parse: parseTelegramDispatchTaskState,
   safeParse: safeParseTelegramDispatchTaskState,
+} as const;
+
+export const TelegramSosStateSchema = {
+  parse: parseTelegramSosState,
+  safeParse: safeParseTelegramSosState,
 } as const;
 
 export function parseTelegramIncidentJoinState(value: unknown): TelegramIncidentJoinState {
@@ -211,6 +236,23 @@ export function safeParseTelegramDispatchTaskState(value: unknown): TelegramDisp
   }
 }
 
+export function parseTelegramSosState(value: unknown): TelegramSosState {
+  const parsed = parseTelegramSosStateValue(value);
+  if (!parsed) {
+    throw new Error('Invalid TelegramSosState');
+  }
+
+  return parsed;
+}
+
+export function safeParseTelegramSosState(value: unknown): TelegramSosStateParseResult {
+  try {
+    return { success: true, data: parseTelegramSosState(value) };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error : new Error('Invalid TelegramSosState') };
+  }
+}
+
 export function isTerminalTelegramIncidentJoinState(
   state: TelegramIncidentJoinState,
 ): state is Extract<TelegramIncidentJoinState, { step: 'joined' | 'cancelled' }> {
@@ -233,6 +275,12 @@ export function isTerminalTelegramDispatchTaskState(
   state: TelegramDispatchTaskState,
 ): state is Extract<TelegramDispatchTaskState, { step: 'updated' | 'cancelled' }> {
   return state.step === 'updated' || state.step === 'cancelled';
+}
+
+export function isTerminalTelegramSosState(
+  state: TelegramSosState,
+): state is Extract<TelegramSosState, { step: 'submitted' | 'cancelled' }> {
+  return state.step === 'submitted' || state.step === 'cancelled';
 }
 
 function parseTelegramIncidentJoinStateValue(value: unknown): TelegramIncidentJoinState | null {
@@ -516,6 +564,34 @@ function parseTelegramDispatchTaskStateValue(value: unknown): TelegramDispatchTa
   return null;
 }
 
+function parseTelegramSosStateValue(value: unknown): TelegramSosState | null {
+  if (!isRecord(value) || typeof value.step !== 'string') return null;
+  if (value.step === 'idle') return hasOnlyKeys(value, ['step']) ? { step: 'idle' } : null;
+  if (value.step === 'cancelled') return hasOnlyKeys(value, ['step']) ? { step: 'cancelled' } : null;
+
+  const base = parseConversationBase(value);
+
+  if (value.step === 'awaitingIncident') {
+    if (!hasOnlyKeys(value, ['step', 'incidents', 'externalUserId', 'displayName']) || !base || !Array.isArray(value.incidents)) return null;
+    const incidents = parseIncidentArray(value.incidents);
+    return incidents ? { step: 'awaitingIncident', incidents, ...base } : null;
+  }
+
+  if (value.step === 'awaitingConfirmation') {
+    const incident = IncidentSummarySchema.safeParse(value.incident);
+    const request = SosConnectedCreateRequestSchema.safeParse(value.request);
+    if (!hasOnlyKeys(value, ['step', 'incident', 'externalUserId', 'displayName', 'request']) || !base || !incident.success || !request.success) return null;
+    return { step: 'awaitingConfirmation', incident: incident.data, ...base, request: request.data };
+  }
+
+  if (value.step === 'submitted') {
+    const response = SosAlertCreateResponseSchema.safeParse(value.response);
+    return hasOnlyKeys(value, ['step', 'response']) && response.success ? { step: 'submitted', response: response.data } : null;
+  }
+
+  return null;
+}
+
 function parseIncidentArray(values: unknown[]): IncidentSummary[] | null {
   const incidents: IncidentSummary[] = [];
   for (const incidentValue of values) {
@@ -581,6 +657,11 @@ export type TelegramDispatchTaskFlowResult = {
   responseText: string;
 };
 
+export type TelegramSosFlowResult = {
+  state: TelegramSosState;
+  responseText: string;
+};
+
 export function resolveTelegramCommand(update: TelegramUpdateLike): string | null {
   const text = update.message?.text?.trim();
   if (!text?.startsWith('/')) {
@@ -598,6 +679,14 @@ export function handleTelegramWebhookUpdate(update: TelegramUpdateLike): Telegra
       accepted: true,
       command,
       responseText: 'Zona Cero is ready. Choose an incident to continue.',
+    };
+  }
+
+  if (command === '/sos') {
+    return {
+      accepted: true,
+      command,
+      responseText: 'SOS requires incident selection and an exact CONFIRM SOS reply. Backend recording does not confirm delivery or rescue.',
     };
   }
 
@@ -904,6 +993,73 @@ Reply yes to submit, or /cancel to stop.` };
   return { state, responseText: 'Send /dispatch to begin the dispatch task flow.' };
 }
 
+export async function handleTelegramSosFlow(
+  state: TelegramSosState,
+  update: TelegramUpdateLike,
+  ports: TelegramSosPorts,
+): Promise<TelegramSosFlowResult> {
+  const text = update.message?.text?.trim() ?? '';
+  const command = resolveTelegramCommand(update);
+
+  if (command === '/cancel') {
+    return { state: { step: 'cancelled' }, responseText: 'SOS cancelled before backend submission. Send /sos to begin again.' };
+  }
+
+  if (command === '/sos' || state.step === 'idle' || state.step === 'cancelled' || state.step === 'submitted') {
+    return startSosIncidentSelection(update, ports);
+  }
+
+  if (state.step === 'awaitingIncident') {
+    const incident = selectIncident(state.incidents, text);
+    if (!incident) {
+      return {
+        state,
+        responseText: `Incident not found. Reply with a number or incident id from the list.\n${formatIncidentList(state.incidents)}`,
+      };
+    }
+
+    const request = SosConnectedCreateRequestSchema.parse({
+      channel: 'telegram',
+      externalId: state.externalUserId,
+      displayName: state.displayName,
+      payload: { severity: 'critical', reportedAt: new Date().toISOString() },
+    });
+
+    return {
+      state: {
+        step: 'awaitingConfirmation',
+        incident,
+        externalUserId: state.externalUserId,
+        displayName: state.displayName,
+        request,
+      },
+      responseText: formatSosConfirmation(incident),
+    };
+  }
+
+  if (state.step === 'awaitingConfirmation') {
+    if (isCancellation(text)) {
+      return { state: { step: 'cancelled' }, responseText: 'SOS cancelled before backend submission. Send /sos to begin again.' };
+    }
+
+    if (!isStrongSosConfirmation(text)) {
+      return {
+        state,
+        responseText: 'For safety, reply exactly CONFIRM SOS to submit, no to cancel, or /cancel to stop. This does not confirm delivery or rescue.',
+      };
+    }
+
+    try {
+      const response = await ports.createSosAlert(state.incident.incidentId, state.request);
+      return { state: { step: 'submitted', response }, responseText: formatSosSuccess(response) };
+    } catch (error) {
+      return { state, responseText: formatSosError(error) };
+    }
+  }
+
+  return { state, responseText: 'Send /sos to begin the SOS flow.' };
+}
+
 async function startIncidentSelection(update: TelegramUpdateLike, ports: TelegramIncidentJoinPorts): Promise<TelegramIncidentJoinFlowResult> {
   const externalUserId = getTelegramExternalUserId(update);
   if (!externalUserId) {
@@ -983,6 +1139,22 @@ ${formatIncidentList(incidents)}` };
   }
 }
 
+async function startSosIncidentSelection(update: TelegramUpdateLike, ports: TelegramSosPorts): Promise<TelegramSosFlowResult> {
+  const externalUserId = getTelegramExternalUserId(update);
+  if (!externalUserId) return { state: { step: 'idle' }, responseText: 'Telegram user id is required to submit SOS.' };
+
+  try {
+    const { incidents } = await ports.listIncidents();
+    if (incidents.length === 0) return { state: { step: 'idle' }, responseText: 'No active incidents are available right now.' };
+    return {
+      state: { step: 'awaitingIncident', incidents, externalUserId, displayName: getTelegramDisplayName(update) },
+      responseText: `Choose an incident before starting SOS:\n${formatIncidentList(incidents)}`,
+    };
+  } catch {
+    return { state: { step: 'idle' }, responseText: 'Could not load incidents from the backend. Please try again later.' };
+  }
+}
+
 function getTelegramExternalUserId(update: TelegramUpdateLike): string | null {
   const id = update.message?.from?.id;
   return id == null ? null : String(id);
@@ -1036,6 +1208,10 @@ function isConfirmation(text: string): boolean {
 
 function isCancellation(text: string): boolean {
   return ['no', 'n', 'cancel'].includes(text.trim().toLowerCase());
+}
+
+function isStrongSosConfirmation(text: string): boolean {
+  return text.trim() === 'CONFIRM SOS';
 }
 
 
@@ -1099,6 +1275,32 @@ function formatResourceReportError(error: unknown): string {
 
 function formatDispatchTaskSuccess(response: DispatchTaskResponse): string {
   return [`Dispatch task updated: ${response.dispatchTask.dispatchTaskId}.`, `Status: ${response.dispatchTask.status}`].join('\n');
+}
+
+function formatSosConfirmation(incident: IncidentSummary): string {
+  return [
+    'Critical SOS request.',
+    `Incident: ${incident.name}`,
+    'Reply exactly CONFIRM SOS to record this SOS in the backend and queue fan-out.',
+    'This does not confirm delivery, rescue, or exact location. Use /cancel to stop.',
+  ].join('\n');
+}
+
+function formatSosSuccess(response: SosAlertCreateResponse): string {
+  return [
+    `SOS ID: ${response.sosAlert.sosAlertId}`,
+    `Status: ${response.sosAlert.status}`,
+    `Fan-out: total ${response.fanout.total}, queued ${response.fanout.queued}, pending ${response.fanout.pending}, failed ${response.fanout.failed}, cancelled ${response.fanout.cancelled}`,
+    'Backend recording confirmed only. This does not confirm delivery, rescue, or exact location.',
+  ].join('\n');
+}
+
+function formatSosError(error: unknown): string {
+  const code = readErrorCode(error);
+  if (code === 'permission_denied') return 'Permission denied. Join this incident first with /start, then start SOS again.';
+  if (code === 'not_found') return 'Incident not found. Send /sos and choose an available incident.';
+  if (code === 'invalid_payload') return 'Invalid SOS payload. Send /sos and try again.';
+  return 'Could not record SOS. The backend rejected or failed the request.';
 }
 
 function formatDispatchTaskError(error: unknown): string {
