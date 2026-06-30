@@ -184,6 +184,86 @@ export const SyncPushResponseSchema = z.object({
 });
 export type SyncPushResponse = z.infer<typeof SyncPushResponseSchema>;
 
+
+
+export const channels = ['telegram', 'mobile', 'web-ui'] as const;
+export const ChannelSchema = z.enum(channels);
+export type Channel = z.infer<typeof ChannelSchema>;
+
+export const incidentRoles = ['volunteer', 'coordinator', 'logistics', 'medical'] as const;
+export const IncidentRoleSchema = z.enum(incidentRoles);
+export type IncidentRole = z.infer<typeof IncidentRoleSchema>;
+
+export const PermissionSnapshotSchema = z.object({
+  canReadIncident: z.boolean(),
+  canJoinIncident: z.boolean(),
+  canManageIncident: z.boolean(),
+  canManageLogistics: z.boolean(),
+  canManageMedical: z.boolean(),
+});
+export type PermissionSnapshot = z.infer<typeof PermissionSnapshotSchema>;
+
+export const ChannelIdentitySchema = z.object({
+  channelIdentityId: z.string().min(1),
+  channel: ChannelSchema,
+  externalId: z.string().min(1),
+  displayName: z.string().min(1).optional(),
+});
+export type ChannelIdentity = z.infer<typeof ChannelIdentitySchema>;
+
+export const IncidentMembershipSchema = z.object({
+  incidentMembershipId: z.string().min(1),
+  incidentId: z.string().min(1),
+  channelIdentityId: z.string().min(1),
+  role: IncidentRoleSchema,
+  permissions: PermissionSnapshotSchema,
+});
+export type IncidentMembership = z.infer<typeof IncidentMembershipSchema>;
+
+export const AuditReferenceSchema = z.object({
+  auditEventId: z.string().min(1),
+});
+export type AuditReference = z.infer<typeof AuditReferenceSchema>;
+
+export const IncidentSummarySchema = z.object({
+  incidentId: z.string().min(1),
+  name: z.string().min(1),
+  status: z.enum(['active', 'closed']),
+  startsAt: z.string().min(1),
+  locationName: z.string().min(1),
+});
+export type IncidentSummary = z.infer<typeof IncidentSummarySchema>;
+
+export const IncidentListResponseSchema = z.object({
+  incidents: z.array(IncidentSummarySchema),
+});
+export type IncidentListResponse = z.infer<typeof IncidentListResponseSchema>;
+
+export const IncidentConfigResponseSchema = z.object({
+  incident: IncidentSummarySchema,
+  roles: z.array(IncidentRoleSchema),
+  channels: z.array(ChannelSchema),
+  permissionSnapshots: z.record(IncidentRoleSchema, PermissionSnapshotSchema),
+});
+export type IncidentConfigResponse = z.infer<typeof IncidentConfigResponseSchema>;
+
+export const IncidentJoinRequestSchema = z.object({
+  channel: ChannelSchema,
+  externalId: z.string().min(1),
+  role: IncidentRoleSchema,
+  displayName: z.string().min(1).optional(),
+});
+export type IncidentJoinRequest = z.infer<typeof IncidentJoinRequestSchema>;
+
+export const IncidentJoinResponseSchema = z.object({
+  incident: IncidentSummarySchema,
+  channelIdentity: ChannelIdentitySchema,
+  membership: IncidentMembershipSchema,
+  audit: AuditReferenceSchema,
+  idempotent: z.boolean(),
+});
+export type IncidentJoinResponse = z.infer<typeof IncidentJoinResponseSchema>;
+
 export const HealthResponseSchema = z.object({
   service: z.literal('zona-cero-api'),
   ok: z.literal(true),

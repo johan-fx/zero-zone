@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ContractErrorCodeSchema,
+  ChannelSchema,
   HealthResponseSchema,
+  IncidentConfigResponseSchema,
+  IncidentJoinRequestSchema,
+  IncidentJoinResponseSchema,
+  IncidentListResponseSchema,
+  IncidentRoleSchema,
   OperationInputSchema,
   OperationRejectedSchema,
   PendingSignedOperationSchema,
@@ -11,8 +17,10 @@ import {
   SyncPushResponseSchema,
   WebLinkRequestSchema,
   WebLinkSessionSchema,
+  channels,
   contractErrorCodes,
   contractErrorSemantics,
+  incidentRoles,
   operationFamilies,
   operationTypeFamilies,
   operationTypes,
@@ -188,6 +196,69 @@ describe('contracts package', () => {
     expect(WebLinkRequestSchema.safeParse({ ...validRequest, ttlSeconds: 0 }).success).toBe(false);
     expect(WebLinkRequestSchema.safeParse({ ...validRequest, correlationId: '' }).success).toBe(false);
     expect(WebLinkRequestSchema.safeParse({ ...validRequest, auditContext: { command: undefined } }).success).toBe(false);
+  });
+
+
+
+  it('validates incident list, config and join contracts for Slice 2 channels and roles', () => {
+    expect(channels).toEqual(['telegram', 'mobile', 'web-ui']);
+    expect(incidentRoles).toEqual(['volunteer', 'coordinator', 'logistics', 'medical']);
+    expect(ChannelSchema.parse('telegram')).toBe('telegram');
+    expect(IncidentRoleSchema.parse('medical')).toBe('medical');
+
+    const incident = {
+      incidentId: 'incident-zc-demo',
+      name: 'Zona Cero Demo Incident',
+      status: 'active',
+      startsAt: '2026-06-30T09:00:00.000Z',
+      locationName: 'Operations Base',
+    } as const;
+
+    const permissions = {
+      canReadIncident: true,
+      canJoinIncident: true,
+      canManageIncident: false,
+      canManageLogistics: false,
+      canManageMedical: true,
+    };
+
+    expect(IncidentListResponseSchema.parse({ incidents: [incident] }).incidents).toHaveLength(1);
+    expect(
+      IncidentConfigResponseSchema.parse({
+        incident,
+        roles: ['volunteer', 'coordinator', 'logistics', 'medical'],
+        channels: ['telegram', 'mobile', 'web-ui'],
+        permissionSnapshots: {
+          volunteer: { ...permissions, canManageMedical: false },
+          coordinator: { ...permissions, canManageIncident: true, canManageLogistics: true, canManageMedical: true },
+          logistics: { ...permissions, canManageLogistics: true, canManageMedical: false },
+          medical: permissions,
+        },
+      }).channels,
+    ).toEqual(['telegram', 'mobile', 'web-ui']);
+
+    expect(IncidentJoinRequestSchema.parse({ channel: 'mobile', externalId: 'device-1', role: 'medical' }).role).toBe('medical');
+    expect(
+      IncidentJoinResponseSchema.parse({
+        incident,
+        channelIdentity: { channelIdentityId: 'chid-mobile-1', channel: 'mobile', externalId: 'device-1' },
+        membership: {
+          incidentMembershipId: 'mship-1',
+          incidentId: incident.incidentId,
+          channelIdentityId: 'chid-mobile-1',
+          role: 'medical',
+          permissions,
+        },
+        audit: { auditEventId: 'audit-1' },
+        idempotent: false,
+      }).audit.auditEventId,
+    ).toBe('audit-1');
+  });
+
+  it('rejects invalid incident join role and channel contracts', () => {
+    expect(IncidentJoinRequestSchema.safeParse({ channel: 'sms', externalId: 'x', role: 'volunteer' }).success).toBe(false);
+    expect(IncidentJoinRequestSchema.safeParse({ channel: 'telegram', externalId: 'x', role: 'admin' }).success).toBe(false);
+    expect(IncidentListResponseSchema.safeParse({ incidents: [{ incidentId: '', name: '', status: 'draft' }] }).success).toBe(false);
   });
 
   it('keeps health response stable for web and e2e smoke tests', () => {

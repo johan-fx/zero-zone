@@ -5,20 +5,28 @@
   "compatibility_date": "2025-12-10",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
-    "API_VERSION": "0.0.0-boilerplate"
+    "API_VERSION": "0.0.0-boilerplate",
   },
   "durable_objects": {
     "bindings": [
       {
         "name": "INCIDENT_CELL_OBJECTS",
-        "class_name": "IncidentCellObject"
-      }
-    ]
+        "class_name": "IncidentCellObject",
+      },
+    ],
   },
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["IncidentCellObject"]
-    }
-  ]
+      "new_sqlite_classes": ["IncidentCellObject"],
+    },
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "zona-cero-api-staging",
+      "database_id": "d713202e-fd04-485c-913f-793644d79383",
+      "migrations_dir": "migrations",
+    },
+  ],
 }

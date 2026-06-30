@@ -29,7 +29,7 @@ Usar este reparto como contrato de trabajo para todas las slices. La clave es qu
 |---|---|---:|---:|---:|---|
 | 0 | Monorepo foundation | 🟢 | 🟢 | 🟢 | Hecho |
 | 1 | Contratos compartidos | 🟢 | 🟢 | 🟢 | Hecho |
-| 2 | Incidentes + identidad básica | ⬜ | ⬜ | ⬜ | No iniciado |
+| 2 | Incidentes + identidad básica | 🟢 | 🟢 | 🟢 | Hecho |
 | 3 | Centros de trabajo | ⬜ | ⬜ | ⬜ | No iniciado |
 | 4 | Recursos + logística | ⬜ | ⬜ | ⬜ | No iniciado |
 | 5 | SOS conectado + nativo crítico | ⬜ | ⬜ | ⬜ | No iniciado |
@@ -134,18 +134,28 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 
 | Equipo | Checklist |
 |---|---|
-| A | ⬜ Implementar `/start`, selección de incidente, seudónimo y rol. |
-| A | ⬜ Crear pantalla web de selección si el flow conversacional se queda corto. |
-| B | ⬜ Implementar incident list/join y channel identity. |
-| B | ⬜ Persistir roles, permisos y auditoría mínima. |
-| C | ⬜ Mantener onboarding nativo con identidad local. |
-| C | ⬜ Preparar consumo de incident config desde backend cuando haya red. |
+| A | 🟢 Implementar `/start`, selección de incidente, seudónimo y rol. |
+| A | 🟢 Validar que la pantalla web de selección queda diferida porque el flow conversacional cubre el primer corte. |
+| B | 🟢 Implementar incident list/join y channel identity. |
+| B | 🟢 Persistir roles, permisos y auditoría mínima. |
+| C | 🟢 Mantener onboarding nativo con identidad local. |
+| C | 🟢 Preparar consumo de incident config desde backend cuando haya red. |
 
 **Definition of Done**
 
 - Usuario entra por Telegram y queda vinculado a incidente.
 - Usuario entra por mobile sin depender de Telegram.
 - Backend distingue canal, actor y permisos.
+
+**Cierre Slice 2**
+
+- `packages/contracts` define contratos canónicos para canales, roles, permisos, incident list/config y join multi-canal.
+- `services/api` expone `GET /incidents`, `GET /incidents/:incidentId/config` y `POST /incidents/:incidentId/join` con D1 como fuente inicial de incidentes, identidades, memberships y auditoría.
+- El webhook Telegram usa el flujo real `/start → incidente → seudónimo → rol → join` y persiste membership/audit vía backend.
+- Mobile añade onboarding local offline-first con identidad local, rol self-declared y reconciliación posterior contra incident config/join sin recalcular permisos.
+- La pantalla Web UI auxiliar queda diferida porque el flujo conversacional cubre el primer corte.
+- Limitaciones aceptadas para producción: estado conversacional Telegram in-memory y store mobile persistente nativo quedan para hardening posterior.
+- Verificación ejecutada: `pnpm contracts:test`, `pnpm api:test:strict`, `pnpm telegram:test:strict`, `pnpm mobile:test:strict` y `pnpm test:strict`.
 
 ## Slice 3 - Centros de trabajo
 

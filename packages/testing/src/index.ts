@@ -2,6 +2,10 @@ import type {
   OperationInput,
   PendingSignedOperation,
   SignedOperation,
+  IncidentConfigResponse,
+  IncidentJoinRequest,
+  IncidentJoinResponse,
+  IncidentListResponse,
   SyncPushRequest,
   WebLinkRequest,
   WebLinkSession,
@@ -204,5 +208,142 @@ export const telegramStartUpdateFixture = {
     text: '/start',
     chat: { id: 1001, type: 'private' },
     from: { id: 1001, is_bot: false, first_name: 'Field' },
+  },
+} as const;
+
+
+export const incidentListHappyFixture: IncidentListResponse = {
+  incidents: [
+    {
+      incidentId: 'incident-zc-demo',
+      name: 'Zona Cero Demo Incident',
+      status: 'active',
+      startsAt: '2026-06-30T09:00:00.000Z',
+      locationName: 'Operations Base',
+    },
+  ],
+};
+
+export const incidentListErrorFixture = {
+  incidents: [
+    {
+      incidentId: '',
+      name: '',
+      status: 'draft',
+      startsAt: '',
+      locationName: '',
+    },
+  ],
+} as const;
+
+export const incidentConfigHappyFixture: IncidentConfigResponse = {
+  incident: incidentListHappyFixture.incidents[0],
+  roles: ['volunteer', 'coordinator', 'logistics', 'medical'],
+  channels: ['telegram', 'mobile', 'web-ui'],
+  permissionSnapshots: {
+    volunteer: {
+      canReadIncident: true,
+      canJoinIncident: true,
+      canManageIncident: false,
+      canManageLogistics: false,
+      canManageMedical: false,
+    },
+    coordinator: {
+      canReadIncident: true,
+      canJoinIncident: true,
+      canManageIncident: true,
+      canManageLogistics: true,
+      canManageMedical: true,
+    },
+    logistics: {
+      canReadIncident: true,
+      canJoinIncident: true,
+      canManageIncident: false,
+      canManageLogistics: true,
+      canManageMedical: false,
+    },
+    medical: {
+      canReadIncident: true,
+      canJoinIncident: true,
+      canManageIncident: false,
+      canManageLogistics: false,
+      canManageMedical: true,
+    },
+  },
+};
+
+export const incidentConfigErrorFixture = {
+  incident: { incidentId: '', name: '', status: 'draft', startsAt: '', locationName: '' },
+  roles: ['admin'],
+  channels: ['sms'],
+  permissionSnapshots: {},
+} as const;
+
+export const telegramIncidentJoinRequestFixture: IncidentJoinRequest = {
+  channel: 'telegram',
+  externalId: 'telegram-user-1001',
+  displayName: 'Field Telegram',
+  role: 'volunteer',
+};
+
+export const mobileIncidentJoinRequestFixture: IncidentJoinRequest = {
+  channel: 'mobile',
+  externalId: 'mobile-device-1001',
+  displayName: 'Field Mobile',
+  role: 'medical',
+};
+
+export const invalidIncidentJoinRequestFixture = {
+  channel: 'telegram',
+  externalId: 'telegram-user-1001',
+  role: 'admin',
+} as const;
+
+export const telegramIncidentJoinResponseFixture: IncidentJoinResponse = {
+  incident: incidentListHappyFixture.incidents[0],
+  channelIdentity: {
+    channelIdentityId: 'chid_telegram_telegram-user-1001',
+    channel: 'telegram',
+    externalId: 'telegram-user-1001',
+    displayName: 'Field Telegram',
+  },
+  membership: {
+    incidentMembershipId: 'mship_incident-zc-demo_chid_telegram_telegram-user-1001_volunteer',
+    incidentId: 'incident-zc-demo',
+    channelIdentityId: 'chid_telegram_telegram-user-1001',
+    role: 'volunteer',
+    permissions: incidentConfigHappyFixture.permissionSnapshots.volunteer,
+  },
+  audit: { auditEventId: 'audit_join_incident-zc-demo_chid_telegram_telegram-user-1001_volunteer' },
+  idempotent: false,
+};
+
+export const mobileIncidentJoinResponseFixture: IncidentJoinResponse = {
+  incident: incidentListHappyFixture.incidents[0],
+  channelIdentity: {
+    channelIdentityId: 'chid_mobile_mobile-device-1001',
+    channel: 'mobile',
+    externalId: 'mobile-device-1001',
+    displayName: 'Field Mobile',
+  },
+  membership: {
+    incidentMembershipId: 'mship_incident-zc-demo_chid_mobile_mobile-device-1001_medical',
+    incidentId: 'incident-zc-demo',
+    channelIdentityId: 'chid_mobile_mobile-device-1001',
+    role: 'medical',
+    permissions: incidentConfigHappyFixture.permissionSnapshots.medical,
+  },
+  audit: { auditEventId: 'audit_join_incident-zc-demo_chid_mobile_mobile-device-1001_medical' },
+  idempotent: false,
+};
+
+export const incidentJoinFixtures = {
+  telegram: {
+    happy: { request: telegramIncidentJoinRequestFixture, response: telegramIncidentJoinResponseFixture },
+    error: invalidIncidentJoinRequestFixture,
+  },
+  mobile: {
+    happy: { request: mobileIncidentJoinRequestFixture, response: mobileIncidentJoinResponseFixture },
+    error: { ...mobileIncidentJoinRequestFixture, externalId: '', role: 'medical' },
   },
 } as const;

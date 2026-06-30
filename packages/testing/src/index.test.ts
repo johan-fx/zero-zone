@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  IncidentConfigResponseSchema,
+  IncidentJoinRequestSchema,
+  IncidentJoinResponseSchema,
+  IncidentListResponseSchema,
   PendingSignedOperationSchema,
   SignedOperationSchema,
   SyncPushRequestSchema,
@@ -9,11 +13,17 @@ import {
 } from '@zona-cero/contracts';
 import {
   createSignedOperationFixture,
+  incidentConfigErrorFixture,
+  incidentConfigHappyFixture,
+  incidentJoinFixtures,
+  incidentListErrorFixture,
+  incidentListHappyFixture,
   invalidSignedOperationFixture,
   invalidSyncPushRequestFixture,
   invalidWebLinkRequestFixture,
   invalidWebLinkSessionFixture,
   signedOperationGoldenVector,
+  telegramIncidentJoinRequestFixture,
   telegramStartUpdateFixture,
   validSignedOperationFixture,
   validSyncPushRequestFixture,
@@ -51,6 +61,22 @@ describe('testing package', () => {
       expect(WebLinkRequestSchema.parse(fixtures.happy).scope).toBe(scope);
       expect(WebLinkRequestSchema.safeParse(fixtures.error).success).toBe(false);
     }
+  });
+
+
+
+  it('exposes happy and error incident fixtures for list, config, Telegram join and mobile join', () => {
+    expect(IncidentListResponseSchema.parse(incidentListHappyFixture).incidents[0]?.incidentId).toBe('incident-zc-demo');
+    expect(IncidentListResponseSchema.safeParse(incidentListErrorFixture).success).toBe(false);
+    expect(IncidentConfigResponseSchema.parse(incidentConfigHappyFixture).roles).toEqual(['volunteer', 'coordinator', 'logistics', 'medical']);
+    expect(IncidentConfigResponseSchema.safeParse(incidentConfigErrorFixture).success).toBe(false);
+
+    expect(IncidentJoinRequestSchema.parse(telegramIncidentJoinRequestFixture).channel).toBe('telegram');
+    expect(IncidentJoinRequestSchema.parse(incidentJoinFixtures.mobile.happy.request).channel).toBe('mobile');
+    expect(IncidentJoinResponseSchema.parse(incidentJoinFixtures.telegram.happy.response).membership.role).toBe('volunteer');
+    expect(IncidentJoinResponseSchema.parse(incidentJoinFixtures.mobile.happy.response).membership.role).toBe('medical');
+    expect(IncidentJoinRequestSchema.safeParse(incidentJoinFixtures.telegram.error).success).toBe(false);
+    expect(IncidentJoinRequestSchema.safeParse(incidentJoinFixtures.mobile.error).success).toBe(false);
   });
 
   it('locks a golden compatibility vector for mobile canonicalization, fake signature and opId', () => {

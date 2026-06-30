@@ -95,6 +95,13 @@ Estructura actual relevante:
 - Añadir D1/Queues/Durable Objects según necesidad de slice.
 - Definir deploy/staging separado.
 
+**Avance Fase 3**
+
+- `services/api` ya contiene Worker Hono con healthcheck, sync push/pull, webhook Telegram y endpoints mínimos de incidentes para Slice 2.
+- D1 queda como fuente inicial para `incidents`, `channel_identities`, `incident_memberships` y `audit_events`.
+- Durable Objects se mantienen como stub/coordinación futura, no como fuente de verdad de incidentes.
+- Pendiente antes de producción: endurecer deploy/staging, reemplazar estado conversacional Telegram in-memory por storage durable y definir procedimiento operativo de migraciones/seed.
+
 ### Fase 4 - Crear Telegram + Web UI
 
 - Crear `apps/telegram-channel` con handlers puros y tests sin depender de Cloudflare runtime.
