@@ -809,6 +809,30 @@ export const TelegramWebhookResultSchema = z.object({
 });
 export type TelegramWebhookResult = z.infer<typeof TelegramWebhookResultSchema>;
 
+export const telegramIntents = [
+  'resource',
+  'workcenter',
+  'family_reunification',
+  'sos',
+  'dispatch',
+  'incident_join',
+  'unknown',
+  'ambiguous',
+] as const;
+export const TelegramIntentSchema = z.enum(telegramIntents);
+export type TelegramIntent = z.infer<typeof TelegramIntentSchema>;
+
+export const TelegramIntentExtractedFactsSchema = JsonObjectPayloadSchema;
+export type TelegramIntentExtractedFacts = z.infer<typeof TelegramIntentExtractedFactsSchema>;
+
+export const TelegramIntentClassificationSchema = z.object({
+  intent: TelegramIntentSchema,
+  confidence: z.number().min(0).max(1),
+  reason: z.string().min(1).max(500).optional(),
+  extractedFacts: TelegramIntentExtractedFactsSchema,
+}).strict();
+export type TelegramIntentClassification = z.infer<typeof TelegramIntentClassificationSchema>;
+
 export const webLinkScopes = ['incident.join', 'work_center.detail', 'family_reunification.search'] as const;
 
 export const WebLinkScopeSchema = z.enum(webLinkScopes);

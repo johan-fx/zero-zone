@@ -66,6 +66,29 @@ async function postTelegramMessage(telegramUserId: number, text: string, firstNa
   return TelegramWebhookResultSchema.parse(await response.json());
 }
 
+type TelegramIntentClassifierTestEnv = Omit<Env, 'AI'> & {
+  AI?: { run: ReturnType<typeof vi.fn> };
+  TELEGRAM_INTENT_ROUTER_ENABLED?: string;
+  TELEGRAM_INTENT_MODEL?: string;
+  TELEGRAM_INTENT_CONFIDENCE_THRESHOLD?: string;
+};
+
+function resetTelegramIntentClassifierTestEnv(): void {
+  const testEnv = env as unknown as TelegramIntentClassifierTestEnv;
+  testEnv.TELEGRAM_INTENT_ROUTER_ENABLED = 'off';
+  testEnv.TELEGRAM_INTENT_MODEL = undefined;
+  testEnv.TELEGRAM_INTENT_CONFIDENCE_THRESHOLD = undefined;
+  testEnv.AI = { run: vi.fn() };
+}
+
+function enableTelegramIntentClassifier(run: ReturnType<typeof vi.fn> = vi.fn()): ReturnType<typeof vi.fn> {
+  const testEnv = env as unknown as TelegramIntentClassifierTestEnv;
+  testEnv.TELEGRAM_INTENT_ROUTER_ENABLED = 'on';
+  testEnv.TELEGRAM_INTENT_CONFIDENCE_THRESHOLD = '0.75';
+  testEnv.AI = { run };
+  return run;
+}
+
 async function seedTelegramFreshnessChange(opId: string, serverUpdatedAt: string): Promise<void> {
   const operation = {
     ...validWorkCenterCreateOperationFixture,
@@ -172,6 +195,7 @@ function mockOperationalAuditInsertFailure(): ReturnType<typeof vi.spyOn> {
 
 describe('api worker', () => {
   beforeEach(async () => {
+    resetTelegramIntentClassifierTestEnv();
     await resetApiTestDatabase((env as Env).DB);
   });
 
@@ -706,6 +730,110 @@ describe('api worker', () => {
       .bind(stateKey)
       .first<{ count: number }>();
     expect(terminalState?.count).toBe(0);
+  });
+
+  it('does not call the Telegram intent classifier for explicit /resource commands', async () => {
+    const classifier = enableTelegramIntentClassifier(
+      vi.fn().mockResolvedValue({ intent: 'workcenter', confidence: 0.99, extractedFacts: {} }),
+    );
+
+    await expect(postTelegramMessage(25201, '/resource', 'Explicit')).resolves.toMatchObject({
+      accepted: true,
+      command: '/resource',
+      responseText: expect.stringContaining('Choose an incident before reporting resources'),
+    });
+    expect(classifier).not.toHaveBeenCalled();
+  });
+
+  it('continues active Telegram flow state without calling the intent classifier', async () => {
+    const classifier = enableTelegramIntentClassifier(
+      vi.fn().mockResolvedValue({ intent: 'workcenter', confidence: 0.99, extractedFacts: {} }),
+    );
+    const telegramUserId = 25202;
+
+    await postTelegramMessage(telegramUserId, '/resource', 'ActiveFlow');
+    expect(classifier).not.toHaveBeenCalled();
+
+    await expect(postTelegramMessage(telegramUserId, '1', 'ActiveFlow')).resolves.toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining('Is this resource needed or surplus'),
+    });
+    expect(classifier).not.toHaveBeenCalled();
+  });
+
+  it('routes natural potable water messages to the resource conversation when classified as resource', async () => {
+    const classifier = enableTelegramIntentClassifier(
+      vi.fn().mockResolvedValue({ intent: 'resource', confidence: 0.92, extractedFacts: { category: 'water' } }),
+    );
+    const telegramUserId = 25203;
+
+    await expect(postTelegramMessage(telegramUserId, 'Tenemos agua potable para entregar', 'Water')).resolves.toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining('Choose an incident before reporting resources'),
+    });
+    expect(classifier).toHaveBeenCalledTimes(1);
+
+    const state = await (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?')
+      .bind(`flow:resource:chat:${telegramUserId}:from:${telegramUserId}`)
+      .first<{ step: string }>();
+    expect(state).toMatchObject({ step: 'awaitingIncident' });
+  });
+
+  it('routes natural missing child/person messages to family reunification', async () => {
+    const classifier = enableTelegramIntentClassifier(
+      vi.fn().mockResolvedValue({ intent: 'family_reunification', confidence: 0.94, extractedFacts: { caseType: 'missing_person' } }),
+    );
+    const telegramUserId = 25204;
+
+    await expect(postTelegramMessage(telegramUserId, 'Busco a mi hijo desaparecido', 'Family')).resolves.toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining('incident-zc-demo'),
+    });
+    expect(classifier).toHaveBeenCalledTimes(1);
+
+    const state = await (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?')
+      .bind(`flow:family-reunification:chat:${telegramUserId}:from:${telegramUserId}`)
+      .first<{ step: string }>();
+    expect(state).toMatchObject({ step: 'awaitingIncident' });
+  });
+
+  it('asks for clarification instead of falling back to incident join on ambiguous or low-confidence intent', async () => {
+    const classifier = enableTelegramIntentClassifier(
+      vi.fn().mockResolvedValue({ intent: 'resource', confidence: 0.42, extractedFacts: {} }),
+    );
+    const telegramUserId = 25205;
+
+    await expect(postTelegramMessage(telegramUserId, 'Necesitamos ayuda con esto', 'Ambiguous')).resolves.toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining('not sure which operation'),
+    });
+    expect(classifier).toHaveBeenCalledTimes(1);
+
+    const state = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM telegram_conversation_states WHERE state_key LIKE ?')
+      .bind(`%chat:${telegramUserId}:from:${telegramUserId}`)
+      .first<{ count: number }>();
+    expect(state?.count).toBe(0);
+  });
+
+  it('degrades safely when the Telegram intent classifier fails', async () => {
+    const classifier = enableTelegramIntentClassifier(vi.fn().mockRejectedValue(new Error('AI unavailable')));
+    const telegramUserId = 25206;
+
+    await expect(postTelegramMessage(telegramUserId, 'Quiero reportar algo', 'Failure')).resolves.toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining('not sure which operation'),
+    });
+    expect(classifier).toHaveBeenCalledTimes(1);
+
+    const state = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM telegram_conversation_states WHERE state_key LIKE ?')
+      .bind(`%chat:${telegramUserId}:from:${telegramUserId}`)
+      .first<{ count: number }>();
+    expect(state?.count).toBe(0);
   });
 
   [

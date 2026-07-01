@@ -7,6 +7,7 @@
   "vars": {
     "API_VERSION": "0.0.0-boilerplate",
     "TURNSTILE_ROLLOUT": "off",
+    "TELEGRAM_INTENT_ROUTER_ENABLED": "off",
   },
   "observability": {
     "enabled": true,
@@ -26,6 +27,10 @@
       "new_sqlite_classes": ["IncidentCellObject"],
     },
   ],
+  "ai": {
+    "binding": "AI",
+    "remote": true,
+  },
   "d1_databases": [
     {
       "binding": "DB",
@@ -40,6 +45,7 @@
       "vars": {
         "API_VERSION": "0.0.0-staging",
         "TURNSTILE_ROLLOUT": "observe",
+        "TELEGRAM_INTENT_ROUTER_ENABLED": "off",
       },
       "observability": {
         "enabled": true,
@@ -59,6 +65,10 @@
           "new_sqlite_classes": ["IncidentCellObject"],
         },
       ],
+      "ai": {
+        "binding": "AI",
+        "remote": true,
+      },
       "d1_databases": [
         {
           "binding": "DB",

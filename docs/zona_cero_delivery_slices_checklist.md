@@ -37,6 +37,7 @@ Usar este reparto como contrato de trabajo para todas las slices. La clave es qu
 | 7 | Sync/offline hardening | 🟢 | 🟢 | 🟢 | Hecho |
 | 8 | Observabilidad + seguridad | 🟢 | 🟢 | 🟢 | Hecho |
 | 9 | Localización multi-idioma | 🟢 | 🟢 | 🟢 | Hecho |
+| 10 | Telegram intent routing con Workers AI | 🟢 | 🟢 | 🟢 | Hecho |
 
 Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloqueado.
 
@@ -475,6 +476,73 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 - Mobile queda compatible con el nuevo contrato sin adoptar localización nativa completa en esta slice; se corrigió una dependencia de UI sobre texto visible para usar estado canónico.
 - Verificación ejecutada: `pnpm --filter @zona-cero/i18n test:strict`, `pnpm telegram:test:strict`, `pnpm web:test:strict`, `pnpm contracts:test:strict`, `pnpm api:test:strict`, `pnpm mobile:test:strict`, `pnpm test:strict`, `git diff --check` y `git status --short -- packages/i18n/node_modules`.
 - Fresh review final independiente: P0/P1/P2/P3 = 0.
+
+## Slice 10 - Telegram intent routing con Workers AI
+
+**Objetivo:** permitir que Telegram entienda mensajes en lenguaje natural y los enrute a flujos existentes sin convertir al LLM en ejecutor de negocio.
+
+**Decisión técnica:** usar Cloudflare Workers AI como clasificador de intención. El modelo por defecto es `@cf/qwen/qwen3-30b-a3b-fp8`, configurable por entorno. El router queda desactivable por feature flag y degrada a comportamiento seguro si la inferencia falla.
+
+**Orden de prioridad del router**
+
+1. Comando explícito (`/resource`, `/workcenter`, `/reunificacion`, etc.).
+2. Flujo conversacional activo.
+3. Clasificación LLM de texto libre.
+4. Clarificación o fallback seguro para intención ambigua, desconocida o de baja confianza.
+
+### Reparto de ownership
+
+| Equipo | Owns | Consume de | No debe hacer | Handoff esperado |
+|---|---|---|---|---|
+| A | Contrato compartido de intención, tipos y tests de schema. | Necesidades de routing de B y casos UX de C. | Meter copy visible o reglas de dominio dentro del contrato. | `TelegramIntentClassification` validado, estricto y reusable por API. |
+| B | Binding Workers AI, cliente clasificador, configuración por entorno y degradación segura. | Schema de A y umbrales/telemetría de C. | Ejecutar acciones de negocio desde la respuesta del LLM. | Helper que devuelve intención validada o fallback seguro sin romper webhook. |
+| C | Integración del router en Telegram/API, UX de clarificación, telemetría sin PII y pruebas de prioridad. | Clasificador de B y contratos de A. | Saltarse flujos activos, loggear texto del usuario o confiar en baja confianza. | Routing determinista: comando → flujo activo → LLM → clarificación. |
+
+| Equipo | Checklist |
+|---|---|
+| A | 🟢 Añadir contrato `TelegramIntentClassification` con intención, confianza, razón opcional y facts JSON-safe. |
+| A | 🟢 Cubrir intents `resource`, `workcenter`, `family_reunification`, `sos`, `dispatch`, `incident_join`, `unknown` y `ambiguous`. |
+| B | 🟢 Añadir binding `AI` en Wrangler y typings de `Env`. |
+| B | 🟢 Implementar clasificador Workers AI con JSON validado, `temperature: 0`, `max_tokens` bajo y fallback seguro. |
+| B | 🟢 Configurar `TELEGRAM_INTENT_ROUTER_ENABLED`, `TELEGRAM_INTENT_MODEL` y `TELEGRAM_INTENT_CONFIDENCE_THRESHOLD`. |
+| C | 🟢 Integrar clasificación solo después de comandos explícitos y flujos activos. |
+| C | 🟢 Enrutar lenguaje natural a `/resource`, `/workcenter`, `/reunificacion`, `/sos`, `/dispatch` o join sin ejecutar la acción final automáticamente. |
+| C | 🟢 Añadir telemetría de clasificación sin registrar texto libre ni PII. |
+| Todos | 🟢 Fresh review independiente sin defectos confirmados. |
+
+**Definition of Done**
+
+- El LLM clasifica intención; la lógica de dominio sigue ejecutándose de forma determinista.
+- Los comandos explícitos y los estados activos nunca son hijackeados por la clasificación.
+- Baja confianza, `ambiguous`, `unknown`, JSON inválido o fallo de Workers AI terminan en clarificación/fallback seguro.
+- No se registra texto del usuario ni PII en telemetría del router.
+- El modelo por defecto puede cambiarse por configuración sin tocar código.
+- El router puede permanecer desactivado en entornos donde no se quiera inferencia.
+
+**Riesgos y límites**
+
+- La calidad real depende del comportamiento runtime del modelo con mensajes de desastre en español; los tests cubren routing determinista con clasificación mockeada.
+- Antes de activar en piloto público conviene ejecutar una matriz de evaluación con frases reales o sintéticas revisadas por producto.
+- Las acciones sensibles como SOS o reunificación familiar siguen requiriendo confirmación dentro del flujo correspondiente.
+
+**Evidencia de verificación**
+
+- `pnpm --filter @zona-cero/contracts test:strict` ✅
+- `pnpm --filter @zona-cero/contracts build` ✅
+- `pnpm --filter @zona-cero/api test:strict` ✅
+- `pnpm --filter @zona-cero/api typecheck` ✅
+- `pnpm --filter @zona-cero/api build` ✅
+- `pnpm --filter @zona-cero/api exec wrangler deploy --dry-run --env staging` ✅
+- `git diff --check` ✅
+- Fresh review independiente final ✅
+
+**Cierre Slice 10**
+
+- `packages/contracts` expone el contrato canónico de clasificación de intención para Telegram con schema estricto y facts JSON-safe.
+- `services/api` configura Workers AI mediante binding `AI`, variables de router y helper de clasificación con `@cf/qwen/qwen3-30b-a3b-fp8` como modelo por defecto.
+- El webhook de Telegram enruta lenguaje natural hacia flujos existentes respetando prioridad: comando explícito, flujo activo, clasificación LLM y clarificación/fallback.
+- La telemetría del router queda minimizada y sin texto libre del usuario.
+- Fresh review final independiente: 0 defectos confirmados.
 
 ## Gates antes de implementar cada slice
 

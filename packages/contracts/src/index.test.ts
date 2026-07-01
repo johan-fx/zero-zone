@@ -48,6 +48,8 @@ import {
   SyncPullResponseSchema,
   SyncPushRequestSchema,
   SyncPushResponseSchema,
+  TelegramIntentClassificationSchema,
+  TelegramIntentSchema,
   WebLinkRequestSchema,
   WebLinkSessionSchema,
   WorkCenterConnectedCreateRequestSchema,
@@ -81,6 +83,7 @@ import {
   sosAlertStatuses,
   sosFanoutJobStatuses,
   sosSeverities,
+  telegramIntents,
   workCenterStatuses,
 } from './index';
 
@@ -656,6 +659,37 @@ describe('contracts package', () => {
       ok: true,
       version: '0.0.0',
     });
+  });
+
+  it('validates Telegram intent classification output as classifier-only contract data', () => {
+    expect(telegramIntents).toEqual([
+      'resource',
+      'workcenter',
+      'family_reunification',
+      'sos',
+      'dispatch',
+      'incident_join',
+      'unknown',
+      'ambiguous',
+    ]);
+    expect(TelegramIntentSchema.parse('family_reunification')).toBe('family_reunification');
+
+    const classification = TelegramIntentClassificationSchema.parse({
+      intent: 'resource',
+      confidence: 0.82,
+      reason: 'Mentions potable water availability.',
+      extractedFacts: {
+        category: 'water',
+        quantityApprox: '20 boxes',
+        location: { label: 'north gate' },
+      },
+    });
+
+    expect(classification.intent).toBe('resource');
+    expect(TelegramIntentClassificationSchema.safeParse({ ...classification, confidence: 1.1 }).success).toBe(false);
+    expect(TelegramIntentClassificationSchema.safeParse({ ...classification, intent: 'admin' }).success).toBe(false);
+    expect(TelegramIntentClassificationSchema.safeParse({ ...classification, executeCommand: '/resource' }).success).toBe(false);
+    expect(TelegramIntentClassificationSchema.safeParse({ ...classification, extractedFacts: { category: undefined } }).success).toBe(false);
   });
 
   it('validates canonical resource report contracts', () => {

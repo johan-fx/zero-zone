@@ -92,6 +92,7 @@ import {
   type WorkCenterDetail,
   type WorkCenterPriority,
   type WorkCenterSignalType,
+  type TelegramIntentClassification,
   type WorkCenterSummary,
 } from '@zona-cero/contracts';
 import { deriveResourceReportState, deriveWorkCenterState, matchResourceReports, type WorkCenterSignalInput } from '@zona-cero/domain';
@@ -130,6 +131,7 @@ import {
   type TelegramWorkCenterReportPorts,
   type TelegramWorkCenterReportState,
 } from '@zona-cero/telegram-channel';
+import { classifyTelegramIntent, resolveTelegramIntentRouterConfig, type TelegramIntentAiBinding } from './telegram-intent-classifier';
 
 export class IncidentCellObject {
   constructor(private readonly state: DurableObjectState) {}
@@ -805,7 +807,7 @@ app.post('/telegram/webhook', async (c) => {
   const update = (await c.req.json().catch(() => ({}))) as TelegramUpdateLike;
   const command = resolveTelegramCommand(update);
   const telemetry = createTelegramChannelTelemetrySink();
-  const responseText = await handleTelegramConversation(c.env.DB, update, command, telemetry);
+  const responseText = await handleTelegramConversation(c.env, c.env.DB, update, command, telemetry);
   c.executionCtx.waitUntil(sendTelegramWebhookResponse(c.env, update, responseText));
 
   return c.json(TelegramWebhookResultSchema.parse({ accepted: true, command, responseText }));
@@ -3441,6 +3443,7 @@ function createIncidentConfigResponse(incident: IncidentSummary): IncidentConfig
 }
 
 async function handleTelegramConversation(
+  env: Env,
   db: D1Database,
   update: TelegramUpdateLike,
   command: string | null,
@@ -3452,35 +3455,17 @@ async function handleTelegramConversation(
   const dispatchStateKey = getTelegramDispatchConversationStateKey(update);
   const sosStateKey = getTelegramSosConversationStateKey(update);
   const familyStateKey = getTelegramFamilyReunificationConversationStateKey(update);
+  const stateKeys = { joinStateKey, workCenterStateKey, resourceStateKey, dispatchStateKey, sosStateKey, familyStateKey };
 
-  if (command === '/start') {
-    await deleteTelegramConversationStates(db, [workCenterStateKey, resourceStateKey, dispatchStateKey, sosStateKey, familyStateKey]);
+  const explicitCommandResponse = await routeExplicitTelegramCommand(db, update, command, stateKeys, telemetry);
+  if (explicitCommandResponse) {
+    emitTelegramIntentRouterTelemetry('bypassed', 'explicit_command');
+    return explicitCommandResponse;
+  }
+
+  if (command) {
+    emitTelegramIntentRouterTelemetry('bypassed', 'unhandled_command');
     return handleTelegramIncidentJoinConversation(db, update, joinStateKey, telemetry);
-  }
-
-  if (command === '/workcenter') {
-    await deleteTelegramConversationStates(db, [resourceStateKey, dispatchStateKey, sosStateKey, familyStateKey]);
-    return handleTelegramWorkCenterConversation(db, update, workCenterStateKey, undefined, telemetry);
-  }
-
-  if (command === '/resource') {
-    await deleteTelegramConversationStates(db, [workCenterStateKey, dispatchStateKey, sosStateKey, familyStateKey]);
-    return handleTelegramResourceConversation(db, update, resourceStateKey, undefined, telemetry);
-  }
-
-  if (command === '/dispatch') {
-    await deleteTelegramConversationStates(db, [workCenterStateKey, resourceStateKey, sosStateKey, familyStateKey]);
-    return handleTelegramDispatchConversation(db, update, dispatchStateKey, undefined, telemetry);
-  }
-
-  if (command === '/sos') {
-    await deleteTelegramConversationStates(db, [workCenterStateKey, resourceStateKey, dispatchStateKey, familyStateKey]);
-    return handleTelegramSosConversation(db, update, sosStateKey, undefined, telemetry);
-  }
-
-  if (command === '/familia' || command === '/reunificacion') {
-    await deleteTelegramConversationStates(db, [joinStateKey, workCenterStateKey, resourceStateKey, dispatchStateKey, sosStateKey]);
-    return handleTelegramFamilyReunificationConversation(db, update, familyStateKey, undefined, telemetry);
   }
 
   const routedFamily = await routeExistingTelegramFlow(
@@ -3491,6 +3476,7 @@ async function handleTelegramConversation(
     (state) => handleTelegramFamilyReunificationConversation(db, update, familyStateKey, state, telemetry),
   );
   if (routedFamily) {
+    emitTelegramIntentRouterTelemetry('bypassed', 'active_flow');
     return routedFamily;
   }
 
@@ -3498,6 +3484,7 @@ async function handleTelegramConversation(
     handleTelegramSosConversation(db, update, sosStateKey, state, telemetry),
   );
   if (routedSos) {
+    emitTelegramIntentRouterTelemetry('bypassed', 'active_flow');
     return routedSos;
   }
 
@@ -3509,6 +3496,7 @@ async function handleTelegramConversation(
     (state) => handleTelegramResourceConversation(db, update, resourceStateKey, state, telemetry),
   );
   if (routedResource) {
+    emitTelegramIntentRouterTelemetry('bypassed', 'active_flow');
     return routedResource;
   }
 
@@ -3520,6 +3508,7 @@ async function handleTelegramConversation(
     (state) => handleTelegramDispatchConversation(db, update, dispatchStateKey, state, telemetry),
   );
   if (routedDispatch) {
+    emitTelegramIntentRouterTelemetry('bypassed', 'active_flow');
     return routedDispatch;
   }
 
@@ -3531,10 +3520,204 @@ async function handleTelegramConversation(
     (state) => handleTelegramWorkCenterConversation(db, update, workCenterStateKey, state, telemetry),
   );
   if (routedWorkCenter) {
+    emitTelegramIntentRouterTelemetry('bypassed', 'active_flow');
     return routedWorkCenter;
   }
 
+  const routedJoin = await routeExistingTelegramFlow(
+    db,
+    joinStateKey,
+    safeParseTelegramIncidentJoinState,
+    { step: 'idle' } satisfies TelegramIncidentJoinState,
+    (state) => handleTelegramIncidentJoinConversation(db, update, joinStateKey, telemetry),
+  );
+  if (routedJoin) {
+    emitTelegramIntentRouterTelemetry('bypassed', 'active_flow');
+    return routedJoin;
+  }
+
+  const classifiedResponse = await routeClassifiedTelegramIntent(env, db, update, stateKeys, telemetry);
+  if (classifiedResponse) {
+    return classifiedResponse;
+  }
+
   return handleTelegramIncidentJoinConversation(db, update, joinStateKey, telemetry);
+}
+
+type TelegramConversationStateKeys = {
+  joinStateKey: string | null;
+  workCenterStateKey: string | null;
+  resourceStateKey: string | null;
+  dispatchStateKey: string | null;
+  sosStateKey: string | null;
+  familyStateKey: string | null;
+};
+
+async function routeExplicitTelegramCommand(
+  db: D1Database,
+  update: TelegramUpdateLike,
+  command: string | null,
+  stateKeys: TelegramConversationStateKeys,
+  telemetry?: ChannelTelemetryPort,
+): Promise<string | null> {
+  if (command === '/start') {
+    await deleteTelegramConversationStates(db, [
+      stateKeys.workCenterStateKey,
+      stateKeys.resourceStateKey,
+      stateKeys.dispatchStateKey,
+      stateKeys.sosStateKey,
+      stateKeys.familyStateKey,
+    ]);
+    return handleTelegramIncidentJoinConversation(db, update, stateKeys.joinStateKey, telemetry);
+  }
+
+  if (command === '/workcenter') {
+    await deleteTelegramConversationStates(db, [stateKeys.resourceStateKey, stateKeys.dispatchStateKey, stateKeys.sosStateKey, stateKeys.familyStateKey]);
+    return handleTelegramWorkCenterConversation(db, update, stateKeys.workCenterStateKey, undefined, telemetry);
+  }
+
+  if (command === '/resource') {
+    await deleteTelegramConversationStates(db, [stateKeys.workCenterStateKey, stateKeys.dispatchStateKey, stateKeys.sosStateKey, stateKeys.familyStateKey]);
+    return handleTelegramResourceConversation(db, update, stateKeys.resourceStateKey, undefined, telemetry);
+  }
+
+  if (command === '/dispatch') {
+    await deleteTelegramConversationStates(db, [stateKeys.workCenterStateKey, stateKeys.resourceStateKey, stateKeys.sosStateKey, stateKeys.familyStateKey]);
+    return handleTelegramDispatchConversation(db, update, stateKeys.dispatchStateKey, undefined, telemetry);
+  }
+
+  if (command === '/sos') {
+    await deleteTelegramConversationStates(db, [stateKeys.workCenterStateKey, stateKeys.resourceStateKey, stateKeys.dispatchStateKey, stateKeys.familyStateKey]);
+    return handleTelegramSosConversation(db, update, stateKeys.sosStateKey, undefined, telemetry);
+  }
+
+  if (command === '/familia' || command === '/reunificacion') {
+    await deleteTelegramConversationStates(db, [
+      stateKeys.joinStateKey,
+      stateKeys.workCenterStateKey,
+      stateKeys.resourceStateKey,
+      stateKeys.dispatchStateKey,
+      stateKeys.sosStateKey,
+    ]);
+    return handleTelegramFamilyReunificationConversation(db, update, stateKeys.familyStateKey, undefined, telemetry);
+  }
+
+  return null;
+}
+
+async function routeClassifiedTelegramIntent(
+  env: Env,
+  db: D1Database,
+  update: TelegramUpdateLike,
+  stateKeys: TelegramConversationStateKeys,
+  telemetry?: ChannelTelemetryPort,
+): Promise<string | null> {
+  const config = resolveTelegramIntentRouterConfig(env);
+  if (!config.enabled) {
+    emitTelegramIntentRouterTelemetry('bypassed', 'disabled');
+    return null;
+  }
+
+  const ai = getTelegramIntentAiBinding(env);
+  if (!ai) {
+    emitTelegramIntentRouterTelemetry('bypassed', 'ai_unavailable');
+    return null;
+  }
+
+  const text = update.message?.text?.trim() ?? '';
+  if (!text) {
+    emitTelegramIntentRouterTelemetry('bypassed', 'empty_message');
+    return null;
+  }
+
+  const classification = await classifyTelegramIntent({
+    ai,
+    text,
+    model: config.model,
+    confidenceThreshold: config.confidenceThreshold,
+    context: {
+      command: null,
+      locale: update.message?.from?.language_code,
+      messageType: update.message?.chat?.type,
+    },
+  });
+
+  if (!isActionableTelegramIntentClassification(classification, config.confidenceThreshold)) {
+    emitTelegramIntentRouterTelemetry('rejected', `classification:${classification.intent}`);
+    return buildTelegramIntentClarificationResponse();
+  }
+
+  emitTelegramIntentRouterTelemetry('accepted', `classification:${classification.intent}`);
+  return routeAcceptedTelegramIntent(db, update, classification.intent, stateKeys, telemetry);
+}
+
+async function routeAcceptedTelegramIntent(
+  db: D1Database,
+  update: TelegramUpdateLike,
+  intent: Exclude<TelegramIntentClassification['intent'], 'unknown' | 'ambiguous'>,
+  stateKeys: TelegramConversationStateKeys,
+  telemetry?: ChannelTelemetryPort,
+): Promise<string> {
+  switch (intent) {
+    case 'resource':
+      await deleteTelegramConversationStates(db, [stateKeys.workCenterStateKey, stateKeys.dispatchStateKey, stateKeys.sosStateKey, stateKeys.familyStateKey]);
+      return handleTelegramResourceConversation(db, update, stateKeys.resourceStateKey, undefined, telemetry);
+    case 'workcenter':
+      await deleteTelegramConversationStates(db, [stateKeys.resourceStateKey, stateKeys.dispatchStateKey, stateKeys.sosStateKey, stateKeys.familyStateKey]);
+      return handleTelegramWorkCenterConversation(db, update, stateKeys.workCenterStateKey, undefined, telemetry);
+    case 'family_reunification':
+      await deleteTelegramConversationStates(db, [
+        stateKeys.joinStateKey,
+        stateKeys.workCenterStateKey,
+        stateKeys.resourceStateKey,
+        stateKeys.dispatchStateKey,
+        stateKeys.sosStateKey,
+      ]);
+      return handleTelegramFamilyReunificationConversation(db, update, stateKeys.familyStateKey, undefined, telemetry);
+    case 'sos':
+      await deleteTelegramConversationStates(db, [stateKeys.workCenterStateKey, stateKeys.resourceStateKey, stateKeys.dispatchStateKey, stateKeys.familyStateKey]);
+      return handleTelegramSosConversation(db, update, stateKeys.sosStateKey, undefined, telemetry);
+    case 'dispatch':
+      await deleteTelegramConversationStates(db, [stateKeys.workCenterStateKey, stateKeys.resourceStateKey, stateKeys.sosStateKey, stateKeys.familyStateKey]);
+      return handleTelegramDispatchConversation(db, update, stateKeys.dispatchStateKey, undefined, telemetry);
+    case 'incident_join':
+      await deleteTelegramConversationStates(db, [
+        stateKeys.workCenterStateKey,
+        stateKeys.resourceStateKey,
+        stateKeys.dispatchStateKey,
+        stateKeys.sosStateKey,
+        stateKeys.familyStateKey,
+      ]);
+      return handleTelegramIncidentJoinConversation(db, update, stateKeys.joinStateKey, telemetry);
+  }
+}
+
+function isActionableTelegramIntentClassification(
+  classification: TelegramIntentClassification,
+  confidenceThreshold: number,
+): classification is TelegramIntentClassification & { intent: Exclude<TelegramIntentClassification['intent'], 'unknown' | 'ambiguous'> } {
+  return classification.intent !== 'unknown' && classification.intent !== 'ambiguous' && classification.confidence >= confidenceThreshold;
+}
+
+function getTelegramIntentAiBinding(env: Env): TelegramIntentAiBinding | null {
+  const ai = (env as Env & { AI?: TelegramIntentAiBinding }).AI;
+  return ai && typeof ai.run === 'function' ? ai : null;
+}
+
+function emitTelegramIntentRouterTelemetry(result: 'accepted' | 'rejected' | 'bypassed', action: string): void {
+  logStructuredOperationalEvent({
+    event: 'operation.processed',
+    category: 'sync',
+    result,
+    channel: 'telegram',
+    scope: 'telegram.intent_router',
+    action,
+    errorCode: null,
+  });
+}
+
+function buildTelegramIntentClarificationResponse(): string {
+  return 'I’m not sure which operation you need. Reply with /resource, /workcenter, /reunificacion, /sos, /dispatch, or /start.';
 }
 
 async function handleTelegramIncidentJoinConversation(
