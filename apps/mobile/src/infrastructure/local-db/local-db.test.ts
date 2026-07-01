@@ -38,6 +38,7 @@ describe('local operation database contract', () => {
       'incidents',
       'work_centers',
       'map_packs',
+      'sync_issues',
       'presence',
       'resource_reports',
       'dispatch_events',
@@ -60,6 +61,8 @@ describe('local operation database contract', () => {
     expect(Object.keys(localDbSchemas.sos_signals.properties)).toEqual(expect.arrayContaining(['severity', 'message']));
     expect(Object.keys(localDbSchemas.local_summaries.properties)).toEqual(expect.arrayContaining(['roleCounts']));
     expect(Object.keys(localDbSchemas.map_packs.properties)).toEqual(expect.arrayContaining(['failureReason']));
+    expect(localDbSchemas.sync_issues.primaryKey).toBe('issueId');
+    expect(Object.keys(localDbSchemas.sync_issues.properties)).toEqual(expect.arrayContaining(['issueId', 'state', 'code', 'opId', 'entityId', 'serverVersion', 'serverUpdatedAt']));
   });
 
   it('creates RxDB collections with schemas and migration strategies', async () => {
@@ -75,6 +78,7 @@ describe('local operation database contract', () => {
         incidents: expect.objectContaining({ schema: localDbSchemas.incidents }),
         work_centers: expect.objectContaining({ schema: localDbSchemas.work_centers }),
         map_packs: expect.objectContaining({ schema: localDbSchemas.map_packs }),
+        sync_issues: expect.objectContaining({ schema: localDbSchemas.sync_issues }),
       }),
     );
   });
@@ -189,6 +193,7 @@ function createFakeRxdbCollections() {
     incidents: new FakeRxCollection('incidentId'),
     work_centers: new FakeRxCollection('centerId'),
     map_packs: new FakeRxCollection('packId'),
+    sync_issues: new FakeRxCollection('issueId'),
     presence: new FakeRxCollection('presenceId'),
     resource_reports: new FakeRxCollection('reportId'),
     dispatch_events: new FakeRxCollection('dispatchEventId'),

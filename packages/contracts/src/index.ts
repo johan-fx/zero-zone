@@ -18,6 +18,7 @@ export const contractErrorCodes = [
   'invalid_signature',
   'unauthorized_operation',
   'permission_denied',
+  'scope_mismatch',
   'stale_cursor',
   'duplicate_operation',
   'operation_conflict',
@@ -65,6 +66,13 @@ export const contractErrorSemantics = {
     visibleMappingKey: {
       telegram: 'telegram.error.permission_denied',
       web: 'web.error.permission_denied',
+    },
+  },
+  scope_mismatch: {
+    meaning: 'The operation, cursor, or sync request targets a different incident or cell than the scoped endpoint.',
+    visibleMappingKey: {
+      telegram: 'telegram.error.scope_mismatch',
+      web: 'web.error.scope_mismatch',
     },
   },
   stale_cursor: {
@@ -187,10 +195,32 @@ export const PendingSignedOperationSchema = BaseSignedOperationSchema.extend({
 }).superRefine(validateOperationFamily);
 export type PendingSignedOperation = z.infer<typeof PendingSignedOperationSchema>;
 
+export const SyncCursorSchema = z.object({
+  incidentId: z.string().min(1),
+  cellId: z.string().min(1),
+  sequence: z.number().int().nonnegative(),
+  issuedAt: z.string().min(1),
+}).strict();
+export type SyncCursor = z.infer<typeof SyncCursorSchema>;
+
+export const SyncConflictSchema = z.object({
+  opId: z.string().min(1).optional(),
+  entityId: z.string().min(1).optional(),
+  entityType: OperationFamilySchema.optional(),
+  code: ContractErrorCodeSchema,
+  message: z.string().optional(),
+  serverVersion: z.number().int().positive().optional(),
+  serverUpdatedAt: z.string().min(1).optional(),
+}).strict();
+export type SyncConflict = z.infer<typeof SyncConflictSchema>;
+
 export const OperationAcceptedSchema = z.object({
   opId: z.string().min(1),
   status: z.literal('accepted'),
-});
+  entityId: z.string().min(1).optional(),
+  serverVersion: z.number().int().positive().optional(),
+  serverUpdatedAt: z.string().min(1).optional(),
+}).strict();
 export type OperationAccepted = z.infer<typeof OperationAcceptedSchema>;
 
 export const OperationRejectedSchema = z.object({
@@ -198,7 +228,8 @@ export const OperationRejectedSchema = z.object({
   status: z.literal('rejected'),
   code: ContractErrorCodeSchema,
   message: z.string().optional(),
-});
+  conflict: SyncConflictSchema.optional(),
+}).strict();
 export type OperationRejected = z.infer<typeof OperationRejectedSchema>;
 
 export const SyncPushResultSchema = z.discriminatedUnion('status', [OperationAcceptedSchema, OperationRejectedSchema]);
@@ -213,12 +244,53 @@ export type SyncPushRequest = z.infer<typeof SyncPushRequestSchema>;
 export const SyncPushResponseSchema = z.object({
   results: z.array(SyncPushResultSchema),
   cursor: z.string().nullable().optional(),
-});
+}).strict();
 export type SyncPushResponse = z.infer<typeof SyncPushResponseSchema>;
 
 export const channels = ['telegram', 'mobile', 'web-ui'] as const;
 export const ChannelSchema = z.enum(channels);
 export type Channel = z.infer<typeof ChannelSchema>;
+
+export const syncFreshnessStatuses = ['fresh', 'stale', 'expired', 'missing'] as const;
+export const SyncFreshnessStatusSchema = z.enum(syncFreshnessStatuses);
+export type SyncFreshnessStatus = z.infer<typeof SyncFreshnessStatusSchema>;
+
+export const ChannelFreshnessSchema = z.object({
+  channel: ChannelSchema,
+  status: SyncFreshnessStatusSchema,
+  lastFreshAt: z.string().min(1).nullable(),
+  lastSyncedAt: z.string().min(1).nullable(),
+  cursorLag: z.number().int().nonnegative(),
+  hasConflicts: z.boolean(),
+}).strict();
+export type ChannelFreshness = z.infer<typeof ChannelFreshnessSchema>;
+
+export const SyncFreshnessSchema = z.object({
+  status: SyncFreshnessStatusSchema,
+  lastFreshAt: z.string().min(1).nullable(),
+  lastSyncedAt: z.string().min(1).nullable(),
+  cursorLag: z.number().int().nonnegative(),
+  hasConflicts: z.boolean(),
+  channels: z.array(ChannelFreshnessSchema),
+}).strict();
+export type SyncFreshness = z.infer<typeof SyncFreshnessSchema>;
+
+export const SyncPullOperationSchema = z.object({
+  sequence: z.number().int().positive(),
+  serverVersion: z.number().int().positive(),
+  serverUpdatedAt: z.string().min(1),
+  operation: SignedOperationSchema,
+}).strict();
+export type SyncPullOperation = z.infer<typeof SyncPullOperationSchema>;
+
+export const SyncPullResponseSchema = z.object({
+  operations: z.array(SyncPullOperationSchema),
+  cursor: z.string().nullable(),
+  hasMore: z.boolean(),
+  freshness: SyncFreshnessSchema,
+  conflicts: z.array(SyncConflictSchema),
+}).strict();
+export type SyncPullResponse = z.infer<typeof SyncPullResponseSchema>;
 
 export const incidentRoles = ['volunteer', 'coordinator', 'logistics', 'medical'] as const;
 export const IncidentRoleSchema = z.enum(incidentRoles);

@@ -1,6 +1,6 @@
 import type { MapPackMetadata } from '@/infrastructure/maps/offline-map-packs';
 import type { SignedOperation } from '@/infrastructure/security/operation-signer';
-import type { SosLocation } from '@zona-cero/contracts';
+import type { SosLocation, SyncConflict, SyncState } from '@zona-cero/contracts';
 
 export const zeroZoneSpikeDbName = 'zero_zone_offline_spike';
 
@@ -9,6 +9,7 @@ export const localDbCollectionNames = [
   'incidents',
   'work_centers',
   'map_packs',
+  'sync_issues',
   'presence',
   'resource_reports',
   'dispatch_events',
@@ -39,6 +40,7 @@ export const localDbSchemas = {
   incidents: createSchema('incidents', 'incidentId', ['incidentId', 'title', 'status', 'syncState', 'updatedAt']),
   work_centers: createSchema('work_centers', 'centerId', ['centerId', 'incidentId', 'cellId', 'name', 'status', 'syncState', 'updatedAt']),
   map_packs: createSchema('map_packs', 'packId', ['packId', 'incidentId', 'cellId', 'bounds', 'state', 'progress', 'estimatedBytes', 'downloadedBytes', 'updatedAt']),
+  sync_issues: createSchema('sync_issues', 'issueId', ['issueId', 'incidentId', 'cellId', 'state', 'code', 'updatedAt']),
   presence: createSchema('presence', 'presenceId', ['presenceId', 'incidentId', 'cellId', 'status', 'updatedAt']),
   resource_reports: createSchema('resource_reports', 'reportId', ['reportId', 'incidentId', 'cellId', 'category', 'quantityApprox', 'urgency', 'constraints', 'reportKind', 'syncState', 'updatedAt']),
   dispatch_events: createSchema('dispatch_events', 'dispatchEventId', ['dispatchEventId', 'dispatchTaskId', 'incidentId', 'cellId', 'category', 'quantityApprox', 'status', 'updatedAt']),
@@ -61,6 +63,18 @@ export type LegacySyncOperationDocument = Partial<SignedOperation> & {
 export type MigratedSyncOperationDocument = LegacySyncOperationDocument & {
   schemaVersion: 1;
   materializedAt: string | null;
+};
+
+export type SyncOperationLocalDocument = SignedOperation & {
+  syncState: SyncState;
+  serverVersion?: number;
+  serverUpdatedAt?: string;
+  retryCount?: number;
+  lastSyncAttemptAt?: string;
+  nextRetryAt?: string;
+  syncErrorCode?: string;
+  syncErrorMessage?: string;
+  conflict?: SyncConflict;
 };
 
 export function migrateSyncOperationDocumentToV1(document: LegacySyncOperationDocument): MigratedSyncOperationDocument {
@@ -179,6 +193,21 @@ export type LocalSummaryLocalView = {
   roleCounts: Record<string, number>;
 };
 
+export type SyncIssueLocalView = {
+  issueId: string;
+  incidentId: string;
+  cellId: string;
+  state: Extract<SyncState, 'conflict' | 'rejected'>;
+  code: string;
+  message?: string;
+  opId?: string;
+  entityId?: string;
+  entityType?: string;
+  serverVersion?: number;
+  serverUpdatedAt?: string;
+  updatedAt: string;
+};
+
 type IncidentScoped = { incidentId: string };
 
 export type CollectionRepository<TDocument extends IncidentScoped> = {
@@ -191,11 +220,12 @@ export type CollectionRepository<TDocument extends IncidentScoped> = {
 export type LocalOperationDatabase = {
   schemaVersion: 1;
   migrationStrategies: ReturnType<typeof getLocalDbMigrationStrategies>;
-  syncOps: CollectionRepository<SignedOperation | MigratedSyncOperationDocument>;
+  syncOps: CollectionRepository<SyncOperationLocalDocument | MigratedSyncOperationDocument>;
   views: {
     incidents: CollectionRepository<IncidentLocalView>;
     workCenters: CollectionRepository<WorkCenterView>;
     mapPacks: CollectionRepository<MapPackMetadata>;
+    syncIssues: CollectionRepository<SyncIssueLocalView>;
     presence: CollectionRepository<PresenceLocalView>;
     resourceReports: CollectionRepository<ResourceReportLocalView>;
     dispatchEvents: CollectionRepository<DispatchEventLocalView>;
@@ -206,10 +236,11 @@ export type LocalOperationDatabase = {
 };
 
 export function createInMemoryLocalOperationDatabase(): LocalOperationDatabase {
-  const syncOps = createCollectionRepository<SignedOperation | MigratedSyncOperationDocument>((operation) => operation.opId);
+  const syncOps = createCollectionRepository<SyncOperationLocalDocument | MigratedSyncOperationDocument>((operation) => operation.opId);
   const incidents = createCollectionRepository<IncidentLocalView>((incident) => incident.incidentId);
   const workCenters = createCollectionRepository<WorkCenterView>((center) => center.centerId);
   const mapPacks = createCollectionRepository<MapPackMetadata>((pack) => pack.packId);
+  const syncIssues = createCollectionRepository<SyncIssueLocalView>((issue) => issue.issueId);
   const presence = createCollectionRepository<PresenceLocalView>((session) => session.presenceId);
   const resourceReports = createCollectionRepository<ResourceReportLocalView>((report) => report.reportId);
   const dispatchEvents = createCollectionRepository<DispatchEventLocalView>((event) => event.dispatchEventId);
@@ -224,6 +255,7 @@ export function createInMemoryLocalOperationDatabase(): LocalOperationDatabase {
       incidents,
       workCenters,
       mapPacks,
+      syncIssues,
       presence,
       resourceReports,
       dispatchEvents,
@@ -232,7 +264,7 @@ export function createInMemoryLocalOperationDatabase(): LocalOperationDatabase {
     },
     async resetIncident(incidentId: string) {
       const removedOperations = await syncOps.removeByIncident(incidentId);
-      const removedViews = await removeIncidentViews(incidentId, [incidents, workCenters, mapPacks, presence, resourceReports, dispatchEvents, sosSignals, localSummaries]);
+      const removedViews = await removeIncidentViews(incidentId, [incidents, workCenters, mapPacks, syncIssues, presence, resourceReports, dispatchEvents, sosSignals, localSummaries]);
 
       return {
         removedOperations,
@@ -281,6 +313,12 @@ export async function createRxdbLocalDatabase(options: CreateRxdbLocalDatabaseOp
   return database;
 }
 
+export async function createPersistentLocalOperationDatabase(name = zeroZoneSpikeDbName): Promise<LocalOperationDatabase> {
+  const rxdb = await createRxdbLocalDatabase({ name });
+
+  return createRxdbLocalOperationDatabase({ collections: requireRxdbCollections(rxdb) });
+}
+
 async function createDefaultRxDatabase(input: { name: string; storage: unknown; multiInstance: false }): Promise<RxdbDatabaseLike> {
   const { createRxDatabase } = await import('rxdb/plugins/core');
 
@@ -311,10 +349,11 @@ export function createRxdbCollectionDefinitions(): RxdbCollectionDefinitions {
 }
 
 export function createRxdbLocalOperationDatabase(database: { collections: Record<LocalDbCollectionName, RxCollectionLike> }): LocalOperationDatabase {
-  const syncOps = createRxCollectionRepository<SignedOperation | MigratedSyncOperationDocument>(database.collections.sync_ops, 'opId');
+  const syncOps = createRxCollectionRepository<SyncOperationLocalDocument | MigratedSyncOperationDocument>(database.collections.sync_ops, 'opId');
   const incidents = createRxCollectionRepository<IncidentLocalView>(database.collections.incidents, 'incidentId');
   const workCenters = createRxCollectionRepository<WorkCenterView>(database.collections.work_centers, 'centerId');
   const mapPacks = createRxCollectionRepository<MapPackMetadata>(database.collections.map_packs, 'packId');
+  const syncIssues = createRxCollectionRepository<SyncIssueLocalView>(database.collections.sync_issues, 'issueId');
   const presence = createRxCollectionRepository<PresenceLocalView>(database.collections.presence, 'presenceId');
   const resourceReports = createRxCollectionRepository<ResourceReportLocalView>(database.collections.resource_reports, 'reportId');
   const dispatchEvents = createRxCollectionRepository<DispatchEventLocalView>(database.collections.dispatch_events, 'dispatchEventId');
@@ -329,6 +368,7 @@ export function createRxdbLocalOperationDatabase(database: { collections: Record
       incidents,
       workCenters,
       mapPacks,
+      syncIssues,
       presence,
       resourceReports,
       dispatchEvents,
@@ -337,7 +377,7 @@ export function createRxdbLocalOperationDatabase(database: { collections: Record
     },
     async resetIncident(incidentId) {
       const removedOperations = await syncOps.removeByIncident(incidentId);
-      const removedViews = await removeIncidentViews(incidentId, [incidents, workCenters, mapPacks, presence, resourceReports, dispatchEvents, sosSignals, localSummaries]);
+      const removedViews = await removeIncidentViews(incidentId, [incidents, workCenters, mapPacks, syncIssues, presence, resourceReports, dispatchEvents, sosSignals, localSummaries]);
 
       return {
         removedOperations,
@@ -346,6 +386,22 @@ export function createRxdbLocalOperationDatabase(database: { collections: Record
       };
     },
   };
+}
+
+function requireRxdbCollections(database: RxdbDatabaseLike): Record<LocalDbCollectionName, RxCollectionLike> {
+  const collections = database.collections;
+
+  if (!collections) {
+    throw new Error('RxDB local database did not expose registered collections.');
+  }
+
+  for (const collectionName of localDbCollectionNames) {
+    if (!collections[collectionName]) {
+      throw new Error(`RxDB local database missing collection: ${collectionName}`);
+    }
+  }
+
+  return collections as Record<LocalDbCollectionName, RxCollectionLike>;
 }
 
 function createCollectionRepository<TDocument extends IncidentScoped>(getPrimaryKey: (document: TDocument) => string): CollectionRepository<TDocument> {
@@ -431,6 +487,7 @@ function createSchema(title: string, primaryKey: string, required: string[]): Lo
       opId: stringProperty,
       entityType: stringProperty,
       entityId: stringProperty,
+      issueId: stringProperty,
       opType: stringProperty,
       payload: objectProperty,
       bounds: objectProperty,
@@ -474,6 +531,15 @@ function createSchema(title: string, primaryKey: string, required: string[]): Lo
       progress: numberProperty,
       estimatedBytes: numberProperty,
       downloadedBytes: numberProperty,
+      serverVersion: numberProperty,
+      serverUpdatedAt: stringProperty,
+      retryCount: numberProperty,
+      lastSyncAttemptAt: stringProperty,
+      nextRetryAt: stringProperty,
+      syncErrorCode: stringProperty,
+      syncErrorMessage: stringProperty,
+      conflict: objectProperty,
+      code: stringProperty,
       hlc: stringProperty,
       createdAtDevice: stringProperty,
       updatedAt: stringProperty,

@@ -13,6 +13,7 @@ import {
   SosAlertCreateResponseSchema,
   SosAlertStatusResponseSchema,
   SosConnectedCreateRequestSchema,
+  SyncPullResponseSchema,
   WorkCenterConnectedCreateRequestSchema,
   WorkCenterCreateResponseSchema,
   WorkCenterDetailResponseSchema,
@@ -31,6 +32,7 @@ import {
   type SosAlertCreateResponse,
   type SosAlertStatusResponse,
   type SosConnectedCreateRequest,
+  type SyncFreshness,
   type WorkCenterConnectedCreateRequest,
   type WorkCenterCreateResponse,
   type WorkCenterDetailResponse,
@@ -149,6 +151,16 @@ export async function createSosAlert(
   return SosAlertCreateResponseSchema.parse(await response.json());
 }
 
+export async function fetchSyncFreshness(incidentId: string, cellId: string, fetcher: Fetcher = fetch): Promise<SyncFreshness> {
+  const response = await fetcher(`${getApiBaseUrl()}${syncPullPath(incidentId, cellId)}?limit=1`);
+
+  if (!response.ok) {
+    throw new Error(`Sync freshness failed with status ${response.status}`);
+  }
+
+  return SyncPullResponseSchema.parse(await response.json()).freshness;
+}
+
 export async function createWorkCenter(
   incidentId: string,
   request: WorkCenterConnectedCreateRequest,
@@ -220,6 +232,10 @@ export async function consumePrivateFamilyReunificationLink(
   }
 
   return PrivateWebLinkConsumeResponseSchema.parse(await response.json());
+}
+
+function syncPullPath(incidentId: string, cellId: string): string {
+  return `/incidents/${encodeURIComponent(incidentId)}/cells/${encodeURIComponent(cellId)}/sync/pull`;
 }
 
 function workCenterCollectionPath(incidentId: string): string {

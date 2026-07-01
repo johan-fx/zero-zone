@@ -66,7 +66,15 @@ import {
   type SosFanoutStatus,
   type SosFanoutJobStatus,
   type SosSeverity,
+  SyncCursorSchema,
+  SyncPullResponseSchema,
+  type SyncConflict,
+  type SyncCursor,
+  type SyncFreshness,
+  type SyncPullOperation,
+  type SyncPullResponse,
   type SyncPushResponse,
+  SyncPushResponseSchema,
   TelegramWebhookResultSchema,
   WorkCenterConnectedCreateRequestSchema,
   type WorkCenterConnectedCreateRequest,
@@ -132,6 +140,7 @@ const channels: Channel[] = ['telegram', 'mobile', 'web-ui'];
 const telegramConversationStateTtlMs = 30 * 60 * 1000;
 const familyReunificationSearchLinkTtlSeconds = 15 * 60;
 const familyReunificationSearchLinkMaxUses = 1;
+const defaultOperationalCellId = 'cell-zc-demo';
 
 const permissionSnapshots: IncidentConfigResponse['permissionSnapshots'] = {
   volunteer: {
@@ -568,27 +577,52 @@ app.get('/incidents/:incidentId/sos', async (c) => {
 app.post('/sync/push', async (c) => {
   const startedAt = Date.now();
   const body = await c.req.json().catch(() => null);
-  const parsed = parseSyncPushBody(body);
+  const response = await handleSyncPushRequest(c.env.DB, body, startedAt);
 
-  if (!parsed.success) {
-    logOperationEvent({ channel: null, opType: null, opId: null, entityId: null, result: 'rejected', errorCode: 'invalid_payload', latencyMs: Date.now() - startedAt });
-    return c.json({ error: 'invalid_payload', issues: parsed.error.issues }, 400);
+  if (!response.success) {
+    return c.json(response.error, 400);
   }
 
-  const response: SyncPushResponse = {
-    results: [],
-  };
+  return c.json(response.body);
+});
 
-  for (const rawOperation of parsed.data.operations) {
-    const result = await handleSyncPushOperation(c.env.DB, rawOperation, startedAt);
-    response.results.push(result);
+app.post('/incidents/:incidentId/cells/:cellId/sync/push', async (c) => {
+  const startedAt = Date.now();
+  const body = await c.req.json().catch(() => null);
+  const response = await handleSyncPushRequest(c.env.DB, body, startedAt, {
+    incidentId: c.req.param('incidentId'),
+    cellId: c.req.param('cellId'),
+  });
+
+  if (!response.success) {
+    return c.json(response.error, 400);
   }
 
-  return c.json(response);
+  return c.json(response.body);
 });
 
 app.get('/sync/pull', (c) => {
   return c.json({ operations: [], cursor: c.req.query('cursor') ?? null });
+});
+
+app.get('/incidents/:incidentId/cells/:cellId/sync/pull', async (c) => {
+  const incidentId = c.req.param('incidentId');
+  const cellId = c.req.param('cellId');
+  const cursor = c.req.query('cursor') ?? null;
+  const rawLimit = c.req.query('limit');
+  const limit = parseSyncPullLimit(rawLimit);
+
+  if (!limit.valid) {
+    return c.json({ error: 'invalid_payload', issues: [{ message: 'limit must be an integer between 1 and 100' }] }, 400);
+  }
+
+  const response = await handleSyncPullRequest(c.env.DB, incidentId, cellId, cursor, limit.value);
+
+  if (!response.success) {
+    return c.json({ error: response.error, message: response.message }, 400);
+  }
+
+  return c.json(response.body);
 });
 
 app.post('/telegram/webhook', async (c) => {
@@ -627,6 +661,43 @@ type SyncPushBodyParseResult =
   | { success: false; error: { issues: unknown[] } };
 
 type SyncPushOperationResult = SyncPushResponse['results'][number];
+
+type SyncScope = {
+  incidentId: string;
+  cellId: string;
+};
+
+type SyncPushRequestResult =
+  | { success: true; body: SyncPushResponse }
+  | { success: false; error: { error: ContractErrorCode; issues: unknown[] } };
+
+type ExistingSyncOperationRow = {
+  payloadHash: string;
+  status: 'accepted' | 'rejected';
+  resultEntityId: string | null;
+  serverVersion: number | null;
+  serverUpdatedAt: string | null;
+  conflictCode: ContractErrorCode | null;
+  conflictMessage: string | null;
+};
+
+type SyncChangeLogRow = {
+  sequence: number;
+  opId: string;
+  incidentId: string;
+  cellId: string;
+  entityId: string;
+  entityType: string;
+  opType: string;
+  operationJson: string;
+  serverVersion: number;
+  serverUpdatedAt: string;
+};
+
+type SyncScopeStats = {
+  maxSequence: number;
+  latestServerUpdatedAt: string | null;
+};
 
 type IncidentMembershipLookup = {
   channelIdentityId: string;
@@ -784,7 +855,87 @@ function parseSyncPushBody(body: unknown): SyncPushBodyParseResult {
   return { success: true, data: { operations: (body as { operations: unknown[] }).operations, cursor } };
 }
 
-async function handleSyncPushOperation(db: D1Database, rawOperation: unknown, startedAt: number): Promise<SyncPushOperationResult> {
+async function handleSyncPushRequest(db: D1Database, body: unknown, startedAt: number, scope?: SyncScope): Promise<SyncPushRequestResult> {
+  const parsed = parseSyncPushBody(body);
+
+  if (!parsed.success) {
+    logOperationEvent({ channel: null, opType: null, opId: null, entityId: null, result: 'rejected', errorCode: 'invalid_payload', latencyMs: Date.now() - startedAt });
+    return { success: false, error: { error: 'invalid_payload', issues: parsed.error.issues } };
+  }
+
+  const response: SyncPushResponse = {
+    results: [],
+  };
+
+  for (const rawOperation of parsed.data.operations) {
+    const result = await handleSyncPushOperation(db, rawOperation, startedAt, scope);
+    response.results.push(result);
+  }
+
+  return { success: true, body: SyncPushResponseSchema.parse(response) };
+}
+
+function parseSyncPullLimit(rawLimit: string | undefined): { valid: true; value: number } | { valid: false } {
+  if (rawLimit === undefined) {
+    return { valid: true, value: 50 };
+  }
+
+  if (!/^\d+$/.test(rawLimit)) {
+    return { valid: false };
+  }
+
+  const value = Number(rawLimit);
+  return Number.isInteger(value) && value >= 1 && value <= 100 ? { valid: true, value } : { valid: false };
+}
+
+async function handleSyncPullRequest(
+  db: D1Database,
+  incidentId: string,
+  cellId: string,
+  encodedCursor: string | null,
+  limit: number,
+): Promise<{ success: true; body: SyncPullResponse } | { success: false; error: ContractErrorCode; message: string }> {
+  const decodedCursor = decodeSyncCursor(encodedCursor);
+
+  if (!decodedCursor.success) {
+    return { success: false, error: 'stale_cursor', message: decodedCursor.message };
+  }
+
+  if (decodedCursor.cursor && (decodedCursor.cursor.incidentId !== incidentId || decodedCursor.cursor.cellId !== cellId)) {
+    return { success: false, error: 'scope_mismatch', message: 'cursor scope does not match request scope' };
+  }
+
+  const cursorSequence = decodedCursor.cursor?.sequence ?? 0;
+  const rows = await listSyncChanges(db, incidentId, cellId, cursorSequence, limit);
+  const lastSequence = rows.at(-1)?.sequence ?? cursorSequence;
+  const nextCursor = rows.length > 0 ? encodeSyncCursor({ incidentId, cellId, sequence: lastSequence, issuedAt: new Date().toISOString() }) : encodedCursor;
+  const stats = await getSyncScopeStats(db, incidentId, cellId);
+  const cursorLag = Math.max(0, stats.maxSequence - lastSequence);
+  const conflicts = await listSyncConflicts(db, incidentId, cellId);
+  const freshness = buildSyncFreshness(stats, cursorLag, conflicts.length > 0);
+  const operations: SyncPullOperation[] = rows.map((row) => {
+    const operation = JSON.parse(row.operationJson) as PendingSignedOperation;
+    return {
+      sequence: row.sequence,
+      serverVersion: row.serverVersion,
+      serverUpdatedAt: row.serverUpdatedAt,
+      operation: { ...operation, syncState: 'confirmed' },
+    };
+  });
+
+  return {
+    success: true,
+    body: SyncPullResponseSchema.parse({
+      operations,
+      cursor: nextCursor,
+      hasMore: cursorLag > 0,
+      freshness,
+      conflicts,
+    }),
+  };
+}
+
+async function handleSyncPushOperation(db: D1Database, rawOperation: unknown, startedAt: number, scope?: SyncScope): Promise<SyncPushOperationResult> {
   const opId = readStringProperty(rawOperation, 'opId');
   const opType = readStringProperty(rawOperation, 'opType');
   const entityId = readStringProperty(rawOperation, 'entityId');
@@ -809,6 +960,16 @@ async function handleSyncPushOperation(db: D1Database, rawOperation: unknown, st
     return { status: 'rejected', ...(opId ? { opId } : {}), code: 'invalid_payload' };
   }
 
+  if (scope && (parsed.data.incidentId !== scope.incidentId || parsed.data.cellId !== scope.cellId)) {
+    return rejectOperation(parsed.data, startedAt, 'scope_mismatch', {
+      opId: parsed.data.opId,
+      entityId: parsed.data.entityId,
+      entityType: parsed.data.entityType,
+      code: 'scope_mismatch',
+      message: 'operation scope does not match endpoint scope',
+    });
+  }
+
   if (parsed.data.opType === 'resource_report.create') {
     return handleResourceReportCreateSyncOperation(db, parsed.data, startedAt);
   }
@@ -822,16 +983,9 @@ async function handleSyncPushOperation(db: D1Database, rawOperation: unknown, st
   }
 
   if (parsed.data.opType !== 'work_center.create') {
-    logOperationEvent({
-      channel: 'mobile',
-      opType: parsed.data.opType,
-      opId: parsed.data.opId,
-      entityId: parsed.data.entityId,
-      result: 'accepted',
-      errorCode: null,
-      latencyMs: Date.now() - startedAt,
-    });
-    return { opId: parsed.data.opId, status: 'accepted' };
+    const payloadHash = await hashJson({ operation: parsed.data });
+    const existing = await resolveExistingSyncOperation(db, parsed.data, payloadHash, startedAt);
+    return existing ?? acceptSyncOperation(db, parsed.data, payloadHash, startedAt);
   }
 
   const payload = WorkCenterCreatePayloadSchema.safeParse(parsed.data.payload);
@@ -865,24 +1019,9 @@ async function handleSyncPushOperation(db: D1Database, rawOperation: unknown, st
   }
 
   const payloadHash = await hashJson({ operation: parsed.data });
-  const existingOperation = await db
-    .prepare('SELECT payload_hash AS payloadHash, status FROM sync_operations WHERE op_id = ?')
-    .bind(parsed.data.opId)
-    .first<{ payloadHash: string; status: string }>();
-
-  if (existingOperation) {
-    const result = existingOperation.payloadHash === payloadHash && existingOperation.status === 'accepted' ? 'accepted' : 'rejected';
-    const errorCode = result === 'accepted' ? null : 'operation_conflict';
-    logOperationEvent({
-      channel: 'mobile',
-      opType: parsed.data.opType,
-      opId: parsed.data.opId,
-      entityId: parsed.data.entityId,
-      result,
-      errorCode,
-      latencyMs: Date.now() - startedAt,
-    });
-    return result === 'accepted' ? { opId: parsed.data.opId, status: 'accepted' } : { opId: parsed.data.opId, status: 'rejected', code: 'operation_conflict' };
+  const existing = await resolveExistingSyncOperation(db, parsed.data, payloadHash, startedAt);
+  if (existing) {
+    return existing;
   }
 
   const existingWorkCenter = await db
@@ -891,32 +1030,18 @@ async function handleSyncPushOperation(db: D1Database, rawOperation: unknown, st
     .first<{ sourceOperationId: string | null }>();
 
   if (existingWorkCenter && existingWorkCenter.sourceOperationId !== parsed.data.opId) {
-    await recordSyncOperation(db, parsed.data, payloadHash, 'rejected');
-    logOperationEvent({
-      channel: 'mobile',
-      opType: parsed.data.opType,
+    await recordSyncOperation(db, parsed.data, payloadHash, 'rejected', 'operation_conflict', 'entity already exists with another source operation');
+    return rejectOperation(parsed.data, startedAt, 'operation_conflict', {
       opId: parsed.data.opId,
       entityId: parsed.data.entityId,
-      result: 'rejected',
-      errorCode: 'operation_conflict',
-      latencyMs: Date.now() - startedAt,
+      entityType: parsed.data.entityType,
+      code: 'operation_conflict',
+      message: 'entity already exists with another source operation',
     });
-    return { opId: parsed.data.opId, status: 'rejected', code: 'operation_conflict' };
   }
 
   await materializeWorkCenterCreateOperation(db, incident, parsed.data, payload.data);
-  await recordSyncOperation(db, parsed.data, payloadHash, 'accepted');
-  logOperationEvent({
-    channel: 'mobile',
-    opType: parsed.data.opType,
-    opId: parsed.data.opId,
-    entityId: parsed.data.entityId,
-    result: 'accepted',
-    errorCode: null,
-    latencyMs: Date.now() - startedAt,
-  });
-
-  return { opId: parsed.data.opId, status: 'accepted' };
+  return acceptSyncOperation(db, parsed.data, payloadHash, startedAt);
 }
 
 
@@ -943,14 +1068,18 @@ async function handleResourceReportCreateSyncOperation(db: D1Database, operation
     .bind(operation.entityId)
     .first<{ sourceOperationId: string | null }>();
   if (existingReport && existingReport.sourceOperationId !== operation.opId) {
-    await recordSyncOperation(db, operation, payloadHash, 'rejected');
-    return rejectOperation(operation, startedAt, 'operation_conflict');
+    await recordSyncOperation(db, operation, payloadHash, 'rejected', 'operation_conflict', 'entity already exists with another source operation');
+    return rejectOperation(operation, startedAt, 'operation_conflict', {
+      opId: operation.opId,
+      entityId: operation.entityId,
+      entityType: operation.entityType,
+      code: 'operation_conflict',
+      message: 'entity already exists with another source operation',
+    });
   }
 
   await materializeResourceReportCreateOperation(db, operation, payload.data, 'mobile');
-  await recordSyncOperation(db, operation, payloadHash, 'accepted');
-  logOperationEvent({ channel: 'mobile', opType: operation.opType, opId: operation.opId, entityId: operation.entityId, result: 'accepted', errorCode: null, latencyMs: Date.now() - startedAt });
-  return { opId: operation.opId, status: 'accepted' };
+  return acceptSyncOperation(db, operation, payloadHash, startedAt);
 }
 
 async function handleDispatchEventSyncOperation(db: D1Database, operation: PendingSignedOperation, startedAt: number): Promise<SyncPushOperationResult> {
@@ -975,27 +1104,29 @@ async function handleDispatchEventSyncOperation(db: D1Database, operation: Pendi
     const existingDispatchTask = await getExistingDispatchTaskForCreate(db, operation.incidentId, operation.entityId);
     if (existingDispatchTask) {
       if (isConflictingDispatchTaskCreate(existingDispatchTask, operation, createPayload.data)) {
-        await recordSyncOperation(db, operation, payloadHash, 'rejected');
-        return rejectOperation(operation, startedAt, 'operation_conflict');
+        await recordSyncOperation(db, operation, payloadHash, 'rejected', 'operation_conflict', 'dispatch task create conflicts with existing entity');
+        return rejectOperation(operation, startedAt, 'operation_conflict', {
+          opId: operation.opId,
+          entityId: operation.entityId,
+          entityType: operation.entityType,
+          code: 'operation_conflict',
+          message: 'dispatch task create conflicts with existing entity',
+        });
       }
 
-      await recordSyncOperation(db, operation, payloadHash, 'accepted');
-      logOperationEvent({ channel: 'mobile', opType: operation.opType, opId: operation.opId, entityId: operation.entityId, result: 'accepted', errorCode: null, latencyMs: Date.now() - startedAt });
-      return { opId: operation.opId, status: 'accepted' };
+      return acceptSyncOperation(db, operation, payloadHash, startedAt);
     }
 
     await materializeDispatchTaskCreateOperation(db, operation, createPayload.data, 'mobile');
   } else if (updatePayload?.success) {
     const updated = await materializeDispatchTaskUpdateOperation(db, operation, updatePayload.data, 'mobile');
     if (!updated) {
-      await recordSyncOperation(db, operation, payloadHash, 'rejected');
+      await recordSyncOperation(db, operation, payloadHash, 'rejected', 'not_found', 'dispatch task was not found for update');
       return rejectOperation(operation, startedAt, 'not_found');
     }
   }
 
-  await recordSyncOperation(db, operation, payloadHash, 'accepted');
-  logOperationEvent({ channel: 'mobile', opType: operation.opType, opId: operation.opId, entityId: operation.entityId, result: 'accepted', errorCode: null, latencyMs: Date.now() - startedAt });
-  return { opId: operation.opId, status: 'accepted' };
+  return acceptSyncOperation(db, operation, payloadHash, startedAt);
 }
 
 async function handleSosSyncOperation(db: D1Database, operation: PendingSignedOperation, startedAt: number): Promise<SyncPushOperationResult> {
@@ -1020,27 +1151,29 @@ async function handleSosSyncOperation(db: D1Database, operation: PendingSignedOp
     const existingAlert = await getSosAlertById(db, operation.incidentId, operation.entityId);
     if (existingAlert) {
       if (existingAlert.sourceOperationId !== operation.opId) {
-        await recordSyncOperation(db, operation, payloadHash, 'rejected');
-        return rejectOperation(operation, startedAt, 'operation_conflict');
+        await recordSyncOperation(db, operation, payloadHash, 'rejected', 'operation_conflict', 'SOS alert already exists with another source operation');
+        return rejectOperation(operation, startedAt, 'operation_conflict', {
+          opId: operation.opId,
+          entityId: operation.entityId,
+          entityType: operation.entityType,
+          code: 'operation_conflict',
+          message: 'SOS alert already exists with another source operation',
+        });
       }
 
-      await recordSyncOperation(db, operation, payloadHash, 'accepted');
-      logOperationEvent({ channel: 'mobile', opType: operation.opType, opId: operation.opId, entityId: operation.entityId, result: 'accepted', errorCode: null, latencyMs: Date.now() - startedAt });
-      return { opId: operation.opId, status: 'accepted' };
+      return acceptSyncOperation(db, operation, payloadHash, startedAt);
     }
 
     await insertSosAlert(db, operation.entityId, operation.incidentId, operation.cellId, createPayload.data, 'mobile', operation.opId, operation.actorKeyId, createPayload.data.reportedAt ?? operation.createdAtDevice);
   } else if (cancelPayload?.success) {
     const cancelled = await cancelSosAlert(db, operation.incidentId, operation.entityId, cancelPayload.data, 'mobile', operation.opId, operation.actorKeyId, cancelPayload.data.cancelledAt ?? operation.createdAtDevice);
     if (!cancelled) {
-      await recordSyncOperation(db, operation, payloadHash, 'rejected');
+      await recordSyncOperation(db, operation, payloadHash, 'rejected', 'not_found', 'SOS alert was not found for cancellation');
       return rejectOperation(operation, startedAt, 'not_found');
     }
   }
 
-  await recordSyncOperation(db, operation, payloadHash, 'accepted');
-  logOperationEvent({ channel: 'mobile', opType: operation.opType, opId: operation.opId, entityId: operation.entityId, result: 'accepted', errorCode: null, latencyMs: Date.now() - startedAt });
-  return { opId: operation.opId, status: 'accepted' };
+  return acceptSyncOperation(db, operation, payloadHash, startedAt);
 }
 
 async function resolveExistingSyncOperation(
@@ -1050,9 +1183,15 @@ async function resolveExistingSyncOperation(
   startedAt: number,
 ): Promise<SyncPushOperationResult | null> {
   const existingOperation = await db
-    .prepare('SELECT payload_hash AS payloadHash, status FROM sync_operations WHERE op_id = ?')
+    .prepare(
+      `SELECT payload_hash AS payloadHash, status, result_entity_id AS resultEntityId,
+              server_version AS serverVersion, server_updated_at AS serverUpdatedAt,
+              conflict_code AS conflictCode, conflict_message AS conflictMessage
+       FROM sync_operations
+       WHERE op_id = ?`,
+    )
     .bind(operation.opId)
-    .first<{ payloadHash: string; status: string }>();
+    .first<ExistingSyncOperationRow>();
 
   if (!existingOperation) {
     return null;
@@ -1061,12 +1200,192 @@ async function resolveExistingSyncOperation(
   const result = existingOperation.payloadHash === payloadHash && existingOperation.status === 'accepted' ? 'accepted' : 'rejected';
   const errorCode = result === 'accepted' ? null : 'operation_conflict';
   logOperationEvent({ channel: 'mobile', opType: operation.opType, opId: operation.opId, entityId: operation.entityId, result, errorCode, latencyMs: Date.now() - startedAt });
-  return result === 'accepted' ? { opId: operation.opId, status: 'accepted' } : { opId: operation.opId, status: 'rejected', code: 'operation_conflict' };
+  return result === 'accepted'
+    ? {
+        opId: operation.opId,
+        status: 'accepted',
+        entityId: existingOperation.resultEntityId ?? operation.entityId,
+        ...(existingOperation.serverVersion ? { serverVersion: existingOperation.serverVersion } : {}),
+        ...(existingOperation.serverUpdatedAt ? { serverUpdatedAt: existingOperation.serverUpdatedAt } : {}),
+      }
+    : {
+        opId: operation.opId,
+        status: 'rejected',
+        code: 'operation_conflict',
+        conflict: {
+          opId: operation.opId,
+          entityId: operation.entityId,
+          entityType: operation.entityType,
+          code: 'operation_conflict',
+          message: 'opId already exists with a different payload hash',
+        },
+      };
 }
 
-function rejectOperation(operation: PendingSignedOperation, startedAt: number, code: ContractErrorCode): SyncPushOperationResult {
+function rejectOperation(operation: PendingSignedOperation, startedAt: number, code: ContractErrorCode, conflict?: SyncConflict): SyncPushOperationResult {
   logOperationEvent({ channel: 'mobile', opType: operation.opType, opId: operation.opId, entityId: operation.entityId, result: 'rejected', errorCode: code, latencyMs: Date.now() - startedAt });
-  return { opId: operation.opId, status: 'rejected', code };
+  return { opId: operation.opId, status: 'rejected', code, ...(conflict ? { conflict } : {}) };
+}
+
+function encodeSyncCursor(cursor: SyncCursor): string {
+  return btoa(JSON.stringify(SyncCursorSchema.parse(cursor))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/u, '');
+}
+
+function decodeSyncCursor(encodedCursor: string | null): { success: true; cursor: SyncCursor | null } | { success: false; message: string } {
+  if (!encodedCursor) {
+    return { success: true, cursor: null };
+  }
+
+  try {
+    const padded = encodedCursor.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(encodedCursor.length / 4) * 4, '=');
+    const decoded = JSON.parse(atob(padded)) as unknown;
+    const parsed = SyncCursorSchema.safeParse(decoded);
+
+    if (!parsed.success) {
+      return { success: false, message: 'cursor payload is invalid' };
+    }
+
+    return { success: true, cursor: parsed.data };
+  } catch {
+    return { success: false, message: 'cursor is not a valid sync cursor' };
+  }
+}
+
+async function listSyncChanges(db: D1Database, incidentId: string, cellId: string, afterSequence: number, limit: number): Promise<SyncChangeLogRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT sequence, op_id AS opId, incident_id AS incidentId, cell_id AS cellId, entity_id AS entityId,
+              entity_type AS entityType, op_type AS opType, operation_json AS operationJson,
+              server_version AS serverVersion, server_updated_at AS serverUpdatedAt
+       FROM sync_change_log
+       WHERE incident_id = ? AND cell_id = ? AND sequence > ?
+       ORDER BY sequence ASC
+       LIMIT ?`,
+    )
+    .bind(incidentId, cellId, afterSequence, limit)
+    .all<SyncChangeLogRow>();
+
+  return results;
+}
+
+async function getSyncScopeStats(db: D1Database, incidentId: string, cellId: string): Promise<SyncScopeStats> {
+  const row = await db
+    .prepare(
+      `SELECT COALESCE(MAX(sequence), 0) AS maxSequence, MAX(server_updated_at) AS latestServerUpdatedAt
+       FROM sync_change_log
+       WHERE incident_id = ? AND cell_id = ?`,
+    )
+    .bind(incidentId, cellId)
+    .first<SyncScopeStats>();
+
+  return row ?? { maxSequence: 0, latestServerUpdatedAt: null };
+}
+
+async function listSyncConflicts(db: D1Database, incidentId: string, cellId: string): Promise<SyncConflict[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT op_id AS opId, entity_id AS entityId, entity_type AS entityType, conflict_code AS code,
+              conflict_message AS message, server_version AS serverVersion, server_updated_at AS serverUpdatedAt
+       FROM sync_operations
+       WHERE incident_id = ? AND cell_id = ? AND status = 'rejected' AND conflict_code IS NOT NULL
+       ORDER BY created_at DESC
+       LIMIT 20`,
+    )
+    .bind(incidentId, cellId)
+    .all<SyncConflict>();
+
+  return results.map((conflict) => ({
+    opId: conflict.opId,
+    entityId: conflict.entityId,
+    entityType: conflict.entityType,
+    code: conflict.code,
+    ...(conflict.message ? { message: conflict.message } : {}),
+    ...(conflict.serverVersion ? { serverVersion: conflict.serverVersion } : {}),
+    ...(conflict.serverUpdatedAt ? { serverUpdatedAt: conflict.serverUpdatedAt } : {}),
+  }));
+}
+
+function buildSyncFreshness(stats: SyncScopeStats, cursorLag: number, hasConflicts: boolean): SyncFreshness {
+  const nowMs = Date.now();
+  const lastSyncedAt = stats.latestServerUpdatedAt;
+  const lastSyncedMs = lastSyncedAt ? Date.parse(lastSyncedAt) : Number.NaN;
+  const ageMs = Number.isFinite(lastSyncedMs) ? nowMs - lastSyncedMs : Number.POSITIVE_INFINITY;
+  const status = !lastSyncedAt
+    ? 'missing'
+    : ageMs > 24 * 60 * 60 * 1000
+      ? 'expired'
+      : ageMs > 15 * 60 * 1000 || cursorLag > 0 || hasConflicts
+        ? 'stale'
+        : 'fresh';
+  const lastFreshAt = status === 'missing' ? null : lastSyncedAt;
+
+  return {
+    status,
+    lastFreshAt,
+    lastSyncedAt,
+    cursorLag,
+    hasConflicts,
+    channels: [
+      {
+        channel: 'mobile',
+        status,
+        lastFreshAt,
+        lastSyncedAt,
+        cursorLag,
+        hasConflicts,
+      },
+    ],
+  };
+}
+
+async function getIncidentSyncFreshness(db: D1Database, incidentId: string): Promise<SyncFreshness> {
+  const cellIds = await listIncidentSyncCellIds(db, incidentId);
+  const scopedFreshness = await Promise.all(
+    (cellIds.length > 0 ? cellIds : [defaultOperationalCellId]).map((cellId) => getScopedSyncFreshness(db, incidentId, cellId)),
+  );
+
+  return aggregateSyncFreshness(scopedFreshness);
+}
+
+async function listIncidentSyncCellIds(db: D1Database, incidentId: string): Promise<string[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT cell_id AS cellId FROM sync_change_log WHERE incident_id = ?
+       UNION
+       SELECT cell_id AS cellId FROM sync_operations WHERE incident_id = ?
+       ORDER BY cellId ASC`,
+    )
+    .bind(incidentId, incidentId)
+    .all<{ cellId: string }>();
+
+  return results.map((row) => row.cellId).filter(Boolean);
+}
+
+async function getScopedSyncFreshness(db: D1Database, incidentId: string, cellId: string): Promise<SyncFreshness> {
+  const stats = await getSyncScopeStats(db, incidentId, cellId);
+  const conflicts = await listSyncConflicts(db, incidentId, cellId);
+  return buildSyncFreshness(stats, 0, conflicts.length > 0);
+}
+
+function aggregateSyncFreshness(scopedFreshness: SyncFreshness[]): SyncFreshness {
+  const [first, ...rest] = scopedFreshness;
+  const worst = rest.reduce((current, candidate) => (
+    syncFreshnessRank(candidate.status) > syncFreshnessRank(current.status) ? candidate : current
+  ), first);
+
+  return {
+    ...worst,
+    cursorLag: scopedFreshness.reduce((sum, freshness) => sum + freshness.cursorLag, 0),
+    hasConflicts: scopedFreshness.some((freshness) => freshness.hasConflicts),
+    channels: scopedFreshness.flatMap((freshness) => freshness.channels),
+  };
+}
+
+function syncFreshnessRank(status: SyncFreshness['status']): number {
+  if (status === 'expired') return 3;
+  if (status === 'stale') return 2;
+  if (status === 'missing') return 1;
+  return 0;
 }
 
 async function getExistingDispatchTaskForCreate(db: D1Database, incidentId: string, dispatchTaskId: string): Promise<ExistingDispatchTaskCreateRow | null> {
@@ -1155,14 +1474,85 @@ async function materializeWorkCenterCreateOperation(
   await refreshWorkCenterDerivedState(db, operation.entityId, timestamp, payload.priority);
 }
 
-async function recordSyncOperation(db: D1Database, operation: PendingSignedOperation, payloadHash: string, status: 'accepted' | 'rejected'): Promise<void> {
+async function acceptSyncOperation(
+  db: D1Database,
+  operation: PendingSignedOperation,
+  payloadHash: string,
+  startedAt: number,
+): Promise<SyncPushOperationResult> {
+  const metadata = await recordSyncOperation(db, operation, payloadHash, 'accepted');
+  logOperationEvent({ channel: 'mobile', opType: operation.opType, opId: operation.opId, entityId: operation.entityId, result: 'accepted', errorCode: null, latencyMs: Date.now() - startedAt });
+  return {
+    opId: operation.opId,
+    status: 'accepted',
+    entityId: operation.entityId,
+    serverVersion: metadata.serverVersion,
+    serverUpdatedAt: metadata.serverUpdatedAt,
+  };
+}
+
+async function recordSyncOperation(
+  db: D1Database,
+  operation: PendingSignedOperation,
+  payloadHash: string,
+  status: 'accepted' | 'rejected',
+  conflictCode: ContractErrorCode | null = null,
+  conflictMessage: string | null = null,
+): Promise<{ serverVersion: number; serverUpdatedAt: string }> {
+  const serverUpdatedAt = new Date().toISOString();
+  let serverVersion = 0;
+
+  if (status === 'accepted') {
+    const change = await db
+      .prepare(
+        `INSERT INTO sync_change_log (
+           incident_id, cell_id, op_id, entity_id, entity_type, op_type, operation_json, server_updated_at
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        operation.incidentId,
+        operation.cellId,
+        operation.opId,
+        operation.entityId,
+        operation.entityType,
+        operation.opType,
+        JSON.stringify({ ...operation, syncState: 'confirmed' }),
+        serverUpdatedAt,
+      )
+      .run();
+    serverVersion = Number(change.meta.last_row_id);
+    await db.prepare('UPDATE sync_change_log SET server_version = ? WHERE sequence = ?').bind(serverVersion, serverVersion).run();
+  }
+
   await db
     .prepare(
-      `INSERT INTO sync_operations (op_id, incident_id, entity_id, entity_type, op_type, version, payload_hash, status, result_entity_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO sync_operations (
+         op_id, incident_id, cell_id, entity_id, entity_type, op_type, version, payload_hash, payload_json,
+         status, result_entity_id, server_version, server_updated_at, conflict_code, conflict_message
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .bind(operation.opId, operation.incidentId, operation.entityId, operation.entityType, operation.opType, operation.version, payloadHash, status, operation.entityId)
+    .bind(
+      operation.opId,
+      operation.incidentId,
+      operation.cellId,
+      operation.entityId,
+      operation.entityType,
+      operation.opType,
+      operation.version,
+      payloadHash,
+      JSON.stringify(operation),
+      status,
+      operation.entityId,
+      serverVersion || null,
+      status === 'accepted' ? serverUpdatedAt : null,
+      conflictCode,
+      conflictMessage,
+    )
     .run();
+
+  return { serverVersion, serverUpdatedAt };
 }
 
 async function findIncidentMembershipForChannel(
@@ -2668,6 +3058,14 @@ function createTelegramWorkCenterReportPorts(db: D1Database): TelegramWorkCenter
       }
 
       return WorkCenterCreateResponseSchema.parse(await createConnectedWorkCenter(db, incident, request, membership));
+    },
+    async getChannelFreshness(incidentId) {
+      const incident = await findIncident(db, incidentId);
+      if (!incident) {
+        throw Object.assign(new Error('not_found'), { error: 'not_found' });
+      }
+
+      return getIncidentSyncFreshness(db, incident.incidentId);
     },
   };
 }

@@ -40,6 +40,10 @@ import {
   SosConnectedCreateRequestSchema,
   SosCreatePayloadSchema,
   SosFanoutStatusSchema,
+  SyncConflictSchema,
+  SyncCursorSchema,
+  SyncFreshnessSchema,
+  SyncPullResponseSchema,
   SyncPushRequestSchema,
   SyncPushResponseSchema,
   WebLinkRequestSchema,
@@ -58,6 +62,7 @@ import {
   operationTypeFamilies,
   operationTypes,
   syncStates,
+  syncFreshnessStatuses,
   webLinkScopes,
   workCenterActivationStates,
   workCenterConfidenceLevels,
@@ -166,21 +171,93 @@ describe('contracts package', () => {
   });
 
   it('validates sync push responses with accepted and rejected operation results', () => {
+    const serverUpdatedAt = '2026-07-01T09:30:00.000Z';
+
     expect(
       SyncPushResponseSchema.parse({
         results: [
-          { opId: 'op-1', status: 'accepted' },
-          { opId: 'op-2', status: 'rejected', code: 'duplicate_operation' },
+          { opId: 'op-1', status: 'accepted', entityId: 'entity-1', serverVersion: 1, serverUpdatedAt },
+          {
+            opId: 'op-2',
+            status: 'rejected',
+            code: 'operation_conflict',
+            conflict: { opId: 'op-2', entityId: 'entity-2', code: 'operation_conflict', message: 'payload hash mismatch' },
+          },
         ],
         cursor: 'cursor-1',
       }),
     ).toEqual({
       results: [
-        { opId: 'op-1', status: 'accepted' },
-        { opId: 'op-2', status: 'rejected', code: 'duplicate_operation' },
+        { opId: 'op-1', status: 'accepted', entityId: 'entity-1', serverVersion: 1, serverUpdatedAt },
+        {
+          opId: 'op-2',
+          status: 'rejected',
+          code: 'operation_conflict',
+          conflict: { opId: 'op-2', entityId: 'entity-2', code: 'operation_conflict', message: 'payload hash mismatch' },
+        },
       ],
       cursor: 'cursor-1',
     });
+  });
+
+  it('validates strict sync pull, cursor, conflict, and freshness contracts', () => {
+    const serverUpdatedAt = '2026-07-01T09:30:00.000Z';
+    const cursor = SyncCursorSchema.parse({
+      incidentId: 'incident-1',
+      cellId: 'cell-a',
+      sequence: 7,
+      issuedAt: serverUpdatedAt,
+    });
+    expect(cursor.sequence).toBe(7);
+    expect(SyncCursorSchema.safeParse({ ...cursor, extra: true }).success).toBe(false);
+
+    const conflict = SyncConflictSchema.parse({
+      opId: 'op-2',
+      entityId: 'center-2',
+      entityType: 'work_center',
+      code: 'operation_conflict',
+      serverVersion: 7,
+      serverUpdatedAt,
+    });
+    expect(conflict.code).toBe('operation_conflict');
+    expect(SyncConflictSchema.safeParse({ ...conflict, visualResolution: 'client decides' }).success).toBe(false);
+
+    const freshness = SyncFreshnessSchema.parse({
+      status: 'stale',
+      lastFreshAt: serverUpdatedAt,
+      lastSyncedAt: serverUpdatedAt,
+      cursorLag: 2,
+      hasConflicts: true,
+      channels: [
+        {
+          channel: 'mobile',
+          status: 'stale',
+          lastFreshAt: serverUpdatedAt,
+          lastSyncedAt: serverUpdatedAt,
+          cursorLag: 2,
+          hasConflicts: true,
+        },
+      ],
+    });
+    expect(freshness.cursorLag).toBe(2);
+
+    const pull = SyncPullResponseSchema.parse({
+      operations: [
+        {
+          sequence: 7,
+          serverVersion: 7,
+          serverUpdatedAt,
+          operation: { ...signedOperationFixture, syncState: 'confirmed' },
+        },
+      ],
+      cursor: 'cursor-token',
+      hasMore: false,
+      freshness,
+      conflicts: [conflict],
+    });
+    expect(pull.operations[0]?.operation.syncState).toBe('confirmed');
+    expect(SyncPullResponseSchema.safeParse({ ...pull, debug: true }).success).toBe(false);
+    expect(syncFreshnessStatuses).toEqual(['fresh', 'stale', 'expired', 'missing']);
   });
 
   it('exposes stable contract error codes', () => {
@@ -190,6 +267,7 @@ describe('contracts package', () => {
       'invalid_signature',
       'unauthorized_operation',
       'permission_denied',
+      'scope_mismatch',
       'stale_cursor',
       'duplicate_operation',
       'operation_conflict',
@@ -200,6 +278,7 @@ describe('contracts package', () => {
       'link_correlation_mismatch',
     ]);
     expect(ContractErrorCodeSchema.parse('unsupported_operation_type')).toBe('unsupported_operation_type');
+    expect(ContractErrorCodeSchema.parse('scope_mismatch')).toBe('scope_mismatch');
     expect(Object.keys(contractErrorSemantics)).toEqual([...contractErrorCodes]);
     expect(contractErrorSemantics.link_expired.visibleMappingKey.telegram).toBe('telegram.error.link_expired');
     expect(contractErrorSemantics.invalid_operation_version.visibleMappingKey.web).toBe('web.error.invalid_operation_version');

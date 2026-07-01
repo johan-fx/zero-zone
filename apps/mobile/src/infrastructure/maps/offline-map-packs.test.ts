@@ -88,6 +88,22 @@ describe('offline map pack foundation', () => {
     expect(adapter.createPack).toHaveBeenCalledWith({ packId: 'incident-1:cell-b', styleURL: 'maplibre://style/retry', bounds: downloadedPack.bounds, minZoom: 8, maxZoom: 13 });
   });
 
+  it('persists visible degraded state when native MapLibre pack creation fails', async () => {
+    const repository = new InMemoryMapPackRepository();
+    const adapter = {
+      createPack: jest.fn().mockRejectedValue(new Error('native storage full')),
+      listPacks: jest.fn(),
+      deletePack: jest.fn(),
+    };
+    const service = new OfflineMapPackService(repository, { adapter, clock: () => '2026-06-29T10:00:00.000Z' });
+
+    const pack = await service.queuePack({ incidentId: 'incident-1', cellId: 'cell-degraded', bounds: downloadedPack.bounds, estimatedBytes: 42000 });
+
+    expect(pack).toMatchObject({ state: 'failed', failureReason: 'native storage full', progress: 0 });
+    expect(await repository.findByPackId('incident-1:cell-degraded')).toEqual(expect.objectContaining({ state: 'failed', failureReason: 'native storage full' }));
+    expect(resolveMapRenderState({ pack, networkAvailable: false })).toEqual({ coverage: 'missing', indicator: 'Missing offline map coverage' });
+  });
+
   it('protects the active operational pack from accidental cleanup', async () => {
     const repository = new InMemoryMapPackRepository([downloadedPack, { ...downloadedPack, packId: 'incident-2:cell-a', incidentId: 'incident-2' }]);
     const service = new OfflineMapPackService(repository, { activeIncidentId: 'incident-1', activeCellId: 'cell-a' });

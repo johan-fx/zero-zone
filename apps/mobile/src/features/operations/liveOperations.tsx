@@ -3,10 +3,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
 import { Paragraph, Text, XStack, YStack } from 'tamagui';
 
-import { createInMemoryLocalOperationDatabase, type DispatchEventLocalView, type LocalOperationDatabase, type PresenceLocalView, type ResourceReportLocalView, type SosSignalLocalView, type WorkCenterView } from '@/infrastructure/local-db/local-db';
+import { createInMemoryLocalOperationDatabase, type DispatchEventLocalView, type LocalOperationDatabase, type PresenceLocalView, type ResourceReportLocalView, type SosSignalLocalView, type SyncIssueLocalView, type SyncOperationLocalDocument, type WorkCenterView } from '@/infrastructure/local-db/local-db';
 import { resolveMapPreparationCoverage, resolveMapRenderState, type MapPackMetadata } from '@/infrastructure/maps';
 import { appendSignedOperationAndMaterialize } from '@/infrastructure/oplog/outbox-service';
 import { FakeOperationSigner, type OperationSigner } from '@/infrastructure/security';
+import type { ScopedOperationSyncService } from '@/infrastructure/sync';
 import { createUnavailableMeshtasticSosAdapter, type MeshtasticSosAdapter } from '@/infrastructure/transport';
 import { ActionButton, OperationalCard, StatusBadge } from '@/shared/ui';
 
@@ -35,6 +36,8 @@ export type LiveOperationalEntryScreenProps = {
   initialIncidentId?: string;
   networkAvailable?: boolean;
   sosTransport?: MeshtasticSosAdapter;
+  syncService?: ScopedOperationSyncService;
+  syncUnavailableReason?: string;
 };
 
 type LiveOperationalState = {
@@ -48,6 +51,24 @@ type LiveOperationalState = {
   mapPack: MapPackMetadata | null;
   mapPacks: MapPackMetadata[];
   pendingOperations: number;
+  sentOperations: number;
+  confirmedOperations: number;
+  conflictedOperations: number;
+  rejectedOperations: number;
+  syncIssues: SyncIssueLocalView[];
+  retryMetadata: SyncOperationRetryMetadata[];
+};
+
+type SyncOperationRetryMetadata = {
+  opId: string;
+  opType: string;
+  entityId: string;
+  syncState: string;
+  retryCount: number;
+  lastSyncAttemptAt?: string;
+  nextRetryAt?: string;
+  syncErrorCode?: string;
+  syncErrorMessage?: string;
 };
 
 type MapPreparationSummary = {
@@ -254,9 +275,10 @@ export async function cancelOfflineSosSignal(input: {
 export async function loadLiveOperationalState(database: LocalOperationDatabase, incidentId: string): Promise<LiveOperationalState> {
   const incident = await database.views.incidents.findById(incidentId);
   const cellId = incident?.cellId ?? DEFAULT_CELL_ID;
-  const [centers, mapPacks, operations, presenceSessions, resourceReports, dispatchEvents, sosSignals] = await Promise.all([
+  const [centers, mapPacks, syncIssues, operations, presenceSessions, resourceReports, dispatchEvents, sosSignals] = await Promise.all([
     database.views.workCenters.findByIncident(incidentId),
     database.views.mapPacks.findByIncident(incidentId),
+    database.views.syncIssues.findByIncident(incidentId),
     database.syncOps.findByIncident(incidentId),
     database.views.presence.findByIncident(incidentId),
     database.views.resourceReports.findByIncident(incidentId),
@@ -264,6 +286,11 @@ export async function loadLiveOperationalState(database: LocalOperationDatabase,
     database.views.sosSignals.findByIncident(incidentId),
   ]);
   const pendingOperations = operations.filter((operation) => 'syncState' in operation && operation.syncState === 'pending').length;
+  const sentOperations = operations.filter((operation) => 'syncState' in operation && operation.syncState === 'sent').length;
+  const confirmedOperations = operations.filter((operation) => 'syncState' in operation && operation.syncState === 'confirmed').length;
+  const conflictedOperations = operations.filter((operation) => 'syncState' in operation && operation.syncState === 'conflict').length;
+  const rejectedOperations = operations.filter((operation) => 'syncState' in operation && operation.syncState === 'rejected').length;
+  const retryMetadata = operations.flatMap(readOperationRetryMetadata);
   const selectedCenter = centers[centers.length - 1] ?? null;
   const mapPack = mapPacks.find((pack) => pack.cellId === cellId) ?? null;
 
@@ -278,7 +305,37 @@ export async function loadLiveOperationalState(database: LocalOperationDatabase,
     mapPack,
     mapPacks,
     pendingOperations,
+    sentOperations,
+    confirmedOperations,
+    conflictedOperations,
+    rejectedOperations,
+    syncIssues,
+    retryMetadata,
   };
+}
+
+function readOperationRetryMetadata(operation: SyncOperationLocalDocument | Partial<SyncOperationLocalDocument>): SyncOperationRetryMetadata[] {
+  const isRetryableState = operation.syncState === 'pending';
+  const retryCount = typeof operation.retryCount === 'number' ? operation.retryCount : 0;
+  const hasRetryMetadata = retryCount > 0 || Boolean(operation.nextRetryAt || operation.lastSyncAttemptAt || operation.syncErrorCode || operation.syncErrorMessage);
+
+  if (!isRetryableState || !hasRetryMetadata || !operation.opId || !operation.opType || !operation.entityId) {
+    return [];
+  }
+
+  return [
+    {
+      opId: operation.opId,
+      opType: operation.opType,
+      entityId: operation.entityId,
+      syncState: operation.syncState ?? 'unknown',
+      retryCount,
+      lastSyncAttemptAt: operation.lastSyncAttemptAt,
+      nextRetryAt: operation.nextRetryAt,
+      syncErrorCode: operation.syncErrorCode,
+      syncErrorMessage: operation.syncErrorMessage,
+    },
+  ];
 }
 
 export function LiveOperationalEntryScreen({
@@ -288,6 +345,8 @@ export function LiveOperationalEntryScreen({
   initialIncidentId,
   networkAvailable = false,
   sosTransport = createUnavailableMeshtasticSosAdapter(),
+  syncService,
+  syncUnavailableReason,
 }: LiveOperationalEntryScreenProps) {
   const database = useMemo(() => providedDatabase ?? createInMemoryLocalOperationDatabase(), [providedDatabase]);
   const [activeIncidentId, setActiveIncidentId] = useState(resolveInitialIncidentId(devScenario, initialIncidentId));
@@ -295,6 +354,7 @@ export function LiveOperationalEntryScreen({
   const [state, setState] = useState<LiveOperationalState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sosTransportNotice, setSosTransportNotice] = useState<SosTransportNotice>(null);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
 
   const refresh = useCallback(
     async (incidentId: string) => {
@@ -482,6 +542,23 @@ export function LiveOperationalEntryScreen({
     [database, refresh, signer],
   );
 
+  const handleSyncNow = useCallback(async () => {
+    if (!state?.incident || !syncService || !networkAvailable) {
+      return;
+    }
+
+    setError(null);
+    try {
+      const result = await syncService.sync({ incidentId: state.incident.incidentId, cellId: state.incident.cellId });
+      setSyncNotice(`Sync complete: ${result.confirmed} confirmed, ${result.conflicts} conflicts, ${result.rejected} rejected.`);
+      await refresh(state.incident.incidentId);
+    } catch (caughtError) {
+      setSyncNotice('Sync failed; pending operations will retry.');
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to sync operations');
+      await refresh(state.incident.incidentId);
+    }
+  }, [networkAvailable, refresh, state?.incident, syncService]);
+
   const mapState = resolveMapRenderState({ pack: state?.mapPack ?? null, networkAvailable });
   const missingRequestedIncident = Boolean(activeIncidentId && state && !state.incident);
   const mapPreparation = state?.incident?.incidentId === MAP_PREPARATION_INCIDENT_ID && state.mapPacks.length > 0 ? resolveMapPreparationSummary({ incidentId: state.incident.incidentId, networkAvailable, packs: state.mapPacks, requestedCellIds: MAP_PREPARATION_CELL_IDS }) : null;
@@ -503,7 +580,7 @@ export function LiveOperationalEntryScreen({
                   Signed local operations materialize immediately and remain pending until backend transport exists.
                 </Paragraph>
                 <Text color="$stale" fontSize="$xs" fontWeight="800">
-                  Dev spike storage: in-memory route only
+                  Dev spike storage: RxDB/SQLite local persistence
                 </Text>
               </YStack>
               <StatusBadge tone="pending" label={`Outbox: ${state?.pendingOperations ?? 0} pending`} />
@@ -526,6 +603,9 @@ export function LiveOperationalEntryScreen({
                 <Text color="$textMuted" fontSize="$sm" fontWeight="700">
                   Local outbox: {state.pendingOperations} pending
                 </Text>
+                <Text color="$textMuted" fontSize="$sm" fontWeight="700">
+                  Sync state: {state.sentOperations} sent · {state.confirmedOperations} confirmed
+                </Text>
               </YStack>
             ) : missingRequestedIncident ? (
               <YStack gap="$2">
@@ -541,6 +621,8 @@ export function LiveOperationalEntryScreen({
             )}
 
             {error ? <StatusBadge tone="risk" label={error} /> : null}
+            {syncNotice ? <StatusBadge tone="info" label={syncNotice} /> : null}
+            {!syncService && syncUnavailableReason ? <StatusBadge tone="stale" label={syncUnavailableReason} /> : null}
 
             <XStack flexWrap="wrap" gap="$2">
               <ActionButton label="Create local incident" onPress={handleCreateIncident} testID="create_local_incident_button" />
@@ -548,9 +630,12 @@ export function LiveOperationalEntryScreen({
               <ActionButton label="Show missing local data" onPress={() => handleDevScenario('missing-local-data')} testID="show_missing_local_data_button" tone="stale" />
               <ActionButton label="Seed stale center" onPress={() => handleDevScenario('stale-center-data')} testID="seed_stale_center_button" tone="warning" />
               <ActionButton label="Open map preparation" onPress={() => handleDevScenario('map-preparation')} testID="open_map_preparation_button" tone="info" />
+              <ActionButton disabled={!state?.incident || !syncService || !networkAvailable} label="Sync now" onPress={handleSyncNow} testID="sync_now_button" tone="success" />
             </XStack>
           </YStack>
         </OperationalCard>
+
+        {state ? <OutboxStatePanel state={state} /> : null}
 
         <LiveMapLibreSurface centers={state?.centers ?? []} indicator={mapState.indicator} />
 
@@ -563,6 +648,76 @@ export function LiveOperationalEntryScreen({
         {state?.selectedCenter ? <ResourceLogisticsPanel dispatchEvents={state.dispatchEvents} reports={state.resourceReports} selectedCenterId={state.selectedCenter.centerId} /> : null}
       </YStack>
     </YStack>
+  );
+}
+
+function OutboxStatePanel({ state }: { state: LiveOperationalState }) {
+  const hasIssues = state.syncIssues.length > 0 || state.conflictedOperations > 0 || state.rejectedOperations > 0;
+  const hasRetryMetadata = state.retryMetadata.length > 0;
+
+  return (
+    <OperationalCard testID="outbox_state_panel">
+      <YStack gap="$3">
+        <XStack items="center" justify="space-between" gap="$3">
+          <YStack grow={1} gap="$1">
+            <Text color="$text" fontSize="$lg" fontWeight="900">
+              Outbox sync state
+            </Text>
+            <Text color="$textMuted" fontSize="$sm" fontWeight="700">
+              Pending operations stay visible locally; conflicts and rejections require review before retrying.
+            </Text>
+          </YStack>
+          <StatusBadge tone={hasIssues ? 'risk' : state.pendingOperations > 0 || state.sentOperations > 0 ? 'pending' : 'success'} label={`${state.pendingOperations} pending · ${state.sentOperations} sent · ${state.confirmedOperations} confirmed`} />
+        </XStack>
+
+        <XStack flexWrap="wrap" gap="$2">
+          <StatusBadge tone={state.conflictedOperations > 0 ? 'risk' : 'stale'} label={`${state.conflictedOperations} conflicts`} />
+          <StatusBadge tone={state.rejectedOperations > 0 ? 'warning' : 'stale'} label={`${state.rejectedOperations} rejected`} />
+          <StatusBadge tone={hasRetryMetadata ? 'warning' : 'stale'} label={`${state.retryMetadata.length} retrying`} />
+        </XStack>
+
+        {hasRetryMetadata ? (
+          <YStack gap="$2" testID="outbox_retry_metadata">
+            {state.retryMetadata.map((metadata) => (
+              <YStack key={metadata.opId} gap="$1">
+                <Text color="$text" fontSize="$sm" fontWeight="900">
+                  Retry attempts: {metadata.retryCount} · {formatCanonicalValue(metadata.opType)}
+                </Text>
+                <Text color="$textMuted" fontSize="$xs" fontWeight="700">
+                  Entity: {metadata.entityId} · State: {formatCanonicalValue(metadata.syncState)}
+                </Text>
+                <Text color="$textMuted" fontSize="$xs" fontWeight="700">
+                  Next retry: {metadata.nextRetryAt ?? 'not scheduled'} · Last attempt: {metadata.lastSyncAttemptAt ?? 'not attempted'}
+                </Text>
+                <Text color="$textMuted" fontSize="$xs" fontWeight="700">
+                  Last error: {metadata.syncErrorCode ?? 'none'}{metadata.syncErrorMessage ? ` — ${metadata.syncErrorMessage}` : ''}
+                </Text>
+              </YStack>
+            ))}
+          </YStack>
+        ) : null}
+
+        {state.syncIssues.length > 0 ? (
+          state.syncIssues.map((issue) => (
+            <YStack key={issue.issueId} gap="$1">
+              <Text color="$text" fontSize="$sm" fontWeight="900">
+                {formatCanonicalValue(issue.state)} · {issue.code}
+              </Text>
+              <Text color="$textMuted" fontSize="$xs" fontWeight="700">
+                {issue.message ?? 'Backend returned a structured sync issue.'}
+              </Text>
+              <Text color="$textMuted" fontSize="$xs" fontWeight="700">
+                Entity: {issue.entityId ?? 'unknown'} · Version: {issue.serverVersion ? String(issue.serverVersion) : 'not provided'}
+              </Text>
+            </YStack>
+          ))
+        ) : (
+          <Text color="$textMuted" fontSize="$sm" fontWeight="700">
+            No backend conflicts or rejections recorded on this device.
+          </Text>
+        )}
+      </YStack>
+    </OperationalCard>
   );
 }
 

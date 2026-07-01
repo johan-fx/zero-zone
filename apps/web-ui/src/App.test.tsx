@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { DispatchTaskListResponse, DispatchTaskResponse, ResourceReportListResponse, SosAlertCreateResponse, SosAlertStatusResponse } from '@zona-cero/contracts';
+import type { DispatchTaskListResponse, DispatchTaskResponse, ResourceReportListResponse, SosAlertCreateResponse, SosAlertStatusResponse, SyncPullResponse } from '@zona-cero/contracts';
 import {
   familyReunificationSearchResponseFixture,
   privateFamilyReunificationConsumeResponseFixture,
@@ -14,6 +14,31 @@ import {
 } from '../../../packages/testing/src';
 import { App } from './App';
 
+
+
+const freshSyncPullFixture: SyncPullResponse = {
+  operations: [],
+  cursor: null,
+  hasMore: false,
+  freshness: {
+    status: 'fresh',
+    lastFreshAt: '2026-07-01T08:00:00.000Z',
+    lastSyncedAt: '2026-07-01T08:00:00.000Z',
+    cursorLag: 0,
+    hasConflicts: false,
+    channels: [
+      {
+        channel: 'mobile',
+        status: 'fresh',
+        lastFreshAt: '2026-07-01T08:00:00.000Z',
+        lastSyncedAt: '2026-07-01T08:00:00.000Z',
+        cursorLag: 0,
+        hasConflicts: false,
+      },
+    ],
+  },
+  conflicts: [],
+};
 
 const resourceReportListFixture: ResourceReportListResponse = {
   resourceReports: [
@@ -106,6 +131,9 @@ describe('web ui work center shell', () => {
       if (url.endsWith('/health')) {
         return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
       }
+      if (url.includes('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull')) {
+        return jsonResponse(freshSyncPullFixture);
+      }
       if (url.endsWith('/incidents/incident-zc-demo/work-centers')) {
         return jsonResponse(workCenterListHappyFixture);
       }
@@ -154,6 +182,102 @@ describe('web ui work center shell', () => {
     expect(within(status).getByText('fresh')).toBeInTheDocument();
     expect(within(status).getByText('low')).toBeInTheDocument();
     expect(within(status).getByText('medium')).toBeInTheDocument();
+  });
+
+
+  it('shows backend freshness channel limitation banners for stale, expired, missing, cursor lag, and conflicts', async () => {
+    const stalePull: SyncPullResponse = {
+      ...freshSyncPullFixture,
+      freshness: {
+        ...freshSyncPullFixture.freshness,
+        status: 'stale',
+        cursorLag: 4,
+        hasConflicts: true,
+      },
+      conflicts: [
+        {
+          opId: 'op-conflict-1',
+          entityId: 'center-north-triage',
+          entityType: 'work_center',
+          code: 'operation_conflict',
+          message: 'entity already exists with another source operation',
+        },
+      ],
+    };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/health')) return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
+      if (url.includes('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull')) return jsonResponse(stalePull);
+      if (url.endsWith('/incidents/incident-zc-demo/work-centers')) return jsonResponse(workCenterListHappyFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/work-centers/center-north-triage')) return jsonResponse(workCenterDetailHappyFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) return jsonResponse(resourceReportListFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/dispatch-tasks')) return jsonResponse(dispatchTaskListFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/sos')) return jsonResponse(sosStatusFixture);
+      return new Response('not found', { status: 404 });
+    });
+
+    render(<App />);
+
+    const staleTitle = await screen.findByText('Channel data may be stale');
+    const banner = staleTitle.closest('[role="status"]');
+    expect(banner).toHaveTextContent('Channel data may be stale');
+    expect(banner).toHaveTextContent('4 backend updates are not reflected');
+    expect(banner).toHaveTextContent('Sync conflicts are present');
+    expect(banner).not.toHaveTextContent(/offline save|offline sync|saved offline/i);
+  });
+
+  it('shows expired and missing backend freshness without promising offline-first behavior', async () => {
+    for (const status of ['expired', 'missing'] as const) {
+      cleanup();
+      vi.restoreAllMocks();
+      const pull: SyncPullResponse = {
+        ...freshSyncPullFixture,
+        freshness: {
+          ...freshSyncPullFixture.freshness,
+          status,
+          lastFreshAt: status === 'missing' ? null : freshSyncPullFixture.freshness.lastFreshAt,
+          lastSyncedAt: status === 'missing' ? null : freshSyncPullFixture.freshness.lastSyncedAt,
+        },
+      };
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        const url = String(input);
+        if (url.endsWith('/health')) return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
+        if (url.includes('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull')) return jsonResponse(pull);
+        if (url.endsWith('/incidents/incident-zc-demo/work-centers')) return jsonResponse({ workCenters: [] });
+        if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) return jsonResponse({ resourceReports: [] });
+        if (url.endsWith('/incidents/incident-zc-demo/dispatch-tasks')) return jsonResponse({ dispatchTasks: [] });
+        if (url.endsWith('/incidents/incident-zc-demo/sos')) return jsonResponse({ sosAlerts: [], fanout: { total: 0, queued: 0, pending: 0, failed: 0, cancelled: 0 } });
+        return new Response('not found', { status: 404 });
+      });
+
+      render(<App />);
+      const title = await screen.findByText(status === 'expired' ? 'Channel data expired' : 'Freshness signal missing');
+      const banner = title.closest('[role="status"]');
+      expect(banner).toHaveTextContent(status === 'expired' ? 'Channel data expired' : 'Freshness signal missing');
+      expect(banner).not.toHaveTextContent(/offline save|offline sync|saved offline/i);
+    }
+  });
+
+  it('does not show noisy channel limitation warnings when backend freshness is fresh', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/health')) return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
+      if (url.includes('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull')) return jsonResponse(freshSyncPullFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/work-centers')) return jsonResponse(workCenterListHappyFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/work-centers/center-north-triage')) return jsonResponse(workCenterDetailHappyFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) return jsonResponse(resourceReportListFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/dispatch-tasks')) return jsonResponse(dispatchTaskListFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/sos')) return jsonResponse(sosStatusFixture);
+      return new Response('not found', { status: 404 });
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByTestId('api-health')).toHaveTextContent('zona-cero-api is online'));
+    expect(screen.queryByText('Channel data may be stale')).not.toBeInTheDocument();
+    expect(screen.queryByText('Channel data expired')).not.toBeInTheDocument();
+    expect(screen.queryByText('Freshness signal missing')).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/offline save|offline sync|saved offline/i);
   });
 
   it('displays stable API errors for work center loading failures', async () => {
@@ -225,6 +349,7 @@ describe('web ui work center shell', () => {
     const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const url = String(input);
       if (url.endsWith('/health')) return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
+      if (url.includes('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull')) return jsonResponse(freshSyncPullFixture);
       if (url.endsWith('/incidents/incident-zc-demo/work-centers')) return jsonResponse(workCenterListHappyFixture);
       if (url.endsWith('/incidents/incident-zc-demo/work-centers/center-north-triage')) return jsonResponse(workCenterDetailHappyFixture);
       if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) return jsonResponse(resourceReportListFixture);
@@ -251,6 +376,7 @@ describe('web ui work center shell', () => {
     const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const url = String(input);
       if (url.endsWith('/health')) return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
+      if (url.includes('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull')) return jsonResponse(freshSyncPullFixture);
       if (url.endsWith('/incidents/incident-zc-demo/work-centers')) return jsonResponse(workCenterListHappyFixture);
       if (url.endsWith('/incidents/incident-zc-demo/work-centers/center-north-triage')) return jsonResponse(workCenterDetailHappyFixture);
       if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) return jsonResponse(resourceReportListFixture);
@@ -286,6 +412,7 @@ describe('web ui work center shell', () => {
     const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const url = String(input);
       if (url.endsWith('/health')) return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
+      if (url.includes('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull')) return jsonResponse(freshSyncPullFixture);
       if (url.endsWith('/incidents/incident-zc-demo/work-centers')) return jsonResponse(workCenterListHappyFixture);
       if (url.endsWith('/incidents/incident-zc-demo/work-centers/center-north-triage')) return jsonResponse(workCenterDetailHappyFixture);
       if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) return jsonResponse(resourceReportListFixture);
@@ -319,6 +446,7 @@ describe('web ui work center shell', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const url = String(input);
       if (url.endsWith('/health')) return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
+      if (url.includes('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull')) return jsonResponse(freshSyncPullFixture);
       if (url.endsWith('/incidents/incident-zc-demo/work-centers')) return jsonResponse(workCenterListHappyFixture);
       if (url.endsWith('/incidents/incident-zc-demo/work-centers/center-north-triage')) return jsonResponse(workCenterDetailHappyFixture);
       if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) return jsonResponse(resourceReportListFixture);

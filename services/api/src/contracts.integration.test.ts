@@ -8,6 +8,7 @@ import {
   IncidentListResponseSchema,
   SosAlertCreateResponseSchema,
   SosAlertStatusResponseSchema,
+  SyncPullResponseSchema,
   SyncPushResponseSchema,
   WorkCenterCreateResponseSchema,
   WorkCenterDetailResponseSchema,
@@ -83,7 +84,7 @@ describe('api contract integration', () => {
   it('returns sync push work center results accepted by shared contracts', async () => {
     const response = SyncPushResponseSchema.parse(
       await (
-        await request('/sync/push', {
+        await request('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/push', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(mobileWorkCenterCreateSyncPushFixture),
@@ -91,7 +92,11 @@ describe('api contract integration', () => {
       ).json(),
     );
 
-    expect(response.results[0]).toMatchObject({ opId: 'op-work-center-create-1', status: 'accepted' });
+    expect(response.results[0]).toMatchObject({ opId: 'op-work-center-create-1', status: 'accepted', entityId: 'center-north-triage' });
+
+    const pull = SyncPullResponseSchema.parse(await (await request('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull')).json());
+    expect(pull.operations[0]?.operation.opId).toBe('op-work-center-create-1');
+    expect(pull.freshness.status).toBe('fresh');
   });
 
   it('returns SOS payloads accepted by shared contracts', async () => {

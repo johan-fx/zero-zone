@@ -36,6 +36,7 @@ import {
   type IncidentListResponse,
   type IncidentRole,
   type IncidentSummary,
+  type SyncFreshness,
   type PrivateWebLinkIssueRequest,
   type PrivateWebLinkIssueResponse,
   type TelegramWebhookResult,
@@ -58,6 +59,7 @@ export type TelegramIncidentJoinPorts = {
 export type TelegramWorkCenterReportPorts = {
   listIncidents(): Promise<IncidentListResponse>;
   createWorkCenter(incidentId: string, request: WorkCenterConnectedCreateRequest): Promise<WorkCenterCreateResponse>;
+  getChannelFreshness?(incidentId: string): Promise<SyncFreshness>;
 };
 
 export type TelegramResourceReportPorts = {
@@ -854,6 +856,37 @@ export async function handleTelegramIncidentJoinFlow(
   return { state, responseText: 'Send /start to begin the incident join flow.' };
 }
 
+
+export function formatTelegramChannelLimitation(freshness: SyncFreshness): string | null {
+  if (freshness.status === 'fresh' && freshness.cursorLag === 0 && !freshness.hasConflicts) return null;
+
+  const details: string[] = [];
+  if (freshness.cursorLag > 0) details.push(`${freshness.cursorLag} backend updates may not be visible here yet`);
+  if (freshness.hasConflicts) details.push('sync conflicts need coordinator review');
+
+  const suffix = details.length > 0 ? ` ${details.join('; ')}.` : '';
+
+  if (freshness.status === 'missing') {
+    return `Channel limitation: backend freshness is missing for this scope. Telegram may be incomplete.${suffix}`;
+  }
+
+  if (freshness.status === 'expired') {
+    return `Channel limitation: backend freshness is expired for this scope. Do not treat Telegram data as current.${suffix}`;
+  }
+
+  return `Channel limitation: backend freshness is stale for this scope. Recent operations may not be visible in Telegram.${suffix}`;
+}
+
+async function getTelegramChannelLimitation(ports: TelegramWorkCenterReportPorts, incidentId: string): Promise<string | null> {
+  if (!ports.getChannelFreshness) return null;
+
+  try {
+    return formatTelegramChannelLimitation(await ports.getChannelFreshness(incidentId));
+  } catch {
+    return 'Channel limitation: backend freshness could not be loaded. Treat Telegram as informational until the API responds.';
+  }
+}
+
 export async function handleTelegramWorkCenterReportFlow(
   state: TelegramWorkCenterReportState,
   update: TelegramUpdateLike,
@@ -879,6 +912,8 @@ export async function handleTelegramWorkCenterReportFlow(
       };
     }
 
+    const limitation = await getTelegramChannelLimitation(ports, incident.incidentId);
+
     return {
       state: {
         step: 'awaitingName',
@@ -886,7 +921,7 @@ export async function handleTelegramWorkCenterReportFlow(
         externalUserId: state.externalUserId,
         displayName: state.displayName,
       },
-      responseText: 'Send the work center name. Use /cancel to stop.',
+      responseText: [limitation, 'Send the work center name. Use /cancel to stop.'].filter(Boolean).join('\n'),
     };
   }
 

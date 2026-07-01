@@ -13,6 +13,7 @@ import type {
   SosFanoutStatus,
   WorkCenterDetail,
   WorkCenterSummary,
+  SyncFreshness,
 } from '@zona-cero/contracts';
 import {
   consumePrivateFamilyReunificationLink,
@@ -21,6 +22,7 @@ import {
   fetchDispatchTasks,
   fetchResourceReports,
   fetchSosStatus,
+  fetchSyncFreshness,
   fetchWorkCenterDetail,
   fetchWorkCenters,
   searchFamilyReunification,
@@ -37,6 +39,11 @@ type HealthState =
 type WorkCenterState =
   | { status: 'loading' }
   | { status: 'ready'; workCenters: WorkCenterSummary[]; selected: WorkCenterDetail | null }
+  | { status: 'error'; message: string };
+
+type ChannelFreshnessState =
+  | { status: 'loading' }
+  | { status: 'ready'; freshness: SyncFreshness }
   | { status: 'error'; message: string };
 
 type ResourceState =
@@ -66,6 +73,7 @@ type FamilyReunificationForm = {
 };
 
 const defaultIncidentId = 'incident-zc-demo';
+const defaultCellId = 'cell-zc-demo';
 const defaultWebExternalId = 'web-user-1001';
 const defaultWebDisplayName = 'Field Web';
 const strongSosConfirmation = 'CONFIRM SOS';
@@ -94,10 +102,12 @@ export function App() {
 
 function OperationsPanel() {
   const incidentId = import.meta.env.VITE_INCIDENT_ID || defaultIncidentId;
+  const cellId = import.meta.env.VITE_CELL_ID || defaultCellId;
   const webExternalId = import.meta.env.VITE_WEB_EXTERNAL_ID || defaultWebExternalId;
   const webDisplayName = import.meta.env.VITE_WEB_DISPLAY_NAME || defaultWebDisplayName;
   const [healthState, setHealthState] = useState<HealthState>({ status: 'loading' });
   const [workCenterState, setWorkCenterState] = useState<WorkCenterState>({ status: 'loading' });
+  const [channelFreshnessState, setChannelFreshnessState] = useState<ChannelFreshnessState>({ status: 'loading' });
   const [resourceState, setResourceState] = useState<ResourceState>({ status: 'loading' });
   const [dispatchState, setDispatchState] = useState<DispatchState>({ status: 'loading' });
   const [sosState, setSosState] = useState<SosState>({ status: 'loading' });
@@ -124,6 +134,11 @@ function OperationsPanel() {
   useEffect(() => {
     let active = true;
 
+    async function loadChannelFreshness() {
+      const freshness = await fetchSyncFreshness(incidentId, cellId);
+      if (active) setChannelFreshnessState({ status: 'ready', freshness });
+    }
+
     async function loadWorkCenters() {
       const { workCenters } = await fetchWorkCenters(incidentId);
       const firstWorkCenter = workCenters[0];
@@ -149,6 +164,9 @@ function OperationsPanel() {
       if (active) setSosState({ status: 'ready', response });
     }
 
+    loadChannelFreshness().catch((error: unknown) => {
+      if (active) setChannelFreshnessState({ status: 'error', message: errorMessage(error) });
+    });
     loadWorkCenters().catch((error: unknown) => {
       if (active) setWorkCenterState({ status: 'error', message: errorMessage(error) });
     });
@@ -165,7 +183,7 @@ function OperationsPanel() {
     return () => {
       active = false;
     };
-  }, [incidentId]);
+  }, [incidentId, cellId]);
 
   async function handleDispatchAction(task: DispatchTask, status: Exclude<DispatchTaskStatus, 'pending'>) {
     if (dispatchState.status !== 'ready') return;
@@ -245,6 +263,8 @@ function OperationsPanel() {
         ) : null}
         {healthState.status === 'error' ? <p role="alert">{healthState.message}</p> : null}
       </section>
+
+      <ChannelFreshnessBanner state={channelFreshnessState} />
 
       <section className="status-card" aria-labelledby="work-centers-title" aria-live="polite">
         <div className="section-header">
@@ -579,6 +599,62 @@ function SosAlertList({ alerts }: { alerts: SosAlert[] }) {
       ))}
     </ul>
   );
+}
+
+
+function ChannelFreshnessBanner({ state }: { state: ChannelFreshnessState }) {
+  if (state.status === 'loading') return null;
+
+  if (state.status === 'error') {
+    return (
+      <section className="status-card channel-warning" role="status" aria-live="polite">
+        <h2>Channel freshness unavailable</h2>
+        <p>Could not load backend freshness signals. Treat this web view as informational until the API responds.</p>
+      </section>
+    );
+  }
+
+  const warning = describeChannelFreshnessWarning(state.freshness);
+  if (!warning) return null;
+
+  return (
+    <section className="status-card channel-warning" role="status" aria-live="polite">
+      <div className="section-header">
+        <div>
+          <p className="eyebrow">Channel limitation</p>
+          <h2>{warning.title}</h2>
+        </div>
+        <strong>{state.freshness.status}</strong>
+      </div>
+      <p>{warning.body}</p>
+      {state.freshness.cursorLag > 0 ? <p>{state.freshness.cursorLag} backend updates are not reflected in this view yet.</p> : null}
+      {state.freshness.hasConflicts ? <p>Sync conflicts are present. Use coordinator review before acting on disputed records.</p> : null}
+      <p>Refresh from the backend before operational decisions.</p>
+    </section>
+  );
+}
+
+function describeChannelFreshnessWarning(freshness: SyncFreshness): { title: string; body: string } | null {
+  if (freshness.status === 'fresh' && freshness.cursorLag === 0 && !freshness.hasConflicts) return null;
+
+  if (freshness.status === 'missing') {
+    return {
+      title: 'Freshness signal missing',
+      body: 'The backend has no freshness record for this channel scope. This web view may be incomplete.',
+    };
+  }
+
+  if (freshness.status === 'expired') {
+    return {
+      title: 'Channel data expired',
+      body: 'The backend marked this channel scope as expired. Do not treat the visible data as current.',
+    };
+  }
+
+  return {
+    title: 'Channel data may be stale',
+    body: 'The backend marked this channel scope as stale. Some recent operations may not be visible here.',
+  };
 }
 
 function WorkCenterOnlineView({ state }: { state: Extract<WorkCenterState, { status: 'ready' }> }) {

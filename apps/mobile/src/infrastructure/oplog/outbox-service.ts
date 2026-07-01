@@ -30,7 +30,21 @@ export async function appendSignedOperationAndMaterialize({
   return { operation, views };
 }
 
-async function persistMaterializedViews(database: LocalOperationDatabase, views: MaterializedOperationViews): Promise<void> {
+export async function replaceMaterializedOperationViews(database: LocalOperationDatabase, incidentId: string, views: MaterializedOperationViews): Promise<void> {
+  await Promise.all([
+    database.views.incidents.removeByIncident(incidentId),
+    database.views.workCenters.removeByIncident(incidentId),
+    database.views.presence.removeByIncident(incidentId),
+    database.views.resourceReports.removeByIncident(incidentId),
+    database.views.dispatchEvents.removeByIncident(incidentId),
+    database.views.sosSignals.removeByIncident(incidentId),
+    database.views.localSummaries.removeByIncident(incidentId),
+  ]);
+
+  await persistMaterializedViews(database, views);
+}
+
+export async function persistMaterializedViews(database: LocalOperationDatabase, views: MaterializedOperationViews): Promise<void> {
   await Promise.all(views.incidents.map((incident) => database.views.incidents.upsert(incident)));
 
   for (const center of views.workCenters) {
@@ -44,6 +58,6 @@ async function persistMaterializedViews(database: LocalOperationDatabase, views:
   await Promise.all(views.localSummaries.map((summary) => database.views.localSummaries.upsert({ ...summary, summaryId: `${summary.incidentId}:${summary.cellId}` })));
 }
 
-function isSignedOperation(operation: unknown): operation is SignedOperation {
+export function isSignedOperation(operation: unknown): operation is SignedOperation {
   return Boolean(operation && typeof operation === 'object' && 'opId' in operation && 'signature' in operation && 'entityType' in operation);
 }

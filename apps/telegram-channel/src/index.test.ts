@@ -20,6 +20,7 @@ import {
   type DispatchTask,
   type DispatchTaskResponse,
   type ResourceReportCreateResponse,
+  type SyncFreshness,
 } from '@zona-cero/contracts';
 import {
   TelegramDispatchTaskStateSchema,
@@ -34,6 +35,7 @@ import {
   handleTelegramResourceReportFlow,
   handleTelegramSosFlow,
   handleTelegramWorkCenterReportFlow,
+  formatTelegramChannelLimitation,
   handleTelegramWebhookUpdate,
   isTerminalTelegramIncidentJoinState,
   isTerminalTelegramSosState,
@@ -86,6 +88,25 @@ function createWorkCenterPorts(overrides: Partial<TelegramWorkCenterReportPorts>
   };
 }
 
+
+
+const freshSyncFreshnessFixture: SyncFreshness = {
+  status: 'fresh',
+  lastFreshAt: '2026-07-01T08:00:00.000Z',
+  lastSyncedAt: '2026-07-01T08:00:00.000Z',
+  cursorLag: 0,
+  hasConflicts: false,
+  channels: [
+    {
+      channel: 'mobile',
+      status: 'fresh',
+      lastFreshAt: '2026-07-01T08:00:00.000Z',
+      lastSyncedAt: '2026-07-01T08:00:00.000Z',
+      cursorLag: 0,
+      hasConflicts: false,
+    },
+  ],
+};
 
 const resourceReportCreateResponseFixture: ResourceReportCreateResponse = {
   resourceReport: {
@@ -496,6 +517,63 @@ describe('telegram channel flows', () => {
 
     expect(state.step).toBe('awaitingRole');
     expect(responseText).toContain('Could not join the incident');
+  });
+
+
+  it('formats Telegram channel limitations from backend freshness signals', () => {
+    expect(formatTelegramChannelLimitation({ ...freshSyncFreshnessFixture, status: 'stale' })).toContain('backend freshness is stale');
+    expect(formatTelegramChannelLimitation({ ...freshSyncFreshnessFixture, status: 'expired' })).toContain('backend freshness is expired');
+    expect(formatTelegramChannelLimitation({ ...freshSyncFreshnessFixture, status: 'missing', lastFreshAt: null, lastSyncedAt: null })).toContain('backend freshness is missing');
+    expect(formatTelegramChannelLimitation({ ...freshSyncFreshnessFixture, cursorLag: 2 })).toContain('2 backend updates may not be visible');
+    expect(formatTelegramChannelLimitation({ ...freshSyncFreshnessFixture, hasConflicts: true })).toContain('sync conflicts need coordinator review');
+  });
+
+  it('does not add Telegram channel limitation noise for fresh backend freshness', () => {
+    expect(formatTelegramChannelLimitation(freshSyncFreshnessFixture)).toBeNull();
+  });
+
+  it('shows Telegram channel limitation before collecting work center data when freshness is stale', async () => {
+    const ports = createWorkCenterPorts({
+      getChannelFreshness: vi.fn().mockResolvedValue({ ...freshSyncFreshnessFixture, status: 'stale', cursorLag: 3 }),
+    });
+    const { responseText } = await advanceWorkCenter(['/workcenter', '1'], ports);
+
+    expect(responseText).toContain('Channel limitation');
+    expect(responseText).toContain('backend freshness is stale');
+    expect(responseText).toContain('3 backend updates may not be visible');
+    expect(responseText).toContain('Send the work center name');
+  });
+
+  it('omits Telegram channel limitation before collecting work center data when freshness is fresh', async () => {
+    const ports = createWorkCenterPorts({ getChannelFreshness: vi.fn().mockResolvedValue(freshSyncFreshnessFixture) });
+    const { responseText } = await advanceWorkCenter(['/workcenter', '1'], ports);
+
+    expect(responseText).not.toContain('Channel limitation');
+    expect(responseText).toBe('Send the work center name. Use /cancel to stop.');
+  });
+
+  it('shows Telegram channel limitation before collecting work center data when freshness is expired', async () => {
+    const ports = createWorkCenterPorts({
+      getChannelFreshness: vi.fn().mockResolvedValue({ ...freshSyncFreshnessFixture, status: 'expired' }),
+    });
+    const { responseText } = await advanceWorkCenter(['/workcenter', '1'], ports);
+
+    expect(responseText).toContain('Channel limitation');
+    expect(responseText).toContain('backend freshness is expired');
+    expect(responseText).toContain('Do not treat Telegram data as current');
+    expect(responseText).toContain('Send the work center name');
+  });
+
+  it('shows Telegram channel limitation before collecting work center data when freshness is missing', async () => {
+    const ports = createWorkCenterPorts({
+      getChannelFreshness: vi.fn().mockResolvedValue({ ...freshSyncFreshnessFixture, status: 'missing', lastFreshAt: null, lastSyncedAt: null }),
+    });
+    const { responseText } = await advanceWorkCenter(['/workcenter', '1'], ports);
+
+    expect(responseText).toContain('Channel limitation');
+    expect(responseText).toContain('backend freshness is missing');
+    expect(responseText).toContain('Telegram may be incomplete');
+    expect(responseText).toContain('Send the work center name');
   });
 
   it('runs the /workcenter happy path and submits a schema-compatible minimal payload', async () => {

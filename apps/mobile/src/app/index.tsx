@@ -1,11 +1,12 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Paragraph, Text, XStack, YStack } from 'tamagui';
 
 import { LiveOperationalEntryScreen, resolveLiveOperationsDevScenario } from '@/features/operations/liveOperations';
-import { createInMemoryLocalOperationDatabase } from '@/infrastructure/local-db/local-db';
+import { createPersistentLocalOperationDatabase, type LocalOperationDatabase } from '@/infrastructure/local-db/local-db';
+import { createMobileRuntimeSync } from '@/infrastructure/sync';
 import { ThemePreference, useOperationalTheme } from '@/shared/theme';
 import { ActionButton, OperationalCard, StatusBadge } from '@/shared/ui';
 
@@ -14,9 +15,34 @@ const themeOptions: ThemePreference[] = ['system', 'day', 'night'];
 export default function HomeScreen() {
   const params = useLocalSearchParams<{ scenario?: string }>();
   const router = useRouter();
-  const database = useMemo(() => createInMemoryLocalOperationDatabase(), []);
+  const [database, setDatabase] = useState<LocalOperationDatabase | null>(null);
+  const [databaseError, setDatabaseError] = useState<string | null>(null);
   const devScenario = resolveLiveOperationsDevScenario(params.scenario);
   const { preference, setPreference, themeName } = useOperationalTheme();
+  const runtimeSync = useMemo(() => (database ? createMobileRuntimeSync({ database }) : null), [database]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function openDatabase() {
+      try {
+        const openedDatabase = await createPersistentLocalOperationDatabase();
+        if (isMounted) {
+          setDatabase(openedDatabase);
+        }
+      } catch (error) {
+        if (isMounted) {
+          setDatabaseError(error instanceof Error ? error.message : 'Unable to open local database');
+        }
+      }
+    }
+
+    void openDatabase();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   return (
     <SafeAreaView style={{ flex: 1 }} edges={['bottom']}>
@@ -68,7 +94,20 @@ export default function HomeScreen() {
           </YStack>
         </OperationalCard>
 
-        <LiveOperationalEntryScreen database={database} devScenario={devScenario} />
+        {database ? (
+          <LiveOperationalEntryScreen database={database} devScenario={devScenario} networkAvailable={runtimeSync?.networkAvailable ?? false} syncService={runtimeSync?.syncService} syncUnavailableReason={runtimeSync?.syncUnavailableReason} />
+        ) : (
+          <OperationalCard testID="local-database-status">
+            <YStack gap="$2">
+              <Text color={databaseError ? '$risk' : '$text'} fontSize="$lg" fontWeight="900">
+                {databaseError ? 'Local storage unavailable' : 'Opening device local storage'}
+              </Text>
+              <Paragraph color="$textMuted" fontSize="$sm" lineHeight={20}>
+                {databaseError ?? 'Preparing the durable RxDB + Expo SQLite offline store.'}
+              </Paragraph>
+            </YStack>
+          </OperationalCard>
+        )}
       </YStack>
       </ScrollView>
     </SafeAreaView>

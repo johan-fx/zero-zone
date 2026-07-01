@@ -8,6 +8,7 @@ import { Theme, TamaguiProvider } from 'tamagui';
 import { createInMemoryLocalOperationDatabase } from '@/infrastructure/local-db/local-db';
 import { appendSignedOperationAndMaterialize } from '@/infrastructure/oplog/outbox-service';
 import { FakeOperationSigner } from '@/infrastructure/security';
+import type { ScopedOperationSyncService } from '@/infrastructure/sync';
 import type { MeshtasticSosAdapter } from '@/infrastructure/transport';
 import { OperationalThemeProvider } from '@/shared/theme';
 import { tamaguiConfig } from '../../../tamagui.config';
@@ -20,6 +21,8 @@ async function renderLiveOperations(input: {
   networkAvailable?: boolean;
   signingKey?: string;
   sosTransport?: MeshtasticSosAdapter;
+  syncService?: ScopedOperationSyncService;
+  syncUnavailableReason?: string;
 } = {}) {
   const database = input.database ?? createInMemoryLocalOperationDatabase();
   const signer = new FakeOperationSigner(input.signingKey ?? 'slice-b-live-tests');
@@ -28,7 +31,7 @@ async function renderLiveOperations(input: {
     <OperationalThemeProvider>
       <TamaguiProvider config={tamaguiConfig} defaultTheme="light">
         <Theme name="light">
-          <LiveOperationalEntryScreen database={database} devScenario={input.devScenario} initialIncidentId={input.initialIncidentId} networkAvailable={input.networkAvailable} signer={signer} sosTransport={input.sosTransport} />
+          <LiveOperationalEntryScreen database={database} devScenario={input.devScenario} initialIncidentId={input.initialIncidentId} networkAvailable={input.networkAvailable} signer={signer} sosTransport={input.sosTransport} syncService={input.syncService} syncUnavailableReason={input.syncUnavailableReason} />
         </Theme>
       </TamaguiProvider>
     </OperationalThemeProvider>,
@@ -92,6 +95,106 @@ describe('live operational flow wiring', () => {
     expect(screen.getByText('Local outbox: 1 pending')).toBeTruthy();
   });
 
+  it('enables Sync now when a runtime sync service is available', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    await seedPreparedIncident(database);
+    const sync = jest.fn<ReturnType<ScopedOperationSyncService['sync']>, Parameters<ScopedOperationSyncService['sync']>>().mockResolvedValue({
+      pushed: 1,
+      pulled: 0,
+      confirmed: 1,
+      conflicts: 0,
+      rejected: 0,
+      cursor: null,
+      hasMore: false,
+    });
+
+    const { screen } = await renderLiveOperations({
+      database,
+      initialIncidentId: 'incident-prepared',
+      networkAvailable: true,
+      syncService: { sync },
+    });
+
+    await waitFor(() => expect(screen.getByText('Incident: Prepared flood response')).toBeTruthy());
+    await pressAndFlush(screen.getByTestId('sync_now_button'));
+
+    await waitFor(() => expect(screen.getByText('Sync complete: 1 confirmed, 0 conflicts, 0 rejected.')).toBeTruthy());
+    expect(sync).toHaveBeenCalledWith({ incidentId: 'incident-prepared', cellId: 'cell-a7' });
+  });
+
+  it('shows a visible sync degradation reason when runtime API config is absent', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    await seedPreparedIncident(database);
+
+    const { screen } = await renderLiveOperations({
+      database,
+      initialIncidentId: 'incident-prepared',
+      syncUnavailableReason: 'Sync unavailable: set EXPO_PUBLIC_API_BASE_URL for the Equipo B API before deployment.',
+    });
+
+    await waitFor(() => expect(screen.getByText('Incident: Prepared flood response')).toBeTruthy());
+
+    expect(screen.getByText('Sync unavailable: set EXPO_PUBLIC_API_BASE_URL for the Equipo B API before deployment.')).toBeTruthy();
+    expect(screen.getByTestId('sync_now_button')).toBeDisabled();
+  });
+
+  it('shows persisted retry metadata after a fresh state load', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    await seedPreparedIncident(database);
+    const [operation] = await database.syncOps.findByIncident('incident-prepared');
+    if (!operation) {
+      throw new Error('Expected prepared incident operation');
+    }
+
+    await database.syncOps.upsert({
+      ...operation,
+      syncState: 'pending',
+      retryCount: 2,
+      lastSyncAttemptAt: '2026-06-29T09:05:00.000Z',
+      nextRetryAt: '2026-06-29T09:06:00.000Z',
+      syncErrorCode: 'network_error',
+      syncErrorMessage: 'Gateway timeout',
+    });
+
+    const { screen } = await renderLiveOperations({ database, initialIncidentId: 'incident-prepared' });
+
+    await waitFor(() => expect(screen.getByText('Incident: Prepared flood response')).toBeTruthy());
+
+    expect(screen.getByTestId('outbox_retry_metadata')).toBeTruthy();
+    expect(screen.getByText('1 retrying')).toBeTruthy();
+    expect(screen.getByText('Retry attempts: 2 · incident.create')).toBeTruthy();
+    expect(screen.getByText('Next retry: 2026-06-29T09:06:00.000Z · Last attempt: 2026-06-29T09:05:00.000Z')).toBeTruthy();
+    expect(screen.getByText('Last error: network_error — Gateway timeout')).toBeTruthy();
+    expect(screen.getByText('No backend conflicts or rejections recorded on this device.')).toBeTruthy();
+  });
+
+  it('does not show stale retry metadata for confirmed operations', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    await seedPreparedIncident(database);
+    const [operation] = await database.syncOps.findByIncident('incident-prepared');
+    if (!operation) {
+      throw new Error('Expected prepared incident operation');
+    }
+
+    await database.syncOps.upsert({
+      ...operation,
+      syncState: 'confirmed',
+      retryCount: 2,
+      lastSyncAttemptAt: '2026-06-29T09:05:00.000Z',
+      nextRetryAt: '2026-06-29T09:06:00.000Z',
+      syncErrorCode: 'network_error',
+      syncErrorMessage: 'Gateway timeout',
+    });
+
+    const { screen } = await renderLiveOperations({ database, initialIncidentId: 'incident-prepared' });
+
+    await waitFor(() => expect(screen.getByText('Incident: Prepared flood response')).toBeTruthy());
+
+    expect(screen.getByText('0 retrying')).toBeTruthy();
+    expect(screen.queryByTestId('outbox_retry_metadata')).toBeNull();
+    expect(screen.queryByText('Retry attempts: 2 · incident.create')).toBeNull();
+  });
+
   it('creates an unverified offline incident as a pending signed outbox operation', async () => {
     const { screen, database } = await renderLiveOperations();
 
@@ -141,7 +244,7 @@ describe('live operational flow wiring', () => {
     ]);
     expect(screen.getAllByText('Offline provisional').length).toBeGreaterThan(0);
     expect(screen.getByText('Activation: offline provisional')).toBeTruthy();
-    expect(screen.getByText('Dev spike storage: in-memory route only')).toBeTruthy();
+    expect(screen.getByText('Dev spike storage: RxDB/SQLite local persistence')).toBeTruthy();
   });
 
   it('generates unique local work center ids when no center id is provided', async () => {

@@ -33,8 +33,8 @@ Usar este reparto como contrato de trabajo para todas las slices. La clave es qu
 | 3 | Centros de trabajo | 🟢 | 🟢 | 🟢 | Hecho |
 | 4 | Recursos + logística | 🟢 | 🟢 | 🟢 | Hecho |
 | 5 | SOS conectado + nativo crítico | 🟢 | 🟢 | 🟢 | Hecho |
-| 6 | Reunificación familiar web | ⬜ | ⬜ | ⬜ | No iniciado |
-| 7 | Sync/offline hardening | ⬜ | ⬜ | ⬜ | No iniciado |
+| 6 | Reunificación familiar web | 🟢 | 🟢 | 🟢 | Hecho |
+| 7 | Sync/offline hardening | 🟢 | 🟢 | 🟢 | Hecho |
 | 8 | Observabilidad + seguridad | ⬜ | ⬜ | ⬜ | No iniciado |
 
 Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloqueado.
@@ -327,18 +327,37 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 
 | Equipo | Checklist |
 |---|---|
-| A | ⬜ Mostrar limitaciones del canal cuando no hay datos frescos. |
-| B | ⬜ `sync/push` y `sync/pull` por incidente/celda/cursor. |
-| B | ⬜ Deduplicación e idempotencia de operaciones. |
-| C | ⬜ RxDB/SQLite real según diseño vigente. |
-| C | ⬜ Reintentos, conflictos y estados visibles de outbox. |
-| C | ⬜ Map packs offline operativos. |
+| A | 🟢 Mostrar limitaciones del canal cuando no hay datos frescos. |
+| B | 🟢 `sync/push` y `sync/pull` por incidente/celda/cursor. |
+| B | 🟢 Deduplicación e idempotencia de operaciones. |
+| C | 🟢 RxDB/SQLite real según diseño vigente. |
+| C | 🟢 Reintentos, conflictos y estados visibles de outbox. |
+| C | 🟢 Map packs offline operativos. |
 
 **Definition of Done**
 
-- Acción offline aparece localmente de inmediato.
-- Acción sincroniza después sin duplicarse.
-- Datos stale se degradan visual y operativamente.
+- 🟢 Acción offline aparece localmente de inmediato.
+- 🟢 Acción sincroniza después sin duplicarse.
+- 🟢 Datos stale se degradan visual y operativamente.
+
+**Cierre Slice 7**
+
+- Equipo B acotó los endpoints de sync por incidente/celda, añadió cursor/change log en `sync/pull`, protegió duplicados de forma idempotente, estructuró conflictos y expuso señales de frescura.
+- Equipo A muestra limitaciones de canal en Telegram/Web para estados stale, expirados, ausentes o en conflicto, incluido el wiring real del webhook Telegram mediante `getChannelFreshness`, sin simular comportamiento offline-first.
+- Equipo C usa cliente/servicio sync acotado, persistencia runtime RxDB/SQLite, estados visibles de reintento/conflicto en outbox, reconciliación segura ante duplicados y degradación de mapa offline.
+- Fresh review inicial detectó un P1 de wiring real en Telegram y un P3 de copy móvil; ambos fueron remediados y revalidados.
+- Fresh review final: 0 P0/P1/P2/P3.
+- Hardening futuro no bloqueante: headers de autenticación mobile y auto-sync disparado por conectividad.
+
+**Evidencia de verificación**
+
+- `git diff --check` ✅
+- `pnpm contracts:test:strict` ✅
+- `pnpm api:test:strict` ✅
+- `pnpm telegram:test:strict` ✅
+- `pnpm web:test:strict` ✅
+- `pnpm mobile:test:strict` ✅
+- `pnpm test:strict` ✅
 
 ## Slice 8 - Observabilidad + seguridad
 

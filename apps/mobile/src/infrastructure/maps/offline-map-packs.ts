@@ -114,13 +114,11 @@ export class OfflineMapPackService {
     };
 
     await this.repository.upsert(pack);
-    await this.options.adapter?.createPack({
-      packId: pack.packId,
-      styleURL: this.options.styleURL ?? 'maplibre://offline-pack',
-      bounds: pack.bounds,
-      minZoom: this.options.minZoom ?? 0,
-      maxZoom: this.options.maxZoom ?? 16,
-    });
+    const nativeResult = await this.createNativePack(pack);
+
+    if (!nativeResult.success) {
+      return this.markFailed(pack.packId, nativeResult.reason);
+    }
 
     return pack;
   }
@@ -172,13 +170,11 @@ export class OfflineMapPackService {
     };
 
     await this.repository.upsert(nextPack);
-    await this.options.adapter?.createPack({
-      packId: nextPack.packId,
-      styleURL: this.options.styleURL ?? 'maplibre://offline-pack',
-      bounds: nextPack.bounds,
-      minZoom: this.options.minZoom ?? 0,
-      maxZoom: this.options.maxZoom ?? 16,
-    });
+    const nativeResult = await this.createNativePack(nextPack);
+
+    if (!nativeResult.success) {
+      return this.markFailed(nextPack.packId, nativeResult.reason);
+    }
 
     return nextPack;
   }
@@ -220,6 +216,26 @@ export class OfflineMapPackService {
     }
 
     return pack;
+  }
+
+  private async createNativePack(pack: MapPackMetadata): Promise<{ success: true } | { success: false; reason: string }> {
+    if (!this.options.adapter) {
+      return { success: true };
+    }
+
+    try {
+      await this.options.adapter.createPack({
+        packId: pack.packId,
+        styleURL: this.options.styleURL ?? 'maplibre://offline-pack',
+        bounds: pack.bounds,
+        minZoom: this.options.minZoom ?? 0,
+        maxZoom: this.options.maxZoom ?? 16,
+      });
+
+      return { success: true };
+    } catch (error) {
+      return { success: false, reason: error instanceof Error ? error.message : 'MapLibre offline pack creation failed' };
+    }
   }
 }
 

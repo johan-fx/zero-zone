@@ -74,6 +74,7 @@ function createFakeRxdbCollections(writeOrder: string[]) {
     incidents: new FakeRxCollection('incidents', 'incidentId', writeOrder),
     work_centers: new FakeRxCollection('work_centers', 'centerId', writeOrder),
     map_packs: new FakeRxCollection('map_packs', 'packId', writeOrder),
+    sync_issues: new FakeRxCollection('sync_issues', 'issueId', writeOrder),
     presence: new FakeRxCollection('presence', 'presenceId', writeOrder),
     resource_reports: new FakeRxCollection('resource_reports', 'reportId', writeOrder),
     dispatch_events: new FakeRxCollection('dispatch_events', 'dispatchEventId', writeOrder),

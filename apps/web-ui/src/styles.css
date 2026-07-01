@@ -259,3 +259,12 @@ dd {
     display: grid;
   }
 }
+
+.channel-warning {
+  border-color: rgba(251, 191, 36, 0.55);
+  background: rgba(113, 63, 18, 0.28);
+}
+
+.channel-warning strong {
+  color: #fde68a;
+}
