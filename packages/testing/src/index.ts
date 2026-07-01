@@ -6,6 +6,14 @@ import type {
   IncidentJoinRequest,
   IncidentJoinResponse,
   IncidentListResponse,
+  FamilyReunificationSearchRequest,
+  FamilyReunificationSearchResponse,
+  PrivateWebLinkConsumeRequest,
+  PrivateWebLinkConsumeResponse,
+  PrivateWebLinkIssueRequest,
+  PrivateWebLinkIssueResponse,
+  PrivateWebLinkValidateRequest,
+  PrivateWebLinkValidateResponse,
   SosAlertCreateResponse,
   SosAlertStatusResponse,
   SosConnectedCreateRequest,
@@ -257,6 +265,93 @@ export const webLinkFlowFixtures = {
     },
   },
 } as const;
+
+export const privateFamilyReunificationIssueRequestFixture: PrivateWebLinkIssueRequest = {
+  scope: 'family_reunification.search',
+  channel: 'web-ui',
+  externalId: 'web-user-1001',
+  displayName: 'Field Web',
+  correlationId: 'corr-family-reunification-search-1',
+  returnState: 'web:family-reunification:search',
+  ttlSeconds: 600,
+  maxUses: 1,
+  metadata: {
+    source: 'private-web-family-reunification',
+  },
+};
+
+export const privateFamilyReunificationIssueResponseFixture: PrivateWebLinkIssueResponse = {
+  linkId: 'pwl_fixture_family_1',
+  token: 'opaque-private-family-token-fixture',
+  scope: 'family_reunification.search',
+  incidentId: 'incident-zc-demo',
+  correlationId: 'corr-family-reunification-search-1',
+  returnState: 'web:family-reunification:search',
+  expiresAt: '2026-07-01T09:00:00.000Z',
+  maxUses: 1,
+  audit: { auditEventId: 'audit_private_link_issued_fixture_1' },
+};
+
+export const privateFamilyReunificationValidateRequestFixture: PrivateWebLinkValidateRequest = {
+  token: privateFamilyReunificationIssueResponseFixture.token,
+  scope: 'family_reunification.search',
+  correlationId: privateFamilyReunificationIssueResponseFixture.correlationId,
+  fingerprint: 'browser-fingerprint-fixture',
+};
+
+export const privateFamilyReunificationValidateResponseFixture: PrivateWebLinkValidateResponse = {
+  valid: true,
+  linkId: privateFamilyReunificationIssueResponseFixture.linkId,
+  scope: 'family_reunification.search',
+  incidentId: 'incident-zc-demo',
+  correlationId: privateFamilyReunificationIssueResponseFixture.correlationId,
+  expiresAt: privateFamilyReunificationIssueResponseFixture.expiresAt,
+  remainingUses: 1,
+  nextAction: 'in_person_verification',
+  audit: { auditEventId: 'audit_private_link_validated_fixture_1' },
+};
+
+export const privateFamilyReunificationConsumeRequestFixture: PrivateWebLinkConsumeRequest = {
+  ...privateFamilyReunificationValidateRequestFixture,
+  referralReason: 'family_reunification_in_person_verification',
+};
+
+export const privateFamilyReunificationConsumeResponseFixture: PrivateWebLinkConsumeResponse = {
+  accepted: true,
+  linkId: privateFamilyReunificationIssueResponseFixture.linkId,
+  referral: {
+    type: 'in_person_verification',
+    message: 'Continue with in-person verification. Do not share photos, exact location, or full minor identity in chat.',
+  },
+  audit: { auditEventId: 'audit_private_link_consumed_fixture_1' },
+};
+
+export const familyReunificationSearchRequestFixture: FamilyReunificationSearchRequest = {
+  token: privateFamilyReunificationIssueResponseFixture.token,
+  correlationId: privateFamilyReunificationIssueResponseFixture.correlationId,
+  fingerprint: 'browser-fingerprint-fixture',
+  query: {
+    ageBand: 'child',
+    relationHint: 'parent looking for child',
+    lastKnownAreaLabel: 'north gate area',
+  },
+};
+
+export const familyReunificationSearchResponseFixture: FamilyReunificationSearchResponse = {
+  matches: [{
+    matchId: 'match_stub_1',
+    status: 'possible_match',
+    ageBand: 'child',
+    relationHint: 'family desk can compare details in person',
+    lastKnownAreaLabel: 'north gate area',
+    verificationRequired: true,
+  }],
+  referral: {
+    type: 'in_person_verification',
+    message: 'Visit the family reunification desk for identity-safe verification.',
+  },
+  audit: { auditEventId: 'audit_family_reunification_search_fixture_1' },
+};
 
 export const signedOperationGoldenVector: {
   signer: 'FakeOperationSigner';

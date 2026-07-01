@@ -2,7 +2,13 @@ import {
   DispatchTaskConnectedUpdateRequestSchema,
   DispatchTaskListResponseSchema,
   DispatchTaskResponseSchema,
+  FamilyReunificationSearchRequestSchema,
+  FamilyReunificationSearchResponseSchema,
   HealthResponseSchema,
+  PrivateWebLinkConsumeRequestSchema,
+  PrivateWebLinkConsumeResponseSchema,
+  PrivateWebLinkValidateRequestSchema,
+  PrivateWebLinkValidateResponseSchema,
   ResourceReportListResponseSchema,
   SosAlertCreateResponseSchema,
   SosAlertStatusResponseSchema,
@@ -14,7 +20,13 @@ import {
   type DispatchTaskConnectedUpdateRequest,
   type DispatchTaskListResponse,
   type DispatchTaskResponse,
+  type FamilyReunificationSearchRequest,
+  type FamilyReunificationSearchResponse,
   type HealthResponse,
+  type PrivateWebLinkConsumeRequest,
+  type PrivateWebLinkConsumeResponse,
+  type PrivateWebLinkValidateRequest,
+  type PrivateWebLinkValidateResponse,
   type ResourceReportListResponse,
   type SosAlertCreateResponse,
   type SosAlertStatusResponse,
@@ -156,6 +168,60 @@ export async function createWorkCenter(
   return WorkCenterCreateResponseSchema.parse(await response.json());
 }
 
+export async function validatePrivateFamilyReunificationLink(
+  request: PrivateWebLinkValidateRequest,
+  fetcher: Fetcher = fetch,
+): Promise<PrivateWebLinkValidateResponse> {
+  const payload = PrivateWebLinkValidateRequestSchema.parse(request);
+  const response = await fetcher(`${getApiBaseUrl()}/private-links/validate`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readApiError(response, `Private link validation failed with status ${response.status}`));
+  }
+
+  return PrivateWebLinkValidateResponseSchema.parse(await response.json());
+}
+
+export async function searchFamilyReunification(
+  request: FamilyReunificationSearchRequest,
+  fetcher: Fetcher = fetch,
+): Promise<FamilyReunificationSearchResponse> {
+  const payload = FamilyReunificationSearchRequestSchema.parse(request);
+  const response = await fetcher(`${getApiBaseUrl()}/private-links/family-reunification/search`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readApiError(response, `Family reunification search failed with status ${response.status}`));
+  }
+
+  return FamilyReunificationSearchResponseSchema.parse(await response.json());
+}
+
+export async function consumePrivateFamilyReunificationLink(
+  request: PrivateWebLinkConsumeRequest,
+  fetcher: Fetcher = fetch,
+): Promise<PrivateWebLinkConsumeResponse> {
+  const payload = PrivateWebLinkConsumeRequestSchema.parse(request);
+  const response = await fetcher(`${getApiBaseUrl()}/private-links/consume`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readApiError(response, `Private link consumption failed with status ${response.status}`));
+  }
+
+  return PrivateWebLinkConsumeResponseSchema.parse(await response.json());
+}
+
 function workCenterCollectionPath(incidentId: string): string {
   return `/incidents/${encodeURIComponent(incidentId)}/work-centers`;
 }
@@ -179,4 +245,12 @@ function dispatchTaskDetailPath(incidentId: string, dispatchTaskId: string): str
 
 function sosCollectionPath(incidentId: string): string {
   return `/incidents/${encodeURIComponent(incidentId)}/sos`;
+}
+
+async function readApiError(response: Response, fallback: string): Promise<string> {
+  const body = await response.json().catch(() => null);
+  if (body && typeof body === 'object' && 'error' in body && typeof body.error === 'string') {
+    return body.error;
+  }
+  return fallback;
 }

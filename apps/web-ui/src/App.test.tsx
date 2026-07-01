@@ -2,7 +2,16 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { DispatchTaskListResponse, DispatchTaskResponse, ResourceReportListResponse, SosAlertCreateResponse, SosAlertStatusResponse } from '@zona-cero/contracts';
-import { sosAlertCreateResponseHappyFixture, sosAlertStatusHappyFixture, workCenterDetailHappyFixture, workCenterListHappyFixture } from '../../../packages/testing/src';
+import {
+  familyReunificationSearchResponseFixture,
+  privateFamilyReunificationConsumeResponseFixture,
+  privateFamilyReunificationIssueResponseFixture,
+  privateFamilyReunificationValidateResponseFixture,
+  sosAlertCreateResponseHappyFixture,
+  sosAlertStatusHappyFixture,
+  workCenterDetailHappyFixture,
+  workCenterListHappyFixture,
+} from '../../../packages/testing/src';
 import { App } from './App';
 
 
@@ -86,6 +95,8 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  window.history.pushState({}, '', '/');
+  window.sessionStorage.clear();
 });
 
 describe('web ui work center shell', () => {
@@ -324,6 +335,92 @@ describe('web ui work center shell', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Submit SOS' }));
 
     expect(await screen.findByRole('status')).toHaveTextContent('SOS creation failed with status 403');
+  });
+
+  it('renders the private family reunification flow with safety limits and minimized payloads', async () => {
+    window.history.pushState(
+      {},
+      '',
+      `/family-reunification?token=${privateFamilyReunificationIssueResponseFixture.token}&correlationId=${privateFamilyReunificationIssueResponseFixture.correlationId}`,
+    );
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/private-links/validate')) return jsonResponse(privateFamilyReunificationValidateResponseFixture);
+      if (url.endsWith('/private-links/family-reunification/search') && init?.method === 'POST') {
+        return jsonResponse(familyReunificationSearchResponseFixture);
+      }
+      if (url.endsWith('/private-links/consume') && init?.method === 'POST') {
+        return jsonResponse(privateFamilyReunificationConsumeResponseFixture);
+      }
+      return new Response('not found', { status: 404 });
+    });
+
+    render(<App />);
+
+    expect(screen.getByRole('heading', { name: 'Identity-safe search and in-person referral' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Minimized private search' })).toBeInTheDocument());
+
+    expect(screen.getByText('No photos are requested or shown.')).toBeInTheDocument();
+    expect(screen.getByText('No exact location is requested or shown.')).toBeInTheDocument();
+    expect(screen.getByText('No full identity of minors is requested or shown.')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/full name/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/photo/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/exact location/i)).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Approximate age band'), { target: { value: 'child' } });
+    fireEvent.change(screen.getByLabelText('Relationship hint'), { target: { value: 'parent looking for child' } });
+    fireEvent.change(screen.getByLabelText('Broad last-known area label'), { target: { value: 'north gate area' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search safely' }));
+
+    expect(await screen.findByText('Possible in-person match')).toBeInTheDocument();
+    expect(screen.getByText('Verification required: yes')).toBeInTheDocument();
+
+    const searchCall = fetcher.mock.calls.find(([url]) => String(url).endsWith('/private-links/family-reunification/search'));
+    expect(searchCall).toBeDefined();
+    const payload = JSON.parse(String(searchCall?.[1]?.body)) as Record<string, unknown> & { query: Record<string, unknown> };
+    expect(payload.token).toBe(privateFamilyReunificationIssueResponseFixture.token);
+    expect(payload.correlationId).toBe(privateFamilyReunificationIssueResponseFixture.correlationId);
+    expect(payload.fingerprint).toEqual(expect.stringMatching(/^browser-/));
+    expect(payload.query).toEqual({
+      ageBand: 'child',
+      relationHint: 'parent looking for child',
+      lastKnownAreaLabel: 'north gate area',
+    });
+    expect(payload.query).not.toHaveProperty('fullName');
+    expect(payload.query).not.toHaveProperty('photo');
+    expect(payload.query).not.toHaveProperty('exactLocation');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to in-person verification' }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Continue with in-person verification'));
+
+    const consumeCall = fetcher.mock.calls.find(([url]) => String(url).endsWith('/private-links/consume'));
+    const consumePayload = JSON.parse(String(consumeCall?.[1]?.body)) as Record<string, unknown>;
+    expect(consumePayload).toMatchObject({
+      scope: 'family_reunification.search',
+      correlationId: privateFamilyReunificationIssueResponseFixture.correlationId,
+      referralReason: 'family_reunification_in_person_verification',
+    });
+  });
+
+  it('shows safe visible errors for invalid or expired private links', async () => {
+    window.history.pushState(
+      {},
+      '',
+      `/family-reunification?token=${privateFamilyReunificationIssueResponseFixture.token}&correlationId=${privateFamilyReunificationIssueResponseFixture.correlationId}`,
+    );
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/private-links/validate')) {
+        return new Response(JSON.stringify({ error: 'link_expired' }), { status: 410 });
+      }
+      return new Response('not found', { status: 404 });
+    });
+
+    render(<App />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('link_expired');
+    expect(screen.getByText(/Go to the family reunification desk/)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/full name/i)).not.toBeInTheDocument();
   });
 });
 

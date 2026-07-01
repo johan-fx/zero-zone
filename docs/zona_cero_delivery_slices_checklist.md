@@ -285,17 +285,33 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 
 | Equipo | Checklist |
 |---|---|
-| A | ⬜ Bot explica límites y deriva a enlace web seguro. |
-| A | ⬜ Web UI de búsqueda privada y derivación. |
-| B | ⬜ Link tokens con scope, expiración y auditoría. |
-| B | ⬜ Límites anti-abuso, TTL y access control. |
-| C | ⬜ Confirmar que mobile no bloquea ni duplica el flujo en MVP. |
+| A | ✅ Bot explica límites y deriva a enlace web seguro. |
+| A | ✅ Web UI de búsqueda privada y derivación. |
+| B | ✅ Link tokens con scope, expiración y auditoría. |
+| B | ✅ Límites anti-abuso, TTL y access control. |
+| C | ✅ Confirmar que mobile no bloquea ni duplica el flujo en MVP. |
 
 **Definition of Done**
 
-- No se publican fotos, ubicación exacta ni identidad completa de menores.
-- Todo intento queda auditado.
-- El sistema deriva a verificación presencial.
+- ✅ No se publican fotos, ubicación exacta ni identidad completa de menores.
+- ✅ Todo intento queda auditado.
+- ✅ El sistema deriva a verificación presencial.
+
+**Cierre Slice 6**
+
+- Equipo A implementó derivación segura desde Telegram (`/familia`, `/reunificacion`) y Web UI privada con búsqueda minimizada y derivación presencial.
+- Equipo B implementó autoridad server-side para private web links: token hasheado, scope `family_reunification.search`, TTL máximo server-side de 900s, `maxUses = 1`, consumo/debit en búsqueda sensible, auditoría y anti-abuso.
+- Equipo C confirmó que mobile no bloquea ni duplica el flujo en MVP; reunificación familiar queda como flujo web privado.
+- Fresh review final: 0 P0/P1/P2.
+
+**Evidencia de verificación**
+
+- `git diff --check` ✅
+- `pnpm api:test:strict` ✅
+- `pnpm telegram:test:strict` ✅
+- `pnpm web:test:strict` ✅
+- `pnpm mobile:test:strict` ✅
+- `pnpm test:strict` ✅
 
 ## Slice 7 - Sync/offline hardening
 

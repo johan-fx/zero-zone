@@ -6,6 +6,8 @@ import {
   IncidentJoinResponseSchema,
   IncidentRoleSchema,
   IncidentSummarySchema,
+  PrivateWebLinkIssueRequestSchema,
+  PrivateWebLinkIssueResponseSchema,
   DispatchTaskConnectedUpdateRequestSchema,
   DispatchTaskListResponseSchema,
   DispatchTaskResponseSchema,
@@ -34,6 +36,8 @@ import {
   type IncidentListResponse,
   type IncidentRole,
   type IncidentSummary,
+  type PrivateWebLinkIssueRequest,
+  type PrivateWebLinkIssueResponse,
   type TelegramWebhookResult,
 } from '@zona-cero/contracts';
 
@@ -70,6 +74,12 @@ export type TelegramDispatchTaskPorts = {
 export type TelegramSosPorts = {
   listIncidents(): Promise<IncidentListResponse>;
   createSosAlert(incidentId: string, request: SosConnectedCreateRequest): Promise<SosAlertCreateResponse>;
+};
+
+export type TelegramFamilyReunificationPorts = {
+  listIncidents(): Promise<IncidentListResponse>;
+  createPrivateLink(incidentId: string, request: PrivateWebLinkIssueRequest): Promise<PrivateWebLinkIssueResponse>;
+  formatPrivateLinkUrl?(response: PrivateWebLinkIssueResponse): string;
 };
 
 export type TelegramIncidentJoinState =
@@ -109,6 +119,12 @@ export type TelegramSosState =
   | { step: 'submitted'; response: SosAlertCreateResponse }
   | { step: 'cancelled' };
 
+export type TelegramFamilyReunificationState =
+  | { step: 'idle' }
+  | { step: 'awaitingIncident'; incidents: IncidentSummary[]; externalUserId: string; displayName?: string }
+  | { step: 'linked'; response: PrivateWebLinkIssueResponse }
+  | { step: 'cancelled' };
+
 export type TelegramWorkCenterReportState =
   | { step: 'idle' }
   | { step: 'awaitingIncident'; incidents: IncidentSummary[]; externalUserId: string; displayName?: string }
@@ -143,6 +159,10 @@ type TelegramSosStateParseResult =
   | { success: true; data: TelegramSosState }
   | { success: false; error: Error };
 
+type TelegramFamilyReunificationStateParseResult =
+  | { success: true; data: TelegramFamilyReunificationState }
+  | { success: false; error: Error };
+
 export const TelegramIncidentJoinStateSchema = {
   parse: parseTelegramIncidentJoinState,
   safeParse: safeParseTelegramIncidentJoinState,
@@ -166,6 +186,11 @@ export const TelegramDispatchTaskStateSchema = {
 export const TelegramSosStateSchema = {
   parse: parseTelegramSosState,
   safeParse: safeParseTelegramSosState,
+} as const;
+
+export const TelegramFamilyReunificationStateSchema = {
+  parse: parseTelegramFamilyReunificationState,
+  safeParse: safeParseTelegramFamilyReunificationState,
 } as const;
 
 export function parseTelegramIncidentJoinState(value: unknown): TelegramIncidentJoinState {
@@ -253,6 +278,23 @@ export function safeParseTelegramSosState(value: unknown): TelegramSosStateParse
   }
 }
 
+export function parseTelegramFamilyReunificationState(value: unknown): TelegramFamilyReunificationState {
+  const parsed = parseTelegramFamilyReunificationStateValue(value);
+  if (!parsed) {
+    throw new Error('Invalid TelegramFamilyReunificationState');
+  }
+
+  return parsed;
+}
+
+export function safeParseTelegramFamilyReunificationState(value: unknown): TelegramFamilyReunificationStateParseResult {
+  try {
+    return { success: true, data: parseTelegramFamilyReunificationState(value) };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error : new Error('Invalid TelegramFamilyReunificationState') };
+  }
+}
+
 export function isTerminalTelegramIncidentJoinState(
   state: TelegramIncidentJoinState,
 ): state is Extract<TelegramIncidentJoinState, { step: 'joined' | 'cancelled' }> {
@@ -281,6 +323,12 @@ export function isTerminalTelegramSosState(
   state: TelegramSosState,
 ): state is Extract<TelegramSosState, { step: 'submitted' | 'cancelled' }> {
   return state.step === 'submitted' || state.step === 'cancelled';
+}
+
+export function isTerminalTelegramFamilyReunificationState(
+  state: TelegramFamilyReunificationState,
+): state is Extract<TelegramFamilyReunificationState, { step: 'linked' | 'cancelled' }> {
+  return state.step === 'linked' || state.step === 'cancelled';
 }
 
 function parseTelegramIncidentJoinStateValue(value: unknown): TelegramIncidentJoinState | null {
@@ -592,6 +640,27 @@ function parseTelegramSosStateValue(value: unknown): TelegramSosState | null {
   return null;
 }
 
+function parseTelegramFamilyReunificationStateValue(value: unknown): TelegramFamilyReunificationState | null {
+  if (!isRecord(value) || typeof value.step !== 'string') return null;
+  if (value.step === 'idle') return hasOnlyKeys(value, ['step']) ? { step: 'idle' } : null;
+  if (value.step === 'cancelled') return hasOnlyKeys(value, ['step']) ? { step: 'cancelled' } : null;
+
+  const base = parseConversationBase(value);
+
+  if (value.step === 'awaitingIncident') {
+    if (!hasOnlyKeys(value, ['step', 'incidents', 'externalUserId', 'displayName']) || !base || !Array.isArray(value.incidents)) return null;
+    const incidents = parseIncidentArray(value.incidents);
+    return incidents ? { step: 'awaitingIncident', incidents, ...base } : null;
+  }
+
+  if (value.step === 'linked') {
+    const response = PrivateWebLinkIssueResponseSchema.safeParse(value.response);
+    return hasOnlyKeys(value, ['step', 'response']) && response.success ? { step: 'linked', response: response.data } : null;
+  }
+
+  return null;
+}
+
 function parseIncidentArray(values: unknown[]): IncidentSummary[] | null {
   const incidents: IncidentSummary[] = [];
   for (const incidentValue of values) {
@@ -662,6 +731,11 @@ export type TelegramSosFlowResult = {
   responseText: string;
 };
 
+export type TelegramFamilyReunificationFlowResult = {
+  state: TelegramFamilyReunificationState;
+  responseText: string;
+};
+
 export function resolveTelegramCommand(update: TelegramUpdateLike): string | null {
   const text = update.message?.text?.trim();
   if (!text?.startsWith('/')) {
@@ -687,6 +761,14 @@ export function handleTelegramWebhookUpdate(update: TelegramUpdateLike): Telegra
       accepted: true,
       command,
       responseText: 'SOS requires incident selection and an exact CONFIRM SOS reply. Backend recording does not confirm delivery or rescue.',
+    };
+  }
+
+  if (isFamilyReunificationCommand(command)) {
+    return {
+      accepted: true,
+      command,
+      responseText: 'Family reunification uses a private web link and in-person verification. Do not send photos, exact locations, or full minor identities in Telegram.',
     };
   }
 
@@ -1060,6 +1142,48 @@ export async function handleTelegramSosFlow(
   return { state, responseText: 'Send /sos to begin the SOS flow.' };
 }
 
+export async function handleTelegramFamilyReunificationFlow(
+  state: TelegramFamilyReunificationState,
+  update: TelegramUpdateLike,
+  ports: TelegramFamilyReunificationPorts,
+): Promise<TelegramFamilyReunificationFlowResult> {
+  const text = update.message?.text?.trim() ?? '';
+  const command = resolveTelegramCommand(update);
+
+  if (command === '/cancel') {
+    return { state: { step: 'cancelled' }, responseText: 'Family reunification link cancelled. Go to the in-person desk if you need help now.' };
+  }
+
+  if (isFamilyReunificationCommand(command) || state.step === 'idle' || state.step === 'cancelled' || state.step === 'linked') {
+    return startFamilyReunificationIncidentSelection(update, ports);
+  }
+
+  if (state.step === 'awaitingIncident') {
+    const incident = selectIncident(state.incidents, text);
+    if (!incident) {
+      return {
+        state,
+        responseText: `Incident not found. Reply with a number or incident id from the list.\n${formatIncidentList(state.incidents)}`,
+      };
+    }
+
+    const request = createFamilyReunificationPrivateLinkRequest();
+
+    try {
+      const response = await ports.createPrivateLink(incident.incidentId, request);
+      const url = ports.formatPrivateLinkUrl?.(response) ?? formatFamilyReunificationPrivateUrl(response);
+      return {
+        state: { step: 'linked', response },
+        responseText: formatFamilyReunificationLinkSuccess(url),
+      };
+    } catch {
+      return { state, responseText: formatFamilyReunificationLinkError() };
+    }
+  }
+
+  return { state, responseText: 'Send /familia or /reunificacion to get a private family reunification link.' };
+}
+
 async function startIncidentSelection(update: TelegramUpdateLike, ports: TelegramIncidentJoinPorts): Promise<TelegramIncidentJoinFlowResult> {
   const externalUserId = getTelegramExternalUserId(update);
   if (!externalUserId) {
@@ -1078,6 +1202,29 @@ async function startIncidentSelection(update: TelegramUpdateLike, ports: Telegra
     };
   } catch {
     return { state: { step: 'idle' }, responseText: 'Could not load incidents from the backend. Please try again later.' };
+  }
+}
+
+async function startFamilyReunificationIncidentSelection(
+  update: TelegramUpdateLike,
+  ports: TelegramFamilyReunificationPorts,
+): Promise<TelegramFamilyReunificationFlowResult> {
+  const externalUserId = getTelegramExternalUserId(update);
+  if (!externalUserId) return { state: { step: 'idle' }, responseText: 'Telegram user id is required to request a private family reunification link.' };
+
+  try {
+    const { incidents } = await ports.listIncidents();
+    if (incidents.length === 0) return { state: { step: 'idle' }, responseText: 'No active incidents are available right now. Go to the family reunification desk for help.' };
+    return {
+      state: { step: 'awaitingIncident', incidents, externalUserId, displayName: getTelegramDisplayName(update) },
+      responseText: [
+        'Family reunification is handled in private web and completed with in-person verification.',
+        'Do not send photos, exact locations, or full minor identities in Telegram.',
+        `Choose an incident:\n${formatIncidentList(incidents)}`,
+      ].join('\n'),
+    };
+  } catch {
+    return { state: { step: 'idle' }, responseText: formatFamilyReunificationLinkError() };
   }
 }
 
@@ -1212,6 +1359,45 @@ function isCancellation(text: string): boolean {
 
 function isStrongSosConfirmation(text: string): boolean {
   return text.trim() === 'CONFIRM SOS';
+}
+
+function isFamilyReunificationCommand(command: string | null): boolean {
+  return command === '/familia' || command === '/reunificacion';
+}
+
+function createFamilyReunificationPrivateLinkRequest(): PrivateWebLinkIssueRequest {
+  return PrivateWebLinkIssueRequestSchema.parse({
+    scope: 'family_reunification.search',
+    channel: 'web-ui',
+    externalId: 'web-user-1001',
+    displayName: 'Field Web',
+    correlationId: 'corr-family-reunification-search-1',
+    returnState: 'web:family-reunification:search',
+    ttlSeconds: 600,
+    maxUses: 1,
+    metadata: {},
+  });
+}
+
+function formatFamilyReunificationPrivateUrl(response: PrivateWebLinkIssueResponse): string {
+  const params = new URLSearchParams({
+    token: response.token,
+    correlationId: response.correlationId,
+  });
+  return `/family-reunification?${params.toString()}`;
+}
+
+function formatFamilyReunificationLinkSuccess(url: string): string {
+  return [
+    'Open this private web link for minimized family reunification search:',
+    url,
+    'Limits: no photos, no exact location, and no full identity of minors in chat or the form.',
+    'All results require in-person verification at the family reunification desk.',
+  ].join('\n');
+}
+
+function formatFamilyReunificationLinkError(): string {
+  return 'Could not create a private family reunification link. Go to the family reunification desk for in-person help. Do not send photos, exact locations, or full minor identities in Telegram.';
 }
 
 

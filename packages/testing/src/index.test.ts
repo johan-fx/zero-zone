@@ -5,7 +5,15 @@ import {
   IncidentJoinRequestSchema,
   IncidentJoinResponseSchema,
   IncidentListResponseSchema,
+  FamilyReunificationSearchRequestSchema,
+  FamilyReunificationSearchResponseSchema,
   PendingSignedOperationSchema,
+  PrivateWebLinkConsumeRequestSchema,
+  PrivateWebLinkConsumeResponseSchema,
+  PrivateWebLinkIssueRequestSchema,
+  PrivateWebLinkIssueResponseSchema,
+  PrivateWebLinkValidateRequestSchema,
+  PrivateWebLinkValidateResponseSchema,
   SignedOperationSchema,
   SosAlertCreateResponseSchema,
   SosAlertStatusResponseSchema,
@@ -22,6 +30,8 @@ import {
 } from '@zona-cero/contracts';
 import {
   createSignedOperationFixture,
+  familyReunificationSearchRequestFixture,
+  familyReunificationSearchResponseFixture,
   incompatibleVersionSyncPushRequestFixture,
   incidentConfigErrorFixture,
   incidentConfigHappyFixture,
@@ -35,6 +45,12 @@ import {
   mobileWorkCenterCreateSyncPushFixture,
   mobileSosCancelSyncPushFixture,
   mobileSosCreateSyncPushFixture,
+  privateFamilyReunificationConsumeRequestFixture,
+  privateFamilyReunificationConsumeResponseFixture,
+  privateFamilyReunificationIssueRequestFixture,
+  privateFamilyReunificationIssueResponseFixture,
+  privateFamilyReunificationValidateRequestFixture,
+  privateFamilyReunificationValidateResponseFixture,
   invalidWebLinkRequestFixture,
   invalidWebLinkSessionFixture,
   signedOperationGoldenVector,
@@ -111,6 +127,19 @@ describe('testing package', () => {
     expect(WebLinkSessionSchema.parse(validWebLinkSessionFixture).token).toBe('opaque-web-link-token-fixture');
     expect(WebLinkRequestSchema.safeParse(invalidWebLinkRequestFixture).success).toBe(false);
     expect(WebLinkSessionSchema.safeParse(invalidWebLinkSessionFixture).success).toBe(false);
+  });
+
+  it('exposes private family reunification web link fixtures', () => {
+    expect(PrivateWebLinkIssueRequestSchema.parse(privateFamilyReunificationIssueRequestFixture).scope).toBe('family_reunification.search');
+    expect(PrivateWebLinkIssueResponseSchema.parse(privateFamilyReunificationIssueResponseFixture).maxUses).toBe(1);
+    expect(PrivateWebLinkValidateRequestSchema.parse(privateFamilyReunificationValidateRequestFixture).fingerprint).toBe('browser-fingerprint-fixture');
+    expect(PrivateWebLinkValidateResponseSchema.parse(privateFamilyReunificationValidateResponseFixture).nextAction).toBe('in_person_verification');
+    expect(PrivateWebLinkConsumeRequestSchema.parse(privateFamilyReunificationConsumeRequestFixture).referralReason).toBe('family_reunification_in_person_verification');
+    expect(PrivateWebLinkConsumeResponseSchema.parse(privateFamilyReunificationConsumeResponseFixture).accepted).toBe(true);
+
+    const searchResponse = FamilyReunificationSearchResponseSchema.parse(familyReunificationSearchResponseFixture);
+    expect(FamilyReunificationSearchRequestSchema.parse(familyReunificationSearchRequestFixture).query.ageBand).toBe('child');
+    expect(JSON.stringify(searchResponse)).not.toMatch(/photo|fullName|latitude|longitude|exactLocation/i);
   });
 
 

@@ -680,7 +680,7 @@ export const WebLinkRequestSchema = z.object({
   ttlSeconds: z.number().int().positive().max(86_400),
   singleUse: z.boolean(),
   auditContext: JsonObjectPayloadSchema,
-});
+}).strict();
 export type WebLinkRequest = z.infer<typeof WebLinkRequestSchema>;
 
 export const WebLinkSessionSchema = z.object({
@@ -694,8 +694,104 @@ export const WebLinkSessionSchema = z.object({
   expiresAt: z.string().min(1),
   singleUse: z.boolean(),
   auditContext: JsonObjectPayloadSchema,
-});
+}).strict();
 export type WebLinkSession = z.infer<typeof WebLinkSessionSchema>;
+
+export const PrivateWebLinkIssueRequestSchema = z.object({
+  scope: WebLinkScopeSchema,
+  channel: ChannelSchema,
+  externalId: z.string().min(1),
+  displayName: z.string().min(1).optional(),
+  correlationId: z.string().min(1),
+  returnState: z.string().min(1).optional(),
+  ttlSeconds: z.number().int().positive().max(86_400).default(900),
+  maxUses: z.number().int().positive().max(5).default(1),
+  metadata: JsonObjectPayloadSchema.optional(),
+}).strict();
+export type PrivateWebLinkIssueRequest = z.infer<typeof PrivateWebLinkIssueRequestSchema>;
+
+export const PrivateWebLinkIssueResponseSchema = z.object({
+  linkId: z.string().min(1),
+  token: z.string().min(1),
+  scope: WebLinkScopeSchema,
+  incidentId: z.string().min(1),
+  correlationId: z.string().min(1),
+  returnState: z.string().min(1).optional(),
+  expiresAt: z.string().min(1),
+  maxUses: z.number().int().positive(),
+  audit: AuditReferenceSchema,
+}).strict();
+export type PrivateWebLinkIssueResponse = z.infer<typeof PrivateWebLinkIssueResponseSchema>;
+
+export const PrivateWebLinkValidateRequestSchema = z.object({
+  token: z.string().min(1),
+  scope: WebLinkScopeSchema,
+  correlationId: z.string().min(1),
+  fingerprint: z.string().min(8).max(512),
+}).strict();
+export type PrivateWebLinkValidateRequest = z.infer<typeof PrivateWebLinkValidateRequestSchema>;
+
+export const PrivateWebLinkValidateResponseSchema = z.object({
+  valid: z.literal(true),
+  linkId: z.string().min(1),
+  scope: WebLinkScopeSchema,
+  incidentId: z.string().min(1),
+  correlationId: z.string().min(1),
+  expiresAt: z.string().min(1),
+  remainingUses: z.number().int().nonnegative(),
+  nextAction: z.literal('in_person_verification'),
+  audit: AuditReferenceSchema,
+}).strict();
+export type PrivateWebLinkValidateResponse = z.infer<typeof PrivateWebLinkValidateResponseSchema>;
+
+export const PrivateWebLinkConsumeRequestSchema = z.object({
+  token: z.string().min(1),
+  scope: WebLinkScopeSchema,
+  correlationId: z.string().min(1),
+  fingerprint: z.string().min(8).max(512),
+  referralReason: z.literal('family_reunification_in_person_verification'),
+}).strict();
+export type PrivateWebLinkConsumeRequest = z.infer<typeof PrivateWebLinkConsumeRequestSchema>;
+
+export const PrivateWebLinkConsumeResponseSchema = z.object({
+  accepted: z.literal(true),
+  linkId: z.string().min(1),
+  referral: z.object({
+    type: z.literal('in_person_verification'),
+    message: z.string().min(1),
+  }).strict(),
+  audit: AuditReferenceSchema,
+}).strict();
+export type PrivateWebLinkConsumeResponse = z.infer<typeof PrivateWebLinkConsumeResponseSchema>;
+
+export const FamilyReunificationSearchRequestSchema = z.object({
+  token: z.string().min(1),
+  correlationId: z.string().min(1),
+  fingerprint: z.string().min(8).max(512),
+  query: z.object({
+    ageBand: z.enum(['child', 'teen', 'adult', 'older_adult']).optional(),
+    relationHint: z.string().min(1).max(80).optional(),
+    lastKnownAreaLabel: z.string().min(1).max(120).optional(),
+  }).strict(),
+}).strict();
+export type FamilyReunificationSearchRequest = z.infer<typeof FamilyReunificationSearchRequestSchema>;
+
+export const FamilyReunificationSearchResponseSchema = z.object({
+  matches: z.array(z.object({
+    matchId: z.string().min(1),
+    status: z.enum(['possible_match', 'no_public_result']),
+    ageBand: z.enum(['child', 'teen', 'adult', 'older_adult']).optional(),
+    relationHint: z.string().min(1).optional(),
+    lastKnownAreaLabel: z.string().min(1).optional(),
+    verificationRequired: z.literal(true),
+  }).strict()),
+  referral: z.object({
+    type: z.literal('in_person_verification'),
+    message: z.string().min(1),
+  }).strict(),
+  audit: AuditReferenceSchema,
+}).strict();
+export type FamilyReunificationSearchResponse = z.infer<typeof FamilyReunificationSearchResponseSchema>;
 
 function findNonJsonPath(value: unknown, path: (string | number)[] = [], seen = new WeakSet<object>()): (string | number)[] | null {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') {

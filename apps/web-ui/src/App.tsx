@@ -1,7 +1,32 @@
 import { type FormEvent, useEffect, useState } from 'react';
 
-import type { DispatchTask, DispatchTaskStatus, HealthResponse, ResourceReportSummary, SosAlert, SosAlertStatusResponse, SosFanoutStatus, WorkCenterDetail, WorkCenterSummary } from '@zona-cero/contracts';
-import { createSosAlert, fetchApiHealth, fetchDispatchTasks, fetchResourceReports, fetchSosStatus, fetchWorkCenterDetail, fetchWorkCenters, updateDispatchTask } from './api';
+import type {
+  DispatchTask,
+  DispatchTaskStatus,
+  FamilyReunificationSearchResponse,
+  HealthResponse,
+  PrivateWebLinkConsumeResponse,
+  PrivateWebLinkValidateResponse,
+  ResourceReportSummary,
+  SosAlert,
+  SosAlertStatusResponse,
+  SosFanoutStatus,
+  WorkCenterDetail,
+  WorkCenterSummary,
+} from '@zona-cero/contracts';
+import {
+  consumePrivateFamilyReunificationLink,
+  createSosAlert,
+  fetchApiHealth,
+  fetchDispatchTasks,
+  fetchResourceReports,
+  fetchSosStatus,
+  fetchWorkCenterDetail,
+  fetchWorkCenters,
+  searchFamilyReunification,
+  updateDispatchTask,
+  validatePrivateFamilyReunificationLink,
+} from './api';
 import './styles.css';
 
 type HealthState =
@@ -29,6 +54,17 @@ type SosState =
   | { status: 'ready'; response: SosAlertStatusResponse; actionMessage?: string }
   | { status: 'error'; message: string };
 
+type FamilyReunificationState =
+  | { status: 'validating' }
+  | { status: 'ready'; validation: PrivateWebLinkValidateResponse; search?: FamilyReunificationSearchResponse; referral?: PrivateWebLinkConsumeResponse; message?: string }
+  | { status: 'error'; message: string };
+
+type FamilyReunificationForm = {
+  ageBand: '' | 'child' | 'teen' | 'adult' | 'older_adult';
+  relationHint: string;
+  lastKnownAreaLabel: string;
+};
+
 const defaultIncidentId = 'incident-zc-demo';
 const defaultWebExternalId = 'web-user-1001';
 const defaultWebDisplayName = 'Field Web';
@@ -41,6 +77,22 @@ const dispatchActions: { label: string; status: Exclude<DispatchTaskStatus, 'pen
 ];
 
 export function App() {
+  const privateLinkParams = getPrivateLinkParams();
+
+  if (privateLinkParams) {
+    return (
+      <FamilyReunificationPrivateView
+        token={privateLinkParams.token}
+        correlationId={privateLinkParams.correlationId}
+        fingerprint={getBrowserFingerprint()}
+      />
+    );
+  }
+
+  return <OperationsPanel />;
+}
+
+function OperationsPanel() {
   const incidentId = import.meta.env.VITE_INCIDENT_ID || defaultIncidentId;
   const webExternalId = import.meta.env.VITE_WEB_EXTERNAL_ID || defaultWebExternalId;
   const webDisplayName = import.meta.env.VITE_WEB_DISPLAY_NAME || defaultWebDisplayName;
@@ -258,6 +310,208 @@ export function App() {
         ) : null}
       </section>
     </main>
+  );
+}
+
+function FamilyReunificationPrivateView({
+  token,
+  correlationId,
+  fingerprint,
+}: {
+  token: string;
+  correlationId: string;
+  fingerprint: string;
+}) {
+  const [state, setState] = useState<FamilyReunificationState>({ status: 'validating' });
+  const [form, setForm] = useState<FamilyReunificationForm>({
+    ageBand: '',
+    relationHint: '',
+    lastKnownAreaLabel: '',
+  });
+  const [isSearching, setIsSearching] = useState(false);
+  const [isReferring, setIsReferring] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+
+    validatePrivateFamilyReunificationLink({
+      token,
+      scope: 'family_reunification.search',
+      correlationId,
+      fingerprint,
+    })
+      .then((validation) => {
+        if (active) setState({ status: 'ready', validation });
+      })
+      .catch((error: unknown) => {
+        if (active) setState({ status: 'error', message: formatPrivateLinkError(error) });
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [token, correlationId, fingerprint]);
+
+  async function handleSearchSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (state.status !== 'ready' || isSearching) return;
+
+    setIsSearching(true);
+    try {
+      const search = await searchFamilyReunification({
+        token,
+        correlationId,
+        fingerprint,
+        query: {
+          ...(form.ageBand ? { ageBand: form.ageBand } : {}),
+          ...(form.relationHint.trim() ? { relationHint: form.relationHint.trim() } : {}),
+          ...(form.lastKnownAreaLabel.trim() ? { lastKnownAreaLabel: form.lastKnownAreaLabel.trim() } : {}),
+        },
+      });
+      setState({ ...state, search, message: 'Search completed. Continue with in-person verification.' });
+    } catch (error: unknown) {
+      setState({ ...state, message: formatPrivateLinkError(error) });
+    } finally {
+      setIsSearching(false);
+    }
+  }
+
+  async function handleInPersonReferral() {
+    if (state.status !== 'ready' || isReferring) return;
+
+    setIsReferring(true);
+    try {
+      const referral = await consumePrivateFamilyReunificationLink({
+        token,
+        scope: 'family_reunification.search',
+        correlationId,
+        fingerprint,
+        referralReason: 'family_reunification_in_person_verification',
+      });
+      setState({ ...state, referral, message: referral.referral.message });
+    } catch (error: unknown) {
+      setState({ ...state, message: formatPrivateLinkError(error) });
+    } finally {
+      setIsReferring(false);
+    }
+  }
+
+  return (
+    <main className="shell private-shell">
+      <section className="hero private-hero" aria-labelledby="family-reunification-title">
+        <p className="eyebrow">Private family reunification</p>
+        <h1 id="family-reunification-title">Identity-safe search and in-person referral</h1>
+        <p className="summary">
+          This private web page uses the server-side link authority. It never trusts TTL, scope, correlation, or consumption status from this browser.
+        </p>
+      </section>
+
+      <section className="status-card safety-card" aria-labelledby="family-limits-title">
+        <h2 id="family-limits-title">Safety limits</h2>
+        <ul className="safety-list">
+          <li>No photos are requested or shown.</li>
+          <li>No exact location is requested or shown.</li>
+          <li>No full identity of minors is requested or shown.</li>
+          <li>All possible matches require in-person verification at the family reunification desk.</li>
+        </ul>
+      </section>
+
+      {state.status === 'validating' ? (
+        <section className="status-card" aria-live="polite">
+          <h2>Checking private link</h2>
+          <p>Validating access with the backend…</p>
+        </section>
+      ) : null}
+
+      {state.status === 'error' ? (
+        <section className="status-card" aria-live="polite">
+          <h2>Private link unavailable</h2>
+          <p role="alert">{state.message}</p>
+          <p>Go to the family reunification desk for in-person help. Do not share sensitive details in chat.</p>
+        </section>
+      ) : null}
+
+      {state.status === 'ready' ? (
+        <section className="status-card" aria-labelledby="private-search-title" aria-live="polite">
+          <div className="section-header">
+            <div>
+              <p className="eyebrow">Incident {state.validation.incidentId}</p>
+              <h2 id="private-search-title">Minimized private search</h2>
+            </div>
+            <strong>In-person verification required</strong>
+          </div>
+
+          {state.message ? <p role="status">{state.message}</p> : null}
+
+          <form className="family-form" onSubmit={handleSearchSubmit}>
+            <label htmlFor="family-age-band">Approximate age band</label>
+            <select
+              id="family-age-band"
+              name="ageBand"
+              value={form.ageBand}
+              onChange={(event) => setForm({ ...form, ageBand: event.currentTarget.value as FamilyReunificationForm['ageBand'] })}
+            >
+              <option value="">Unknown</option>
+              <option value="child">Child</option>
+              <option value="teen">Teen</option>
+              <option value="adult">Adult</option>
+              <option value="older_adult">Older adult</option>
+            </select>
+
+            <label htmlFor="family-relation-hint">Relationship hint</label>
+            <input
+              id="family-relation-hint"
+              name="relationHint"
+              maxLength={80}
+              value={form.relationHint}
+              onChange={(event) => setForm({ ...form, relationHint: event.currentTarget.value })}
+              placeholder="Example: parent looking for child"
+            />
+
+            <label htmlFor="family-area-label">Broad last-known area label</label>
+            <input
+              id="family-area-label"
+              name="lastKnownAreaLabel"
+              maxLength={120}
+              value={form.lastKnownAreaLabel}
+              onChange={(event) => setForm({ ...form, lastKnownAreaLabel: event.currentTarget.value })}
+              placeholder="Example: north gate area"
+            />
+
+            <button type="submit" disabled={isSearching}>{isSearching ? 'Searching…' : 'Search safely'}</button>
+          </form>
+
+          {state.search ? <FamilyReunificationResults response={state.search} /> : null}
+
+          <button className="primary-action" type="button" onClick={handleInPersonReferral} disabled={isReferring}>
+            {isReferring ? 'Preparing referral…' : 'Continue to in-person verification'}
+          </button>
+        </section>
+      ) : null}
+    </main>
+  );
+}
+
+function FamilyReunificationResults({ response }: { response: FamilyReunificationSearchResponse }) {
+  return (
+    <div className="family-results">
+      <h3>Minimized results</h3>
+      {response.matches.length === 0 ? <p>No public result. Continue with in-person verification.</p> : null}
+      <ul className="work-center-list">
+        {response.matches.map((match) => (
+          <li key={match.matchId}>
+            <article className="work-center-card">
+              <h4>{match.status === 'possible_match' ? 'Possible in-person match' : 'No public result'}</h4>
+              <p>Age band: {match.ageBand ?? 'not provided'}</p>
+              <p>Relationship hint: {match.relationHint ?? 'not provided'}</p>
+              <p>Broad area: {match.lastKnownAreaLabel ?? 'not provided'}</p>
+              <p>Verification required: {match.verificationRequired ? 'yes' : 'no'}</p>
+            </article>
+          </li>
+        ))}
+      </ul>
+      <p>{response.referral.message}</p>
+    </div>
   );
 }
 
@@ -498,4 +752,42 @@ function upsertSosAlert(alerts: SosAlert[], alert: SosAlert): SosAlert[] {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error';
+}
+
+function formatPrivateLinkError(error: unknown): string {
+  const message = errorMessage(error);
+  if (
+    message === 'invalid_payload' ||
+    message === 'permission_denied' ||
+    message === 'invalid_link_scope' ||
+    message === 'link_correlation_mismatch' ||
+    message === 'link_expired'
+  ) {
+    return message;
+  }
+
+  return 'Private link unavailable. Continue with in-person verification.';
+}
+
+function getPrivateLinkParams(): { token: string; correlationId: string } | null {
+  if (typeof window === 'undefined') return null;
+
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('token')?.trim();
+  const correlationId = params.get('correlationId')?.trim() ?? params.get('correlation_id')?.trim();
+
+  return token && correlationId ? { token, correlationId } : null;
+}
+
+function getBrowserFingerprint(): string {
+  if (typeof window === 'undefined') return 'browser-fingerprint-unavailable';
+
+  const storageKey = 'zona-cero-family-reunification-fingerprint';
+  const existing = window.sessionStorage.getItem(storageKey);
+  if (existing) return existing;
+
+  const randomId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+  const generated = `browser-${randomId}`;
+  window.sessionStorage.setItem(storageKey, generated);
+  return generated;
 }

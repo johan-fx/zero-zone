@@ -8,6 +8,7 @@ import {
   mobileSosCancelSyncPushFixture,
   mobileSosCreateSyncPushFixture,
   mobileIncidentJoinRequestFixture,
+  privateFamilyReunificationIssueRequestFixture,
   telegramSosCreateRequestFixture,
   telegramIncidentJoinRequestFixture,
   telegramStartUpdateFixture,
@@ -19,6 +20,10 @@ import {
   DispatchTaskListResponseSchema,
   DispatchTaskResponseSchema,
   IncidentJoinResponseSchema,
+  FamilyReunificationSearchResponseSchema,
+  PrivateWebLinkConsumeResponseSchema,
+  PrivateWebLinkIssueResponseSchema,
+  PrivateWebLinkValidateResponseSchema,
   ResourceReportCreateResponseSchema,
   ResourceReportListResponseSchema,
   ResourceReportMatchResponseSchema,
@@ -57,6 +62,17 @@ async function postTelegramMessage(telegramUserId: number, text: string, firstNa
 
   expect(response.status).toBe(200);
   return TelegramWebhookResultSchema.parse(await response.json());
+}
+
+async function issueFamilyReunificationLink(overrides: Record<string, unknown> = {}): Promise<ReturnType<typeof PrivateWebLinkIssueResponseSchema.parse>> {
+  const response = await request('/incidents/incident-zc-demo/private-links', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ...privateFamilyReunificationIssueRequestFixture, ...overrides }),
+  });
+
+  expect(response.status).toBe(200);
+  return PrivateWebLinkIssueResponseSchema.parse(await response.json());
 }
 
 describe('api worker', () => {
@@ -585,6 +601,253 @@ describe('api worker', () => {
     });
   });
 
+  it('issues private family reunification links only for incident members', async () => {
+    const issued = await issueFamilyReunificationLink();
+    expect(issued).toMatchObject({
+      scope: 'family_reunification.search',
+      incidentId: 'incident-zc-demo',
+      correlationId: privateFamilyReunificationIssueRequestFixture.correlationId,
+      maxUses: 1,
+    });
+    expect(issued.token).toHaveLength(64);
+
+    const persisted = await (env as Env).DB.prepare('SELECT token_hash AS tokenHash, metadata_json AS metadataJson FROM private_web_links WHERE link_id = ?')
+      .bind(issued.linkId)
+      .first<{ tokenHash: string; metadataJson: string }>();
+    expect(persisted?.tokenHash).not.toBe(issued.token);
+    expect(JSON.parse(persisted?.metadataJson ?? '{}')).toMatchObject({ returnState: 'web:family-reunification:search' });
+
+    const audit = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM audit_events WHERE audit_event_id = ?')
+      .bind(issued.audit.auditEventId)
+      .first<{ count: number }>();
+    expect(audit?.count).toBe(1);
+
+    const denied = await request('/incidents/incident-zc-demo/private-links', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...privateFamilyReunificationIssueRequestFixture, externalId: 'unknown-web-user' }),
+    });
+    expect(denied.status).toBe(403);
+    await expect(denied.json()).resolves.toEqual({ error: 'permission_denied' });
+
+    const invalidScope = await request('/incidents/incident-zc-demo/private-links', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...privateFamilyReunificationIssueRequestFixture, scope: 'work_center.detail' }),
+    });
+    expect(invalidScope.status).toBe(400);
+    await expect(invalidScope.json()).resolves.toEqual({ error: 'invalid_link_scope' });
+  });
+
+  it('caps family private link TTL and max uses server-side', async () => {
+    const requestedAt = Date.now();
+    const issued = await issueFamilyReunificationLink({
+      ttlSeconds: 86_400,
+      maxUses: 5,
+      correlationId: 'corr-family-policy-cap',
+    });
+
+    expect(issued.maxUses).toBe(1);
+    expect(Date.parse(issued.expiresAt)).toBeLessThanOrEqual(requestedAt + 910 * 1000);
+    expect(Date.parse(issued.expiresAt)).toBeGreaterThan(requestedAt);
+
+    const persisted = await (env as Env).DB.prepare(
+      `SELECT max_uses AS maxUses, expires_at AS expiresAt
+       FROM private_web_links
+       WHERE link_id = ?`,
+    )
+      .bind(issued.linkId)
+      .first<{ maxUses: number; expiresAt: string }>();
+    expect(persisted?.maxUses).toBe(1);
+    expect(Date.parse(persisted?.expiresAt ?? '')).toBeLessThanOrEqual(requestedAt + 910 * 1000);
+
+    const audit = await (env as Env).DB.prepare('SELECT payload_json AS payloadJson FROM audit_events WHERE audit_event_id = ?')
+      .bind(issued.audit.auditEventId)
+      .first<{ payloadJson: string }>();
+    expect(JSON.parse(audit?.payloadJson ?? '{}')).toMatchObject({ maxUses: 1 });
+  });
+
+  it('validates, audits and consumes private family reunification links without sensitive data', async () => {
+    const issued = await issueFamilyReunificationLink();
+    const validatePayload = {
+      token: issued.token,
+      scope: 'family_reunification.search',
+      correlationId: issued.correlationId,
+      fingerprint: 'browser-fingerprint-private-flow',
+    };
+
+    const active = await request('/private-links/validate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'user-agent': 'vitest-private-web' },
+      body: JSON.stringify(validatePayload),
+    });
+    expect(active.status).toBe(200);
+    const activeBody = PrivateWebLinkValidateResponseSchema.parse(await active.json());
+    expect(activeBody).toMatchObject({
+      valid: true,
+      linkId: issued.linkId,
+      nextAction: 'in_person_verification',
+      remainingUses: 1,
+    });
+
+    const mismatch = await request('/private-links/validate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...validatePayload, correlationId: 'wrong-correlation' }),
+    });
+    expect(mismatch.status).toBe(400);
+    await expect(mismatch.json()).resolves.toEqual({ error: 'link_correlation_mismatch' });
+
+    const consume = await request('/private-links/consume', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ...validatePayload,
+        referralReason: 'family_reunification_in_person_verification',
+      }),
+    });
+    expect(consume.status).toBe(200);
+    const consumeBody = PrivateWebLinkConsumeResponseSchema.parse(await consume.json());
+    expect(consumeBody).toMatchObject({ accepted: true, linkId: issued.linkId, referral: { type: 'in_person_verification' } });
+    expect(JSON.stringify(consumeBody)).not.toMatch(/photo|fullName|latitude|longitude|exactLocation/i);
+
+    const consumed = await request('/private-links/validate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(validatePayload),
+    });
+    expect(consumed.status).toBe(410);
+    await expect(consumed.json()).resolves.toEqual({ error: 'link_expired' });
+
+    const attempts = await (env as Env).DB.prepare('SELECT result, error_code AS errorCode, ip_hash AS ipHash, user_agent_hash AS userAgentHash FROM private_web_link_attempts WHERE link_id = ? ORDER BY created_at ASC')
+      .bind(issued.linkId)
+      .all<{ result: string; errorCode: string | null; ipHash: string | null; userAgentHash: string | null }>();
+    expect(attempts.results.map((attempt) => attempt.result)).toContain('accepted');
+    expect(attempts.results.map((attempt) => attempt.errorCode)).toContain('link_correlation_mismatch');
+    expect(attempts.results.map((attempt) => attempt.errorCode)).toContain('link_expired');
+    expect(attempts.results.some((attempt) => attempt.userAgentHash && attempt.userAgentHash !== 'vitest-private-web')).toBe(true);
+  });
+
+  it('debits family reunification search links and rejects repeated search or consume attempts', async () => {
+    const issued = await issueFamilyReunificationLink({ correlationId: 'corr-family-search-consumes-link' });
+    const searchPayload = {
+      token: issued.token,
+      correlationId: issued.correlationId,
+      fingerprint: 'browser-fingerprint-search-consumes',
+      query: { ageBand: 'child', relationHint: 'parent looking for child', lastKnownAreaLabel: 'north gate area' },
+    };
+
+    const search = await request('/private-links/family-reunification/search', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(searchPayload),
+    });
+    expect(search.status).toBe(200);
+    const searchBody = FamilyReunificationSearchResponseSchema.parse(await search.json());
+    expect(JSON.stringify(searchBody)).not.toMatch(/photo|fullName|latitude|longitude|exactLocation/i);
+    expect(searchBody.referral.type).toBe('in_person_verification');
+
+    const persisted = await (env as Env).DB.prepare(
+      `SELECT use_count AS useCount, consumed_at AS consumedAt
+       FROM private_web_links
+       WHERE link_id = ?`,
+    )
+      .bind(issued.linkId)
+      .first<{ useCount: number; consumedAt: string | null }>();
+    expect(persisted).toMatchObject({ useCount: 1 });
+    expect(persisted?.consumedAt).toBeTruthy();
+
+    const repeatedSearch = await request('/private-links/family-reunification/search', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(searchPayload),
+    });
+    expect(repeatedSearch.status).toBe(410);
+    await expect(repeatedSearch.json()).resolves.toEqual({ error: 'link_expired' });
+
+    const consumeAfterSearch = await request('/private-links/consume', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        token: issued.token,
+        scope: 'family_reunification.search',
+        correlationId: issued.correlationId,
+        fingerprint: 'browser-fingerprint-search-consumes',
+        referralReason: 'family_reunification_in_person_verification',
+      }),
+    });
+    expect(consumeAfterSearch.status).toBe(410);
+    await expect(consumeAfterSearch.json()).resolves.toEqual({ error: 'link_expired' });
+
+    const attempts = await (env as Env).DB.prepare(
+      `SELECT result, error_code AS errorCode, metadata_json AS metadataJson
+       FROM private_web_link_attempts
+       WHERE link_id = ?
+       ORDER BY created_at ASC`,
+    )
+      .bind(issued.linkId)
+      .all<{ result: string; errorCode: string | null; metadataJson: string }>();
+    const attemptSummaries = attempts.results.map((attempt) => ({
+      result: attempt.result,
+      errorCode: attempt.errorCode,
+      action: JSON.parse(attempt.metadataJson).action,
+    }));
+    expect(attemptSummaries).toContainEqual({ result: 'accepted', errorCode: null, action: 'family_reunification.search' });
+    expect(attemptSummaries).toContainEqual({ result: 'rejected', errorCode: 'link_expired', action: 'family_reunification.search' });
+  });
+
+  it('rejects expired private links and anti-abuses repeated failed attempts', async () => {
+    const expired = await issueFamilyReunificationLink({ ttlSeconds: 1, correlationId: 'corr-expired-private-link' });
+    await (env as Env).DB.prepare('UPDATE private_web_links SET expires_at = ? WHERE link_id = ?')
+      .bind('2000-01-01T00:00:00.000Z', expired.linkId)
+      .run();
+
+    const expiredResponse = await request('/private-links/validate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        token: expired.token,
+        scope: 'family_reunification.search',
+        correlationId: expired.correlationId,
+        fingerprint: 'browser-fingerprint-expired',
+      }),
+    });
+    expect(expiredResponse.status).toBe(410);
+    await expect(expiredResponse.json()).resolves.toEqual({ error: 'link_expired' });
+
+    for (let index = 0; index < 5; index += 1) {
+      const failed = await request('/private-links/validate', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          token: `bad-token-${index}`,
+          scope: 'family_reunification.search',
+          correlationId: 'corr-abuse-private-link',
+          fingerprint: 'browser-fingerprint-abuse',
+        }),
+      });
+      expect(failed.status).toBe(403);
+      await expect(failed.json()).resolves.toEqual({ error: 'permission_denied' });
+    }
+
+    const limited = await request('/private-links/validate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        token: expired.token,
+        scope: 'family_reunification.search',
+        correlationId: expired.correlationId,
+        fingerprint: 'browser-fingerprint-abuse',
+      }),
+    });
+    expect(limited.status).toBe(403);
+    await expect(limited.json()).resolves.toEqual({ error: 'permission_denied' });
+
+    const attempts = await (env as Env).DB.prepare("SELECT COUNT(*) AS count FROM private_web_link_attempts WHERE fingerprint_hash IS NOT NULL AND result = 'rejected'")
+      .first<{ count: number }>();
+    expect(attempts?.count).toBeGreaterThanOrEqual(7);
+  });
+
   it('creates connected-channel work centers for joined identities', async () => {
     await request('/incidents/incident-zc-demo/join', {
       method: 'POST',
@@ -909,6 +1172,71 @@ describe('api worker', () => {
       fanout: { total: 3, queued: 3 },
       idempotent: false,
     });
+  });
+
+  it('drives Telegram webhook /familia through private-link issuance without exposing sensitive data', async () => {
+    const telegramUserId = 28001;
+    await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ...telegramIncidentJoinRequestFixture,
+        externalId: String(telegramUserId),
+        displayName: 'Family Reporter',
+      }),
+    });
+
+    await expect(postTelegramMessage(telegramUserId, '/familia', 'Family')).resolves.toMatchObject({
+      accepted: true,
+      command: '/familia',
+      responseText: expect.stringContaining('Do not send photos'),
+    });
+
+    const stateKey = `flow:family-reunification:chat:${telegramUserId}:from:${telegramUserId}`;
+    await expect(
+      (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?').bind(stateKey).first<{ step: string }>(),
+    ).resolves.toMatchObject({ step: 'awaitingIncident' });
+
+    const linked = await postTelegramMessage(telegramUserId, '1', 'Family');
+    expect(linked.responseText).toContain('Open this private web link');
+    expect(linked.responseText).toContain('/family-reunification?token=');
+    expect(linked.responseText).toContain('Limits: no photos, no exact location, and no full identity of minors');
+    expect(linked.responseText).toContain('in-person verification');
+    expect(linked.responseText).not.toMatch(/fullName|latitude|longitude|exactLocation/i);
+
+    await expect(
+      (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?').bind(stateKey).first<{ step: string }>(),
+    ).resolves.toBeNull();
+
+    const issued = await (env as Env).DB.prepare(
+      `SELECT l.scope, l.max_uses AS maxUses, l.correlation_id AS correlationId, i.channel, i.external_id AS externalId, l.metadata_json AS metadataJson
+       FROM private_web_links l
+       JOIN channel_identities i ON i.channel_identity_id = l.channel_identity_id
+       WHERE i.external_id = ?`,
+    ).bind(String(telegramUserId)).first<{ scope: string; maxUses: number; correlationId: string; channel: string; externalId: string; metadataJson: string }>();
+    expect(issued).toMatchObject({
+      scope: 'family_reunification.search',
+      maxUses: 1,
+      channel: 'telegram',
+      externalId: String(telegramUserId),
+    });
+    expect(issued?.correlationId).toMatch(/^telegram-family-incident-zc-demo-/);
+    expect(JSON.parse(issued?.metadataJson ?? '{}')).toMatchObject({ returnState: 'web:family-reunification:search' });
+  });
+
+  it('returns a safe Telegram family reunification fallback when private-link issuance is denied', async () => {
+    const telegramUserId = 28002;
+
+    await expect(postTelegramMessage(telegramUserId, '/reunificacion', 'NoMember')).resolves.toMatchObject({
+      accepted: true,
+      command: '/reunificacion',
+      responseText: expect.stringContaining('Do not send photos'),
+    });
+
+    const fallback = await postTelegramMessage(telegramUserId, '1', 'NoMember');
+    expect(fallback.responseText).toContain('Could not create a private family reunification link');
+    expect(fallback.responseText).toContain('in-person help');
+    expect(fallback.responseText).not.toMatch(/token=|fullName|latitude|longitude|exactLocation/i);
   });
 
   it('drives Telegram webhook /sos through persisted state and exact confirmation', async () => {

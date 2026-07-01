@@ -432,6 +432,29 @@ describe('live operational flow wiring', () => {
     ]);
   });
 
+  it('keeps Slice 6 family reunification out of the native SOS surface', async () => {
+    const { screen, database } = await renderLiveOperations();
+
+    await pressAndFlush(screen.getByText('Create local incident'));
+    await waitFor(() => expect(screen.getByText('Native SOS')).toBeTruthy());
+    await pressAndFlush(screen.getByTestId('send_local_sos_button'));
+
+    await waitFor(() => expect(screen.getByText('SOS open · critical')).toBeTruthy());
+
+    expect(screen.queryByText(/family reunification/i)).toBeNull();
+    expect(screen.queryByText(/search family/i)).toBeNull();
+    expect(screen.queryByText(/child identity/i)).toBeNull();
+    expect(screen.queryByText(/minor identity/i)).toBeNull();
+    expect(screen.queryByText(/photo/i)).toBeNull();
+    expect(screen.queryByText(/exact location/i)).toBeNull();
+    expect(screen.getByText('Native SOS')).toBeTruthy();
+    expect(screen.getByText('Send local SOS')).toBeTruthy();
+
+    const operations = await database.syncOps.findByIncident('incident-local');
+    expect(operations.map((operation) => operation.opType)).toEqual(['incident.create', 'sos.create']);
+    expect(operations.map((operation) => operation.opType)).not.toContain('family_reunification.search');
+  });
+
   it('keeps a locally saved SOS visible when Meshtastic transport throws', async () => {
     const sendSos = jest.fn<ReturnType<MeshtasticSosAdapter['sendSos']>, Parameters<MeshtasticSosAdapter['sendSos']>>().mockRejectedValue(new Error('radio write failed'));
     const { screen, database } = await renderLiveOperations({ sosTransport: { sendSos } });

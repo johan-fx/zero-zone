@@ -5,6 +5,8 @@ import {
   HealthResponseSchema,
   IncidentConfigResponseSchema,
   IncidentJoinRequestSchema,
+  FamilyReunificationSearchRequestSchema,
+  FamilyReunificationSearchResponseSchema,
   DispatchEventCreatePayloadSchema,
   DispatchEventUpdatePayloadSchema,
   DispatchTaskConnectedCreateRequestSchema,
@@ -20,14 +22,26 @@ import {
   IncidentJoinResponseSchema,
   IncidentListResponseSchema,
   PendingSignedOperationSchema,
+  PrivateWebLinkConsumeRequestSchema,
+  PrivateWebLinkConsumeResponseSchema,
+  PrivateWebLinkIssueRequestSchema,
+  PrivateWebLinkIssueResponseSchema,
+  PrivateWebLinkValidateRequestSchema,
+  PrivateWebLinkValidateResponseSchema,
   type Channel,
   type ContractErrorCode,
+  type FamilyReunificationSearchResponse,
   type IncidentConfigResponse,
   type IncidentJoinResponse,
   type IncidentRole,
   type IncidentSummary,
   type PermissionSnapshot,
   type PendingSignedOperation,
+  type PrivateWebLinkConsumeRequest,
+  type PrivateWebLinkIssueRequest,
+  type PrivateWebLinkIssueResponse,
+  type PrivateWebLinkValidateRequest,
+  type WebLinkScope,
   ResourceReportConnectedCreateRequestSchema,
   ResourceReportCreateResponseSchema,
   ResourceReportDetailResponseSchema,
@@ -70,23 +84,28 @@ import {
 import { deriveResourceReportState, deriveWorkCenterState, matchResourceReports, type WorkCenterSignalInput } from '@zona-cero/domain';
 import {
   handleTelegramDispatchTaskFlow,
+  handleTelegramFamilyReunificationFlow,
   handleTelegramIncidentJoinFlow,
   handleTelegramResourceReportFlow,
   handleTelegramSosFlow,
   handleTelegramWorkCenterReportFlow,
   isTerminalTelegramDispatchTaskState,
+  isTerminalTelegramFamilyReunificationState,
   isTerminalTelegramIncidentJoinState,
   isTerminalTelegramResourceReportState,
   isTerminalTelegramSosState,
   isTerminalTelegramWorkCenterReportState,
   resolveTelegramCommand,
   safeParseTelegramDispatchTaskState,
+  safeParseTelegramFamilyReunificationState,
   safeParseTelegramIncidentJoinState,
   safeParseTelegramResourceReportState,
   safeParseTelegramSosState,
   safeParseTelegramWorkCenterReportState,
   type TelegramDispatchTaskPorts,
   type TelegramDispatchTaskState,
+  type TelegramFamilyReunificationPorts,
+  type TelegramFamilyReunificationState,
   type TelegramIncidentJoinPorts,
   type TelegramIncidentJoinState,
   type TelegramResourceReportPorts,
@@ -111,6 +130,8 @@ export const app = new Hono<{ Bindings: Env }>();
 const roles: IncidentRole[] = ['volunteer', 'coordinator', 'logistics', 'medical'];
 const channels: Channel[] = ['telegram', 'mobile', 'web-ui'];
 const telegramConversationStateTtlMs = 30 * 60 * 1000;
+const familyReunificationSearchLinkTtlSeconds = 15 * 60;
+const familyReunificationSearchLinkMaxUses = 1;
 
 const permissionSnapshots: IncidentConfigResponse['permissionSnapshots'] = {
   volunteer: {
@@ -187,6 +208,128 @@ app.post('/incidents/:incidentId/join', async (c) => {
 
   const response = await joinIncident(c.env.DB, incident, parsed.data);
   return c.json(IncidentJoinResponseSchema.parse(response));
+});
+
+app.post('/incidents/:incidentId/private-links', async (c) => {
+  const incident = await findIncident(c.env.DB, c.req.param('incidentId'));
+  if (!incident) {
+    return c.json({ error: 'not_found' }, 404);
+  }
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = PrivateWebLinkIssueRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: 'invalid_payload', issues: parsed.error.issues }, 400);
+  }
+
+  if (parsed.data.scope !== 'family_reunification.search') {
+    return c.json({ error: 'invalid_link_scope' }, 400);
+  }
+
+  const membership = await findIncidentMembershipWithPermissions(c.env.DB, incident.incidentId, parsed.data.channel, parsed.data.externalId);
+  if (!membership?.permissions.canReadIncident) {
+    return c.json({ error: 'permission_denied' }, 403);
+  }
+
+  const response = await issuePrivateWebLink(c.env.DB, incident, parsed.data, membership);
+  return c.json(PrivateWebLinkIssueResponseSchema.parse(response));
+});
+
+app.post('/private-links/validate', async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsed = PrivateWebLinkValidateRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    await auditPrivateWebLinkAttempt(c.env.DB, createRejectedAttemptInput(c, body, 'validate', 'invalid_payload'));
+    return c.json({ error: 'invalid_payload', issues: parsed.error.issues }, 400);
+  }
+
+  const result = await validatePrivateWebLink(c.env.DB, c.req.raw, parsed.data, 'validate');
+  if (!result.success) {
+    return c.json({ error: result.error }, privateWebLinkErrorStatus(result.error));
+  }
+
+  return c.json(PrivateWebLinkValidateResponseSchema.parse({
+    valid: true,
+    linkId: result.link.linkId,
+    scope: result.link.scope,
+    incidentId: result.link.incidentId,
+    correlationId: result.link.correlationId,
+    expiresAt: result.link.expiresAt,
+    remainingUses: Math.max(0, result.link.maxUses - result.link.useCount),
+    nextAction: 'in_person_verification',
+    audit: { auditEventId: result.auditEventId },
+  }));
+});
+
+app.post('/private-links/consume', async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsed = PrivateWebLinkConsumeRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    await auditPrivateWebLinkAttempt(c.env.DB, createRejectedAttemptInput(c, body, 'consume', 'invalid_payload'));
+    return c.json({ error: 'invalid_payload', issues: parsed.error.issues }, 400);
+  }
+
+  const result = await consumePrivateWebLink(c.env.DB, c.req.raw, parsed.data);
+  if (!result.success) {
+    return c.json({ error: result.error }, privateWebLinkErrorStatus(result.error));
+  }
+
+  return c.json(PrivateWebLinkConsumeResponseSchema.parse({
+    accepted: true,
+    linkId: result.linkId,
+    referral: {
+      type: 'in_person_verification',
+      message: 'Continue with in-person verification. Do not share sensitive identity or location details in chat.',
+    },
+    audit: { auditEventId: result.auditEventId },
+  }));
+});
+
+app.post('/private-links/family-reunification/search', async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsed = FamilyReunificationSearchRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    await auditPrivateWebLinkAttempt(c.env.DB, createRejectedAttemptInput(c, body, 'family_reunification.search', 'invalid_payload'));
+    return c.json({ error: 'invalid_payload', issues: parsed.error.issues }, 400);
+  }
+
+  const result = await validatePrivateWebLink(c.env.DB, c.req.raw, {
+    token: parsed.data.token,
+    scope: 'family_reunification.search',
+    correlationId: parsed.data.correlationId,
+    fingerprint: parsed.data.fingerprint,
+  }, 'family_reunification.search');
+  if (!result.success) {
+    return c.json({ error: result.error }, privateWebLinkErrorStatus(result.error));
+  }
+
+  const debit = await debitPrivateWebLinkUse(c.env.DB, c.req.raw, {
+    token: parsed.data.token,
+    scope: 'family_reunification.search',
+    correlationId: parsed.data.correlationId,
+    fingerprint: parsed.data.fingerprint,
+  }, result, 'family_reunification.search');
+  if (!debit.success) {
+    return c.json({ error: debit.error }, privateWebLinkErrorStatus(debit.error));
+  }
+
+  const response: FamilyReunificationSearchResponse = {
+    matches: [{
+      matchId: `match_${slug(result.link.incidentId)}_referral`,
+      status: 'possible_match',
+      ...(parsed.data.query.ageBand ? { ageBand: parsed.data.query.ageBand } : {}),
+      relationHint: 'Family desk can compare details in person.',
+      ...(parsed.data.query.lastKnownAreaLabel ? { lastKnownAreaLabel: parsed.data.query.lastKnownAreaLabel } : {}),
+      verificationRequired: true,
+    }],
+    referral: {
+      type: 'in_person_verification',
+      message: 'Visit the family reunification desk. Do not send sensitive identity or location details in chat.',
+    },
+    audit: { auditEventId: result.auditEventId },
+  };
+
+  return c.json(FamilyReunificationSearchResponseSchema.parse(response));
 });
 
 app.post('/incidents/:incidentId/work-centers', async (c) => {
@@ -488,6 +631,52 @@ type SyncPushOperationResult = SyncPushResponse['results'][number];
 type IncidentMembershipLookup = {
   channelIdentityId: string;
   incidentMembershipId: string;
+};
+
+type IncidentMembershipWithPermissions = IncidentMembershipLookup & {
+  permissions: PermissionSnapshot;
+};
+
+type PrivateWebLinkRow = {
+  linkId: string;
+  incidentId: string;
+  channelIdentityId: string;
+  incidentMembershipId: string;
+  scope: WebLinkScope;
+  tokenHash: string;
+  correlationId: string;
+  expiresAt: string;
+  consumedAt: string | null;
+  maxUses: number;
+  useCount: number;
+  createdAt: string;
+  revokedAt: string | null;
+  metadataJson: string;
+};
+
+type PrivateWebLinkValidationSuccess = {
+  success: true;
+  link: PrivateWebLinkRow;
+  auditEventId: string;
+};
+
+type PrivateWebLinkValidationFailure = {
+  success: false;
+  error: ContractErrorCode;
+};
+
+type PrivateWebLinkAttemptInput = {
+  action: string;
+  linkId: string | null;
+  incidentId: string | null;
+  scope: string | null;
+  correlationId: string | null;
+  fingerprintHash: string;
+  tokenHashPrefix: string | null;
+  result: 'accepted' | 'rejected';
+  errorCode: ContractErrorCode | null;
+  ipHash: string | null;
+  userAgentHash: string | null;
 };
 
 type WorkCenterRow = {
@@ -993,6 +1182,411 @@ async function findIncidentMembershipForChannel(
     )
     .bind(incidentId, channel, externalId)
     .first<IncidentMembershipLookup>();
+}
+
+async function findIncidentMembershipWithPermissions(
+  db: D1Database,
+  incidentId: string,
+  channel: Channel,
+  externalId: string,
+): Promise<IncidentMembershipWithPermissions | null> {
+  const row = await db
+    .prepare(
+      `SELECT ci.channel_identity_id AS channelIdentityId, im.incident_membership_id AS incidentMembershipId, im.permissions_json AS permissionsJson
+       FROM channel_identities ci
+       JOIN incident_memberships im ON im.channel_identity_id = ci.channel_identity_id
+       WHERE im.incident_id = ? AND ci.channel = ? AND ci.external_id = ?
+       ORDER BY im.created_at ASC
+       LIMIT 1`,
+    )
+    .bind(incidentId, channel, externalId)
+    .first<IncidentMembershipLookup & { permissionsJson: string }>();
+
+  if (!row) {
+    return null;
+  }
+
+  return {
+    channelIdentityId: row.channelIdentityId,
+    incidentMembershipId: row.incidentMembershipId,
+    permissions: parsePermissionSnapshot(row.permissionsJson),
+  };
+}
+
+function parsePermissionSnapshot(value: string): PermissionSnapshot {
+  try {
+    const parsed = JSON.parse(value) as Partial<PermissionSnapshot>;
+    return {
+      canReadIncident: parsed.canReadIncident === true,
+      canJoinIncident: parsed.canJoinIncident === true,
+      canManageIncident: parsed.canManageIncident === true,
+      canManageLogistics: parsed.canManageLogistics === true,
+      canManageMedical: parsed.canManageMedical === true,
+    };
+  } catch {
+    return {
+      canReadIncident: false,
+      canJoinIncident: false,
+      canManageIncident: false,
+      canManageLogistics: false,
+      canManageMedical: false,
+    };
+  }
+}
+
+async function issuePrivateWebLink(
+  db: D1Database,
+  incident: IncidentSummary,
+  request: PrivateWebLinkIssueRequest,
+  membership: IncidentMembershipLookup,
+): Promise<PrivateWebLinkIssueResponse> {
+  const effectiveRequest = applyPrivateWebLinkIssuePolicy(request);
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const expiresAt = new Date(now.getTime() + effectiveRequest.ttlSeconds * 1000).toISOString();
+  const token = generateSecureToken();
+  const tokenHash = await hashString(token);
+  const linkId = `pwl_${slug(incident.incidentId)}_${crypto.randomUUID()}`;
+  const auditEventId = `audit_private_link_issued_${slug(linkId)}`;
+
+  await db.prepare(
+    `INSERT INTO private_web_links (
+      link_id, incident_id, channel_identity_id, incident_membership_id, scope, token_hash, correlation_id,
+      expires_at, max_uses, created_at, metadata_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    linkId,
+    incident.incidentId,
+    membership.channelIdentityId,
+    membership.incidentMembershipId,
+    effectiveRequest.scope,
+    tokenHash,
+    effectiveRequest.correlationId,
+    expiresAt,
+    effectiveRequest.maxUses,
+    nowIso,
+    JSON.stringify({
+      returnState: effectiveRequest.returnState ?? null,
+      displayName: effectiveRequest.displayName ?? null,
+      ...(effectiveRequest.metadata ? { metadata: effectiveRequest.metadata } : {}),
+    }),
+  ).run();
+
+  await db.prepare(
+    `INSERT OR IGNORE INTO audit_events (audit_event_id, incident_id, channel_identity_id, incident_membership_id, event_type, payload_json)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    auditEventId,
+    incident.incidentId,
+    membership.channelIdentityId,
+    membership.incidentMembershipId,
+    'private_web_link.issued',
+    JSON.stringify({
+      linkId,
+      scope: effectiveRequest.scope,
+      correlationId: effectiveRequest.correlationId,
+      returnState: effectiveRequest.returnState ?? null,
+      expiresAt,
+      maxUses: effectiveRequest.maxUses,
+    }),
+  ).run();
+
+  return PrivateWebLinkIssueResponseSchema.parse({
+    linkId,
+    token,
+    scope: effectiveRequest.scope,
+    incidentId: incident.incidentId,
+    correlationId: effectiveRequest.correlationId,
+    ...(effectiveRequest.returnState ? { returnState: effectiveRequest.returnState } : {}),
+    expiresAt,
+    maxUses: effectiveRequest.maxUses,
+    audit: { auditEventId },
+  });
+}
+
+function applyPrivateWebLinkIssuePolicy(request: PrivateWebLinkIssueRequest): PrivateWebLinkIssueRequest {
+  if (request.scope !== 'family_reunification.search') {
+    return request;
+  }
+
+  return {
+    ...request,
+    ttlSeconds: Math.min(request.ttlSeconds, familyReunificationSearchLinkTtlSeconds),
+    maxUses: familyReunificationSearchLinkMaxUses,
+  };
+}
+
+async function validatePrivateWebLink(
+  db: D1Database,
+  request: Request,
+  payload: PrivateWebLinkValidateRequest,
+  action: 'validate' | 'consume' | 'family_reunification.search',
+): Promise<PrivateWebLinkValidationSuccess | PrivateWebLinkValidationFailure> {
+  const tokenHash = await hashString(payload.token);
+  const fingerprintHash = await hashString(payload.fingerprint);
+  const rateLimited = await isPrivateWebLinkRateLimited(db, fingerprintHash, tokenHash);
+  if (rateLimited) {
+    await auditPrivateWebLinkAttempt(db, await createAttemptInputFromRequest(request, {
+      action,
+      tokenHash,
+      fingerprint: payload.fingerprint,
+      result: 'rejected',
+      errorCode: 'permission_denied',
+      scope: payload.scope,
+      correlationId: payload.correlationId,
+    }));
+    return { success: false, error: 'permission_denied' };
+  }
+
+  const link = await findPrivateWebLinkByTokenHash(db, tokenHash);
+  const nowIso = new Date().toISOString();
+  const error = getPrivateWebLinkValidationError(link, payload, nowIso);
+  if (error) {
+    await auditPrivateWebLinkAttempt(db, await createAttemptInputFromRequest(request, {
+      action,
+      tokenHash,
+      fingerprint: payload.fingerprint,
+      result: 'rejected',
+      errorCode: error,
+      link,
+      scope: payload.scope,
+      correlationId: payload.correlationId,
+    }));
+    return { success: false, error };
+  }
+
+  const activeLink = link;
+  if (!activeLink) {
+    return { success: false, error: 'permission_denied' };
+  }
+
+  const auditEventId = await auditPrivateWebLinkAttempt(db, await createAttemptInputFromRequest(request, {
+    action,
+    tokenHash,
+    fingerprint: payload.fingerprint,
+    result: 'accepted',
+    errorCode: null,
+    link: activeLink,
+    scope: payload.scope,
+    correlationId: payload.correlationId,
+  }));
+
+  return { success: true, link: activeLink, auditEventId };
+}
+
+async function consumePrivateWebLink(
+  db: D1Database,
+  request: Request,
+  payload: PrivateWebLinkConsumeRequest,
+): Promise<{ success: true; linkId: string; auditEventId: string } | PrivateWebLinkValidationFailure> {
+  const validation = await validatePrivateWebLink(db, request, payload, 'consume');
+  if (!validation.success) {
+    return validation;
+  }
+
+  const debit = await debitPrivateWebLinkUse(db, request, payload, validation, 'consume');
+
+  if (!debit.success) {
+    return debit;
+  }
+
+  return { success: true, linkId: validation.link.linkId, auditEventId: validation.auditEventId };
+}
+
+async function debitPrivateWebLinkUse(
+  db: D1Database,
+  request: Request,
+  payload: PrivateWebLinkValidateRequest,
+  validation: PrivateWebLinkValidationSuccess,
+  action: 'consume' | 'family_reunification.search',
+): Promise<{ success: true } | PrivateWebLinkValidationFailure> {
+  const nowIso = new Date().toISOString();
+  const update = await db.prepare(
+    `UPDATE private_web_links
+     SET use_count = use_count + 1,
+       consumed_at = CASE WHEN use_count + 1 >= max_uses THEN ? ELSE consumed_at END
+     WHERE link_id = ?
+       AND revoked_at IS NULL
+       AND consumed_at IS NULL
+       AND expires_at > ?
+       AND use_count < max_uses`,
+  ).bind(nowIso, validation.link.linkId, nowIso).run();
+
+  if (update.meta.changes === 0) {
+    const tokenHash = await hashString(payload.token);
+    await auditPrivateWebLinkAttempt(db, await createAttemptInputFromRequest(request, {
+      action,
+      tokenHash,
+      fingerprint: payload.fingerprint,
+      result: 'rejected',
+      errorCode: 'link_expired',
+      link: validation.link,
+      scope: payload.scope,
+      correlationId: payload.correlationId,
+    }));
+    return { success: false, error: 'link_expired' };
+  }
+
+  return { success: true };
+}
+
+async function findPrivateWebLinkByTokenHash(db: D1Database, tokenHash: string): Promise<PrivateWebLinkRow | null> {
+  return db.prepare(
+    `SELECT link_id AS linkId, incident_id AS incidentId, channel_identity_id AS channelIdentityId,
+      incident_membership_id AS incidentMembershipId, scope, token_hash AS tokenHash, correlation_id AS correlationId,
+      expires_at AS expiresAt, consumed_at AS consumedAt, max_uses AS maxUses, use_count AS useCount,
+      created_at AS createdAt, revoked_at AS revokedAt, metadata_json AS metadataJson
+     FROM private_web_links
+     WHERE token_hash = ?`,
+  ).bind(tokenHash).first<PrivateWebLinkRow>();
+}
+
+function getPrivateWebLinkValidationError(
+  link: PrivateWebLinkRow | null,
+  payload: PrivateWebLinkValidateRequest,
+  nowIso: string,
+): ContractErrorCode | null {
+  if (!link) {
+    return 'permission_denied';
+  }
+
+  if (link.scope !== payload.scope) {
+    return 'invalid_link_scope';
+  }
+
+  if (link.correlationId !== payload.correlationId) {
+    return 'link_correlation_mismatch';
+  }
+
+  if (link.revokedAt || link.consumedAt || link.expiresAt <= nowIso || link.useCount >= link.maxUses) {
+    return 'link_expired';
+  }
+
+  return null;
+}
+
+async function isPrivateWebLinkRateLimited(db: D1Database, fingerprintHash: string, tokenHash: string): Promise<boolean> {
+  const tokenHashPrefix = tokenHash.slice(0, 16);
+  const fingerprintAttempts = await db.prepare(
+    `SELECT COUNT(*) AS count
+     FROM private_web_link_attempts
+     WHERE fingerprint_hash = ? AND result = 'rejected' AND created_at >= datetime('now', '-15 minutes')`,
+  ).bind(fingerprintHash).first<{ count: number }>();
+  const tokenAttempts = await db.prepare(
+    `SELECT COUNT(*) AS count
+     FROM private_web_link_attempts
+     WHERE token_hash_prefix = ? AND result = 'rejected' AND created_at >= datetime('now', '-15 minutes')`,
+  ).bind(tokenHashPrefix).first<{ count: number }>();
+
+  return (fingerprintAttempts?.count ?? 0) >= 5 || (tokenAttempts?.count ?? 0) >= 5;
+}
+
+function privateWebLinkErrorStatus(error: ContractErrorCode): 400 | 403 | 410 {
+  if (error === 'permission_denied') {
+    return 403;
+  }
+
+  if (error === 'link_expired') {
+    return 410;
+  }
+
+  return 400;
+}
+
+function generateSecureToken(): string {
+  const tokenBytes = new Uint8Array(32);
+  crypto.getRandomValues(tokenBytes);
+  return Array.from(tokenBytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function createAttemptInputFromRequest(
+  request: Request,
+  input: {
+    action: string;
+    tokenHash: string;
+    fingerprint: string;
+    result: 'accepted' | 'rejected';
+    errorCode: ContractErrorCode | null;
+    link?: PrivateWebLinkRow | null;
+    scope?: WebLinkScope;
+    correlationId?: string;
+  },
+): Promise<PrivateWebLinkAttemptInput> {
+  return {
+    action: input.action,
+    linkId: input.link?.linkId ?? null,
+    incidentId: input.link?.incidentId ?? null,
+    scope: input.link?.scope ?? input.scope ?? null,
+    correlationId: input.link?.correlationId ?? input.correlationId ?? null,
+    fingerprintHash: await hashString(input.fingerprint),
+    tokenHashPrefix: input.tokenHash.slice(0, 16),
+    result: input.result,
+    errorCode: input.errorCode,
+    ipHash: await hashOptionalHeader(request.headers.get('cf-connecting-ip') ?? request.headers.get('x-forwarded-for')),
+    userAgentHash: await hashOptionalHeader(request.headers.get('user-agent')),
+  };
+}
+
+function createRejectedAttemptInput(
+  c: { req: { raw: Request } },
+  body: unknown,
+  action: string,
+  errorCode: ContractErrorCode,
+) {
+  const raw = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+  const fingerprint = typeof raw.fingerprint === 'string' ? raw.fingerprint : 'missing-fingerprint';
+  const token = typeof raw.token === 'string' ? raw.token : 'missing-token';
+  const scope = typeof raw.scope === 'string' && isWebLinkScope(raw.scope) ? raw.scope : null;
+  const correlationId = typeof raw.correlationId === 'string' ? raw.correlationId : null;
+
+  return createAttemptInputFromRequest(c.req.raw, {
+    action,
+    tokenHash: '',
+    fingerprint,
+    result: 'rejected',
+    errorCode,
+    scope: scope ?? undefined,
+    correlationId: correlationId ?? undefined,
+  }).then(async (input) => ({
+    ...input,
+    tokenHashPrefix: typeof raw.token === 'string' ? (await hashString(token)).slice(0, 16) : null,
+  }));
+}
+
+async function auditPrivateWebLinkAttempt(
+  db: D1Database,
+  inputOrPromise: PrivateWebLinkAttemptInput | Promise<PrivateWebLinkAttemptInput>,
+): Promise<string> {
+  const input = await inputOrPromise;
+  const attemptId = `attempt_${crypto.randomUUID()}`;
+  await db.prepare(
+    `INSERT INTO private_web_link_attempts (
+      attempt_id, link_id, incident_id, scope, correlation_id, fingerprint_hash, token_hash_prefix,
+      result, error_code, ip_hash, user_agent_hash, metadata_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    attemptId,
+    input.linkId,
+    input.incidentId,
+    input.scope,
+    input.correlationId,
+    input.fingerprintHash,
+    input.tokenHashPrefix,
+    input.result,
+    input.errorCode,
+    input.ipHash,
+    input.userAgentHash,
+    JSON.stringify({ action: input.action }),
+  ).run();
+  return attemptId;
+}
+
+async function hashOptionalHeader(value: string | null): Promise<string | null> {
+  return value ? hashString(value) : null;
+}
+
+function isWebLinkScope(value: string): value is WebLinkScope {
+  return value === 'incident.join' || value === 'work_center.detail' || value === 'family_reunification.search';
 }
 
 async function createConnectedWorkCenter(
@@ -1721,6 +2315,12 @@ async function hashJson(value: unknown): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+async function hashString(value: string): Promise<string> {
+  const encoded = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest('SHA-256', encoded);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== 'object') {
     return JSON.stringify(value);
@@ -1770,30 +2370,49 @@ async function handleTelegramConversation(db: D1Database, update: TelegramUpdate
   const resourceStateKey = getTelegramResourceConversationStateKey(update);
   const dispatchStateKey = getTelegramDispatchConversationStateKey(update);
   const sosStateKey = getTelegramSosConversationStateKey(update);
+  const familyStateKey = getTelegramFamilyReunificationConversationStateKey(update);
 
   if (command === '/start') {
-    await deleteTelegramConversationStates(db, [workCenterStateKey, resourceStateKey, dispatchStateKey, sosStateKey]);
+    await deleteTelegramConversationStates(db, [workCenterStateKey, resourceStateKey, dispatchStateKey, sosStateKey, familyStateKey]);
     return handleTelegramIncidentJoinConversation(db, update, joinStateKey);
   }
 
   if (command === '/workcenter') {
-    await deleteTelegramConversationStates(db, [resourceStateKey, dispatchStateKey, sosStateKey]);
+    await deleteTelegramConversationStates(db, [resourceStateKey, dispatchStateKey, sosStateKey, familyStateKey]);
     return handleTelegramWorkCenterConversation(db, update, workCenterStateKey);
   }
 
   if (command === '/resource') {
-    await deleteTelegramConversationStates(db, [workCenterStateKey, dispatchStateKey, sosStateKey]);
+    await deleteTelegramConversationStates(db, [workCenterStateKey, dispatchStateKey, sosStateKey, familyStateKey]);
     return handleTelegramResourceConversation(db, update, resourceStateKey);
   }
 
   if (command === '/dispatch') {
-    await deleteTelegramConversationStates(db, [workCenterStateKey, resourceStateKey, sosStateKey]);
+    await deleteTelegramConversationStates(db, [workCenterStateKey, resourceStateKey, sosStateKey, familyStateKey]);
     return handleTelegramDispatchConversation(db, update, dispatchStateKey);
   }
 
   if (command === '/sos') {
-    await deleteTelegramConversationStates(db, [workCenterStateKey, resourceStateKey, dispatchStateKey]);
+    await deleteTelegramConversationStates(db, [workCenterStateKey, resourceStateKey, dispatchStateKey, familyStateKey]);
     return handleTelegramSosConversation(db, update, sosStateKey);
+  }
+
+
+  if (command === '/familia' || command === '/reunificacion') {
+    await deleteTelegramConversationStates(db, [joinStateKey, workCenterStateKey, resourceStateKey, dispatchStateKey, sosStateKey]);
+    return handleTelegramFamilyReunificationConversation(db, update, familyStateKey);
+  }
+
+
+  const routedFamily = await routeExistingTelegramFlow(
+    db,
+    familyStateKey,
+    safeParseTelegramFamilyReunificationState,
+    { step: 'idle' } satisfies TelegramFamilyReunificationState,
+    (state) => handleTelegramFamilyReunificationConversation(db, update, familyStateKey, state),
+  );
+  if (routedFamily) {
+    return routedFamily;
   }
 
   const routedSos = await routeExistingTelegramFlow(
@@ -1930,6 +2549,30 @@ async function handleTelegramDispatchConversation(
   return result.responseText;
 }
 
+
+async function handleTelegramFamilyReunificationConversation(
+  db: D1Database,
+  update: TelegramUpdateLike,
+  stateKey: string | null,
+  loadedState?: TelegramFamilyReunificationState,
+): Promise<string> {
+  const currentState = loadedState ?? (stateKey
+    ? await loadTelegramConversationState(db, stateKey, safeParseTelegramFamilyReunificationState, { step: 'idle' } satisfies TelegramFamilyReunificationState)
+    : ({ step: 'idle' } satisfies TelegramFamilyReunificationState));
+  const ports = createTelegramFamilyReunificationPorts(db, update);
+  const result = await handleTelegramFamilyReunificationFlow(currentState, update, ports);
+
+  if (stateKey) {
+    if (isTerminalTelegramFamilyReunificationState(result.state)) {
+      await deleteTelegramConversationState(db, stateKey);
+    } else {
+      await persistTelegramConversationState(db, stateKey, result.state);
+    }
+  }
+
+  return result.responseText;
+}
+
 async function handleTelegramSosConversation(
   db: D1Database,
   update: TelegramUpdateLike,
@@ -2050,6 +2693,52 @@ function createTelegramResourceReportPorts(db: D1Database): TelegramResourceRepo
   };
 }
 
+
+function createTelegramFamilyReunificationPorts(db: D1Database, update: TelegramUpdateLike): TelegramFamilyReunificationPorts {
+  return {
+    async listIncidents() {
+      return IncidentListResponseSchema.parse({ incidents: await listIncidents(db) });
+    },
+    async createPrivateLink(incidentId, request) {
+      const incident = await findIncident(db, incidentId);
+      if (!incident) {
+        throw Object.assign(new Error('not_found'), { error: 'not_found' });
+      }
+
+      const externalId = getTelegramExternalId(update);
+      if (!externalId) {
+        throw Object.assign(new Error('permission_denied'), { error: 'permission_denied' });
+      }
+
+      const membership = await findIncidentMembershipWithPermissions(db, incident.incidentId, 'telegram', externalId);
+      if (!membership?.permissions.canReadIncident) {
+        throw Object.assign(new Error('permission_denied'), { error: 'permission_denied' });
+      }
+
+      const correlationSuffix = crypto.randomUUID();
+      const safeRequest = PrivateWebLinkIssueRequestSchema.parse({
+        scope: 'family_reunification.search',
+        channel: 'telegram',
+        externalId,
+        displayName: getTelegramDisplayName(update),
+        correlationId: `telegram-family-${slug(incident.incidentId)}-${correlationSuffix}`,
+        returnState: request.returnState ?? 'web:family-reunification:search',
+        ttlSeconds: Math.min(request.ttlSeconds || 600, 900),
+        maxUses: 1,
+        metadata: {
+          issuedBy: 'telegram-family-reunification-flow',
+        },
+      });
+
+      return issuePrivateWebLink(db, incident, safeRequest, membership);
+    },
+    formatPrivateLinkUrl(response) {
+      const params = new URLSearchParams({ token: response.token, correlationId: response.correlationId });
+      return `/family-reunification?${params.toString()}`;
+    },
+  };
+}
+
 function createTelegramSosPorts(db: D1Database): TelegramSosPorts {
   return {
     async listIncidents() {
@@ -2125,9 +2814,23 @@ function getTelegramSosConversationStateKey(update: TelegramUpdateLike): string 
   return getTelegramNamespacedConversationStateKey(update, 'sos');
 }
 
-function getTelegramNamespacedConversationStateKey(update: TelegramUpdateLike, flow: 'workcenter' | 'resource' | 'dispatch' | 'sos'): string | null {
+function getTelegramFamilyReunificationConversationStateKey(update: TelegramUpdateLike): string | null {
+  return getTelegramNamespacedConversationStateKey(update, 'family-reunification');
+}
+
+function getTelegramNamespacedConversationStateKey(update: TelegramUpdateLike, flow: 'workcenter' | 'resource' | 'dispatch' | 'sos' | 'family-reunification'): string | null {
   const baseKey = getTelegramConversationBaseStateKey(update);
   return baseKey ? `flow:${flow}:${baseKey}` : null;
+}
+
+function getTelegramExternalId(update: TelegramUpdateLike): string | null {
+  const fromId = update.message?.from?.id;
+  return fromId == null ? null : String(fromId);
+}
+
+function getTelegramDisplayName(update: TelegramUpdateLike): string | undefined {
+  const firstName = update.message?.from?.first_name?.trim();
+  return firstName || undefined;
 }
 
 function getTelegramConversationBaseStateKey(update: TelegramUpdateLike): string | null {

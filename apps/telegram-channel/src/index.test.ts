@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   incidentConfigHappyFixture,
   incidentListHappyFixture,
+  privateFamilyReunificationIssueResponseFixture,
   sosAlertCreateResponseHappyFixture,
   telegramIncidentJoinResponseFixture,
   telegramStartUpdateFixture,
@@ -12,6 +13,7 @@ import {
 } from '@zona-cero/testing';
 import {
   DispatchTaskConnectedUpdateRequestSchema,
+  PrivateWebLinkIssueRequestSchema,
   ResourceReportConnectedCreateRequestSchema,
   SosConnectedCreateRequestSchema,
   WorkCenterConnectedCreateRequestSchema,
@@ -25,6 +27,8 @@ import {
   TelegramResourceReportStateSchema,
   TelegramSosStateSchema,
   TelegramWorkCenterReportStateSchema,
+  TelegramFamilyReunificationStateSchema,
+  handleTelegramFamilyReunificationFlow,
   handleTelegramDispatchTaskFlow,
   handleTelegramIncidentJoinFlow,
   handleTelegramResourceReportFlow,
@@ -41,9 +45,12 @@ import {
   safeParseTelegramIncidentJoinState,
   safeParseTelegramResourceReportState,
   safeParseTelegramSosState,
+  safeParseTelegramFamilyReunificationState,
   safeParseTelegramWorkCenterReportState,
   type TelegramDispatchTaskPorts,
   type TelegramDispatchTaskState,
+  type TelegramFamilyReunificationPorts,
+  type TelegramFamilyReunificationState,
   type TelegramIncidentJoinPorts,
   type TelegramResourceReportPorts,
   type TelegramResourceReportState,
@@ -149,6 +156,15 @@ function createSosPorts(overrides: Partial<TelegramSosPorts> = {}): TelegramSosP
   };
 }
 
+function createFamilyReunificationPorts(overrides: Partial<TelegramFamilyReunificationPorts> = {}): TelegramFamilyReunificationPorts {
+  return {
+    listIncidents: vi.fn().mockResolvedValue(incidentListHappyFixture),
+    createPrivateLink: vi.fn().mockResolvedValue(privateFamilyReunificationIssueResponseFixture),
+    formatPrivateLinkUrl: vi.fn((response) => `https://safe.example/family-reunification?token=${response.token}&correlationId=${response.correlationId}`),
+    ...overrides,
+  };
+}
+
 const validJoinStates = [
   { step: 'idle' },
   { step: 'awaitingIncident', incidents: incidentListHappyFixture.incidents, externalUserId: '1001' },
@@ -196,6 +212,13 @@ const validSosStates = [
   { step: 'submitted', response: sosAlertCreateResponseHappyFixture },
   { step: 'cancelled' },
 ] satisfies TelegramSosState[];
+
+const validFamilyReunificationStates = [
+  { step: 'idle' },
+  { step: 'awaitingIncident', incidents: incidentListHappyFixture.incidents, externalUserId: '1001', displayName: 'Field' },
+  { step: 'linked', response: privateFamilyReunificationIssueResponseFixture },
+  { step: 'cancelled' },
+] satisfies TelegramFamilyReunificationState[];
 
 const validWorkCenterStates = [
   { step: 'idle' },
@@ -277,6 +300,22 @@ async function advanceSos(
   return { state, responseText, ports };
 }
 
+async function advanceFamilyReunification(
+  inputs: string[],
+  ports = createFamilyReunificationPorts(),
+): Promise<{ state: TelegramFamilyReunificationState; responseText: string; ports: TelegramFamilyReunificationPorts }> {
+  let state: TelegramFamilyReunificationState = { step: 'idle' };
+  let responseText = '';
+
+  for (const input of inputs) {
+    const result = await handleTelegramFamilyReunificationFlow(state, telegramUserUpdate(input), ports);
+    state = result.state;
+    responseText = result.responseText;
+  }
+
+  return { state, responseText, ports };
+}
+
 async function advanceWorkCenter(
   inputs: string[],
   ports = createWorkCenterPorts(),
@@ -312,6 +351,19 @@ describe('telegram channel flows', () => {
       command: '/sos',
       responseText: expect.stringContaining('CONFIRM SOS'),
     });
+  });
+
+  it('returns a stable family reunification command response without requesting sensitive data', () => {
+    const result = handleTelegramWebhookUpdate(telegramUserUpdate('/familia'));
+
+    expect(result).toMatchObject({
+      accepted: true,
+      command: '/familia',
+      responseText: expect.stringContaining('private web link'),
+    });
+    expect(result.responseText).toContain('Do not send photos');
+    expect(result.responseText).toContain('exact locations');
+    expect(result.responseText).toContain('full minor identities');
   });
 
   it('parses every valid incident join state variant and round-trips through JSON', () => {
@@ -531,6 +583,12 @@ describe('telegram channel flows', () => {
       expect(TelegramSosStateSchema.safeParse(jsonState).success).toBe(true);
       expect(safeParseTelegramSosState(jsonState)).toEqual({ success: true, data: state });
     }
+
+    for (const state of validFamilyReunificationStates) {
+      const jsonState = JSON.parse(JSON.stringify(state));
+      expect(TelegramFamilyReunificationStateSchema.safeParse(jsonState).success).toBe(true);
+      expect(safeParseTelegramFamilyReunificationState(jsonState)).toEqual({ success: true, data: state });
+    }
   });
 
   it('runs the /resource happy path with canonical report kind, urgency and optional work center id', async () => {
@@ -632,6 +690,57 @@ describe('telegram channel flows', () => {
     expect(state.step).toBe('awaitingConfirmation');
     expect(responseText).toContain('Permission denied');
     expect(responseText).toContain('Join this incident first with /start');
+  });
+
+  it('runs the /familia flow by requesting a scoped private web link from the backend', async () => {
+    const ports = createFamilyReunificationPorts();
+    const { state, responseText } = await advanceFamilyReunification(['/familia', '1'], ports);
+
+    expect(state.step).toBe('linked');
+    expect(responseText).toContain('https://safe.example/family-reunification');
+    expect(responseText).toContain('no photos');
+    expect(responseText).toContain('no exact location');
+    expect(responseText).toContain('no full identity of minors');
+    expect(responseText).toContain('in-person verification');
+    expect(ports.createPrivateLink).toHaveBeenCalledWith('incident-zc-demo', {
+      scope: 'family_reunification.search',
+      channel: 'web-ui',
+      externalId: 'web-user-1001',
+      displayName: 'Field Web',
+      correlationId: 'corr-family-reunification-search-1',
+      returnState: 'web:family-reunification:search',
+      ttlSeconds: 600,
+      maxUses: 1,
+      metadata: {},
+    });
+
+    const request = PrivateWebLinkIssueRequestSchema.parse(vi.mocked(ports.createPrivateLink).mock.calls[0]?.[1]);
+    expect(request.scope).toBe('family_reunification.search');
+    expect(request.ttlSeconds).toBe(600);
+    expect(request.maxUses).toBe(1);
+  });
+
+  it('does not echo sensitive family details in Telegram while selecting the incident', async () => {
+    const ports = createFamilyReunificationPorts();
+    const { state, responseText } = await advanceFamilyReunification(['/reunificacion', 'Minor Full Name, photo, exact address'], ports);
+
+    expect(state.step).toBe('awaitingIncident');
+    expect(responseText).toContain('Incident not found');
+    expect(responseText).not.toContain('Minor Full Name');
+    expect(responseText).not.toContain('exact address');
+    expect(ports.createPrivateLink).not.toHaveBeenCalled();
+  });
+
+  it('falls back to in-person verification when private link issuance fails', async () => {
+    const ports = createFamilyReunificationPorts({
+      createPrivateLink: vi.fn().mockRejectedValue(new Error('backend unavailable')),
+    });
+    const { state, responseText } = await advanceFamilyReunification(['/familia', 'incident-zc-demo'], ports);
+
+    expect(state.step).toBe('awaitingIncident');
+    expect(responseText).toContain('Could not create a private family reunification link');
+    expect(responseText).toContain('family reunification desk');
+    expect(responseText).toContain('Do not send photos');
   });
 
 });

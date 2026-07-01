@@ -3,6 +3,7 @@ import telegramConversationStateMigration from '../migrations/0002_telegram_conv
 import workCenterMigration from '../migrations/0003_work_centers.sql?raw';
 import resourceLogisticsMigration from '../migrations/0004_resource_reports_dispatch.sql?raw';
 import sosMigration from '../migrations/0005_sos_alerts.sql?raw';
+import privateWebLinksMigration from '../migrations/0006_private_web_links.sql?raw';
 import incidentDemoSeed from '../seeds/incident-zc-demo.sql?raw';
 
 export async function resetApiTestDatabase(db: D1Database): Promise<void> {
@@ -11,9 +12,12 @@ export async function resetApiTestDatabase(db: D1Database): Promise<void> {
   await execSqlStatements(db, workCenterMigration);
   await execSqlStatements(db, resourceLogisticsMigration);
   await execSqlStatements(db, sosMigration);
+  await execSqlStatements(db, privateWebLinksMigration);
   await execSqlStatements(
     db,
     `
+    DELETE FROM private_web_link_attempts;
+    DELETE FROM private_web_links;
     DELETE FROM critical_fanout_jobs;
     DELETE FROM sos_events;
     DELETE FROM sos_alerts;

@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   ContractErrorCodeSchema,
   ChannelSchema,
+  FamilyReunificationSearchRequestSchema,
+  FamilyReunificationSearchResponseSchema,
   HealthResponseSchema,
   IncidentConfigResponseSchema,
   IncidentJoinRequestSchema,
@@ -19,6 +21,12 @@ import {
   DispatchTaskResponseSchema,
   DispatchTaskStatusSchema,
   PendingSignedOperationSchema,
+  PrivateWebLinkConsumeRequestSchema,
+  PrivateWebLinkConsumeResponseSchema,
+  PrivateWebLinkIssueRequestSchema,
+  PrivateWebLinkIssueResponseSchema,
+  PrivateWebLinkValidateRequestSchema,
+  PrivateWebLinkValidateResponseSchema,
   ResourceReportConnectedCreateRequestSchema,
   ResourceReportCreateResponseSchema,
   ResourceReportDetailResponseSchema,
@@ -197,6 +205,106 @@ describe('contracts package', () => {
     expect(contractErrorSemantics.invalid_operation_version.visibleMappingKey.web).toBe('web.error.invalid_operation_version');
   });
 
+  it('validates strict private web link contracts for family reunification', () => {
+    const issueRequest = PrivateWebLinkIssueRequestSchema.parse({
+      scope: 'family_reunification.search',
+      channel: 'web-ui',
+      externalId: 'web-user-1001',
+      correlationId: 'corr-family-1',
+      returnState: 'web:family-reunification:search',
+      ttlSeconds: 600,
+      maxUses: 1,
+      metadata: { source: 'telegram-private-link' },
+    });
+    expect(issueRequest.scope).toBe('family_reunification.search');
+    expect(PrivateWebLinkIssueRequestSchema.safeParse({ ...issueRequest, unexpected: true }).success).toBe(false);
+    expect(PrivateWebLinkIssueRequestSchema.safeParse({ ...issueRequest, scope: 'admin.raw' }).success).toBe(false);
+
+    expect(
+      PrivateWebLinkIssueResponseSchema.parse({
+        linkId: 'pwl_1',
+        token: 'opaque-private-token',
+        scope: 'family_reunification.search',
+        incidentId: 'incident-zc-demo',
+        correlationId: 'corr-family-1',
+        returnState: 'web:family-reunification:search',
+        expiresAt: '2026-07-01T09:00:00.000Z',
+        maxUses: 1,
+        audit: { auditEventId: 'audit_private_link_issued_1' },
+      }).maxUses,
+    ).toBe(1);
+
+    const validateRequest = {
+      token: 'opaque-private-token',
+      scope: 'family_reunification.search',
+      correlationId: 'corr-family-1',
+      fingerprint: 'browser-fingerprint-fixture',
+    } as const;
+    expect(PrivateWebLinkValidateRequestSchema.parse(validateRequest).fingerprint).toBe(validateRequest.fingerprint);
+    expect(PrivateWebLinkValidateRequestSchema.safeParse({ ...validateRequest, photo: 'not allowed' }).success).toBe(false);
+    expect(
+      PrivateWebLinkValidateResponseSchema.parse({
+        valid: true,
+        linkId: 'pwl_1',
+        scope: 'family_reunification.search',
+        incidentId: 'incident-zc-demo',
+        correlationId: 'corr-family-1',
+        expiresAt: '2026-07-01T09:00:00.000Z',
+        remainingUses: 1,
+        nextAction: 'in_person_verification',
+        audit: { auditEventId: 'audit_private_link_validated_1' },
+      }).nextAction,
+    ).toBe('in_person_verification');
+
+    expect(
+      PrivateWebLinkConsumeRequestSchema.parse({
+        ...validateRequest,
+        referralReason: 'family_reunification_in_person_verification',
+      }).referralReason,
+    ).toBe('family_reunification_in_person_verification');
+    expect(
+      PrivateWebLinkConsumeResponseSchema.parse({
+        accepted: true,
+        linkId: 'pwl_1',
+        referral: { type: 'in_person_verification', message: 'Continue with in-person verification.' },
+        audit: { auditEventId: 'audit_private_link_consumed_1' },
+      }).referral.type,
+    ).toBe('in_person_verification');
+  });
+
+  it('keeps family reunification search responses minimized and strict', () => {
+    const request = FamilyReunificationSearchRequestSchema.parse({
+      token: 'opaque-private-token',
+      correlationId: 'corr-family-1',
+      fingerprint: 'browser-fingerprint-fixture',
+      query: {
+        ageBand: 'child',
+        relationHint: 'parent looking for child',
+        lastKnownAreaLabel: 'north gate area',
+      },
+    });
+    expect(request.query.ageBand).toBe('child');
+
+    const response = FamilyReunificationSearchResponseSchema.parse({
+      matches: [{
+        matchId: 'match_stub_1',
+        status: 'possible_match',
+        ageBand: 'child',
+        relationHint: 'family desk can compare details in person',
+        lastKnownAreaLabel: 'north gate area',
+        verificationRequired: true,
+      }],
+      referral: { type: 'in_person_verification', message: 'Visit the family reunification desk.' },
+      audit: { auditEventId: 'audit_family_search_1' },
+    });
+
+    expect(JSON.stringify(response)).not.toMatch(/photo|latitude|longitude|fullName|exactLocation/i);
+    expect(FamilyReunificationSearchResponseSchema.safeParse({
+      ...response,
+      matches: [{ ...response.matches[0], fullName: 'Sensitive Minor Name' }],
+    }).success).toBe(false);
+  });
+
   it('validates canonical work center contracts and stable derived-state enums', () => {
     expect(workCenterStatuses).toEqual(['reported', 'active', 'inactive', 'archived']);
     expect(workCenterActivationStates).toEqual(['pending_corroboration', 'active', 'needs_review']);
@@ -290,7 +398,8 @@ describe('contracts package', () => {
     });
 
     expect(request.scope).toBe('work_center.detail');
-    expect(WebLinkSessionSchema.parse({ ...request, token: 'opaque-token-1', expiresAt: '2026-06-30T12:00:00.000Z' }).token).toBe(
+    const { ttlSeconds: _ttlSeconds, ...sessionRequest } = request;
+    expect(WebLinkSessionSchema.parse({ ...sessionRequest, token: 'opaque-token-1', expiresAt: '2026-06-30T12:00:00.000Z' }).token).toBe(
       'opaque-token-1',
     );
   });
