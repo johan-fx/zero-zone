@@ -417,6 +417,124 @@ describe('api worker', () => {
     await expect(response.json()).resolves.toMatchObject({ accepted: true, command: '/start', responseText: expect.stringContaining('Choose an incident') });
   });
 
+  it('accepts Telegram webhook requests with a valid secret token', async () => {
+    const mutableEnv = env as Env;
+    const previousSecret = mutableEnv.TELEGRAM_WEBHOOK_SECRET_TOKEN;
+    mutableEnv.TELEGRAM_WEBHOOK_SECRET_TOKEN = 'test-webhook-secret';
+    try {
+      const response = await request('/telegram/webhook', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-telegram-bot-api-secret-token': 'test-webhook-secret' },
+        body: JSON.stringify(telegramStartUpdateFixture),
+      });
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ accepted: true, command: '/start', responseText: expect.stringContaining('Choose an incident') });
+    } finally {
+      mutableEnv.TELEGRAM_WEBHOOK_SECRET_TOKEN = previousSecret;
+    }
+  });
+
+  it('rejects Telegram webhook requests with missing or invalid secret tokens before processing updates', async () => {
+    const mutableEnv = env as Env;
+    const previousSecret = mutableEnv.TELEGRAM_WEBHOOK_SECRET_TOKEN;
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    mutableEnv.TELEGRAM_WEBHOOK_SECRET_TOKEN = 'test-webhook-secret';
+    try {
+      const missing = await request('/telegram/webhook', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(telegramStartUpdateFixture),
+      });
+      const invalid = await request('/telegram/webhook', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-telegram-bot-api-secret-token': 'wrong-secret' },
+        body: JSON.stringify(telegramStartUpdateFixture),
+      });
+
+      expect(missing.status).toBe(403);
+      expect(invalid.status).toBe(403);
+      await expect(missing.json()).resolves.toEqual({ error: 'permission_denied' });
+      await expect(invalid.json()).resolves.toEqual({ error: 'permission_denied' });
+      expect(logSpy.mock.calls.map((call) => String(call[0])).join('\n')).not.toContain('telegram.incident_join');
+
+      const state = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM telegram_conversation_states').first<{ count: number }>();
+      expect(state?.count).toBe(0);
+    } finally {
+      logSpy.mockRestore();
+      mutableEnv.TELEGRAM_WEBHOOK_SECRET_TOKEN = previousSecret;
+    }
+  });
+
+  it('sends Telegram webhook responseText to the originating chat when bot token is configured', async () => {
+    const mutableEnv = env as Env;
+    const previousToken = mutableEnv.TELEGRAM_BOT_TOKEN;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    mutableEnv.TELEGRAM_BOT_TOKEN = 'test-bot-token';
+    try {
+      const response = await request('/telegram/webhook', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(telegramStartUpdateFixture),
+      });
+
+      expect(response.status).toBe(200);
+      const body = TelegramWebhookResultSchema.parse(await response.json());
+      expect(body.responseText).toContain('Choose an incident');
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe('https://api.telegram.org/bottest-bot-token/sendMessage');
+      expect(init.method).toBe('POST');
+      expect(JSON.parse(String(init.body))).toEqual({ chat_id: telegramStartUpdateFixture.message.chat.id, text: body.responseText });
+    } finally {
+      fetchSpy.mockRestore();
+      mutableEnv.TELEGRAM_BOT_TOKEN = previousToken;
+    }
+  });
+
+  it('keeps Telegram webhook 200 contract and emits operational telemetry when bot token is missing', async () => {
+    const mutableEnv = env as Env;
+    const previousToken = mutableEnv.TELEGRAM_BOT_TOKEN;
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    mutableEnv.TELEGRAM_BOT_TOKEN = undefined;
+    try {
+      const response = await request('/telegram/webhook', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(telegramStartUpdateFixture),
+      });
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ accepted: true, command: '/start', responseText: expect.stringContaining('Choose an incident') });
+      const logs = logSpy.mock.calls.map((call) => String(call[0])).join('\n');
+      expect(logs).toContain('sendMessage.not_configured');
+      expect(logs).not.toMatch(/24001|Webhook|chat|from|text|token|fingerprint/i);
+    } finally {
+      logSpy.mockRestore();
+      mutableEnv.TELEGRAM_BOT_TOKEN = previousToken;
+    }
+  });
+
+  it('keeps Telegram webhook 200 contract when Bot API sendMessage fails', async () => {
+    const mutableEnv = env as Env;
+    const previousToken = mutableEnv.TELEGRAM_BOT_TOKEN;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('telegram unavailable'));
+    mutableEnv.TELEGRAM_BOT_TOKEN = 'test-bot-token';
+    try {
+      const response = await request('/telegram/webhook', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(telegramStartUpdateFixture),
+      });
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ accepted: true, command: '/start', responseText: expect.stringContaining('Choose an incident') });
+    } finally {
+      fetchSpy.mockRestore();
+      mutableEnv.TELEGRAM_BOT_TOKEN = previousToken;
+    }
+  });
+
   it('emits structured Telegram channel telemetry from the real webhook path', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     try {

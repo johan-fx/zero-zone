@@ -9,7 +9,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:integration": "vitest run src/contracts.integration.test.tsx",
-    "test:strict": "pnpm typecheck && pnpm test"
+    "test:strict": "pnpm typecheck && pnpm test",
+    "build:staging": "VITE_API_BASE_URL=https://zona-cero-api-staging.jauss.workers.dev VITE_INCIDENT_ID=incident-zc-demo VITE_CELL_ID=cell-zc-demo pnpm build",
+    "deploy:staging": "pnpm build:staging && pnpm --filter @zona-cero/api exec wrangler pages deploy ../../apps/web-ui/dist --project-name zona-cero-web-ui-staging --branch staging"
   },
   "dependencies": {
     "@zona-cero/contracts": "workspace:*",

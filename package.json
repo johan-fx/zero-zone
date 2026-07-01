@@ -49,7 +49,9 @@
     "api:seed:local": "pnpm --filter @zona-cero/api seed:local",
     "api:migrate:staging": "pnpm --filter @zona-cero/api migrate:staging",
     "api:seed:staging": "pnpm --filter @zona-cero/api seed:staging",
-    "api:deploy:staging": "pnpm --filter @zona-cero/api deploy:staging"
+    "api:deploy:staging": "pnpm --filter @zona-cero/api deploy:staging",
+    "web:build:staging": "pnpm --filter @zona-cero/web-ui build:staging",
+    "web:deploy:staging": "pnpm web:build:staging && pnpm --filter @zona-cero/api exec wrangler pages deploy ../../apps/web-ui/dist --project-name zona-cero-web-ui-staging --branch staging"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.0",

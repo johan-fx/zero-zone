@@ -780,10 +780,24 @@ app.get('/incidents/:incidentId/cells/:cellId/sync/pull', async (c) => {
 });
 
 app.post('/telegram/webhook', async (c) => {
+  if (!(await isTelegramWebhookSecretValid(c.req.raw, c.env.TELEGRAM_WEBHOOK_SECRET_TOKEN))) {
+    logStructuredOperationalEvent({
+      event: 'security.challenge.required',
+      category: 'security',
+      result: 'rejected',
+      channel: 'telegram',
+      scope: 'telegram.delivery',
+      action: 'header_auth',
+      errorCode: 'permission_denied',
+    });
+    return c.json({ error: 'permission_denied' }, 403);
+  }
+
   const update = (await c.req.json().catch(() => ({}))) as TelegramUpdateLike;
   const command = resolveTelegramCommand(update);
   const telemetry = createTelegramChannelTelemetrySink();
   const responseText = await handleTelegramConversation(c.env.DB, update, command, telemetry);
+  c.executionCtx.waitUntil(sendTelegramWebhookResponse(c.env, update, responseText));
 
   return c.json(TelegramWebhookResultSchema.parse({ accepted: true, command, responseText }));
 });
@@ -3329,6 +3343,88 @@ function createTelegramChannelTelemetrySink(): ChannelTelemetryPort {
       logStructuredOperationalEvent(safeEvent);
     },
   };
+}
+
+function getTelegramChatId(update: TelegramUpdateLike): string | number | null {
+  const candidate = update as {
+    message?: { chat?: { id?: unknown } };
+    edited_message?: { chat?: { id?: unknown } };
+    callback_query?: { message?: { chat?: { id?: unknown } } };
+  };
+  const chatId = candidate.message?.chat?.id ?? candidate.edited_message?.chat?.id ?? candidate.callback_query?.message?.chat?.id;
+  return typeof chatId === 'string' || typeof chatId === 'number' ? chatId : null;
+}
+
+async function sendTelegramWebhookResponse(env: Env, update: TelegramUpdateLike, responseText: string): Promise<void> {
+  const chatId = getTelegramChatId(update);
+
+  if (!env.TELEGRAM_BOT_TOKEN || !chatId) {
+    logStructuredOperationalEvent({
+      event: 'operation.processed',
+      category: 'sync',
+      result: 'bypassed',
+      channel: 'telegram',
+      scope: 'telegram.delivery',
+      action: env.TELEGRAM_BOT_TOKEN ? 'sendMessage.no_chat' : 'sendMessage.not_configured',
+      errorCode: null,
+    });
+    return;
+  }
+
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: responseText }),
+    });
+
+    logStructuredOperationalEvent({
+      event: 'operation.processed',
+      category: 'sync',
+      result: response.ok ? 'accepted' : 'rejected',
+      channel: 'telegram',
+      scope: 'telegram.delivery',
+      action: 'sendMessage',
+      errorCode: null,
+    });
+  } catch {
+    logStructuredOperationalEvent({
+      event: 'operation.processed',
+      category: 'sync',
+      result: 'rejected',
+      channel: 'telegram',
+      scope: 'telegram.delivery',
+      action: 'sendMessage',
+      errorCode: null,
+    });
+  }
+}
+
+async function isTelegramWebhookSecretValid(request: Request, expectedSecret?: string): Promise<boolean> {
+  if (!expectedSecret) {
+    return true;
+  }
+
+  const actualSecret = request.headers.get('x-telegram-bot-api-secret-token');
+  if (!actualSecret) {
+    return false;
+  }
+
+  return constantTimeStringEquals(actualSecret, expectedSecret);
+}
+
+async function constantTimeStringEquals(actual: string, expected: string): Promise<boolean> {
+  const encoder = new TextEncoder();
+  const actualBytes = encoder.encode(actual);
+  const expectedBytes = encoder.encode(expected);
+  const maxLength = Math.max(actualBytes.length, expectedBytes.length);
+  let diff = actualBytes.length ^ expectedBytes.length;
+
+  for (let index = 0; index < maxLength; index += 1) {
+    diff |= (actualBytes[index] ?? 0) ^ (expectedBytes[index] ?? 0);
+  }
+
+  return diff === 0;
 }
 
 function createIncidentConfigResponse(incident: IncidentSummary): IncidentConfigResponse {
