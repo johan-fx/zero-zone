@@ -45,7 +45,7 @@
       "vars": {
         "API_VERSION": "0.0.0-staging",
         "TURNSTILE_ROLLOUT": "observe",
-        "TELEGRAM_INTENT_ROUTER_ENABLED": "off",
+        "TELEGRAM_INTENT_ROUTER_ENABLED": "on",
       },
       "observability": {
         "enabled": true,
