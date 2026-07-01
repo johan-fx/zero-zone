@@ -21,6 +21,7 @@ import {
   type DispatchTaskStatus,
   IncidentJoinResponseSchema,
   IncidentListResponseSchema,
+  OperationalEventSchema,
   PendingSignedOperationSchema,
   PrivateWebLinkConsumeRequestSchema,
   PrivateWebLinkConsumeResponseSchema,
@@ -35,6 +36,8 @@ import {
   type IncidentJoinResponse,
   type IncidentRole,
   type IncidentSummary,
+  type OperationalEvent,
+  type OperationalEventType,
   type PermissionSnapshot,
   type PendingSignedOperation,
   type PrivateWebLinkConsumeRequest,
@@ -110,6 +113,7 @@ import {
   safeParseTelegramResourceReportState,
   safeParseTelegramSosState,
   safeParseTelegramWorkCenterReportState,
+  type ChannelTelemetryPort,
   type TelegramDispatchTaskPorts,
   type TelegramDispatchTaskState,
   type TelegramFamilyReunificationPorts,
@@ -143,46 +147,16 @@ const familyReunificationSearchLinkMaxUses = 1;
 const defaultOperationalCellId = 'cell-zc-demo';
 
 const permissionSnapshots: IncidentConfigResponse['permissionSnapshots'] = {
-  volunteer: {
-    canReadIncident: true,
-    canJoinIncident: true,
-    canManageIncident: false,
-    canManageLogistics: false,
-    canManageMedical: false,
-  },
-  coordinator: {
-    canReadIncident: true,
-    canJoinIncident: true,
-    canManageIncident: true,
-    canManageLogistics: true,
-    canManageMedical: true,
-  },
-  logistics: {
-    canReadIncident: true,
-    canJoinIncident: true,
-    canManageIncident: false,
-    canManageLogistics: true,
-    canManageMedical: false,
-  },
-  medical: {
-    canReadIncident: true,
-    canJoinIncident: true,
-    canManageIncident: false,
-    canManageLogistics: false,
-    canManageMedical: true,
-  },
+  volunteer: { canReadIncident: true, canJoinIncident: true, canManageIncident: false, canManageLogistics: false, canManageMedical: false },
+  coordinator: { canReadIncident: true, canJoinIncident: true, canManageIncident: true, canManageLogistics: true, canManageMedical: true },
+  logistics: { canReadIncident: true, canJoinIncident: true, canManageIncident: false, canManageLogistics: true, canManageMedical: false },
+  medical: { canReadIncident: true, canJoinIncident: true, canManageIncident: false, canManageLogistics: false, canManageMedical: true },
 };
 
 app.use('*', cors());
 
 app.get('/health', (c) => {
-  return c.json(
-    HealthResponseSchema.parse({
-      service: 'zona-cero-api',
-      ok: true,
-      version: c.env.API_VERSION ?? '0.0.0-boilerplate',
-    }),
-  );
+  return c.json(HealthResponseSchema.parse({ service: 'zona-cero-api', ok: true, version: c.env.API_VERSION ?? '0.0.0-boilerplate' }));
 });
 
 app.get('/incidents', async (c) => {
@@ -252,22 +226,35 @@ app.post('/private-links/validate', async (c) => {
     return c.json({ error: 'invalid_payload', issues: parsed.error.issues }, 400);
   }
 
+  const limit = await checkRateLimit(c.env.DB, {
+    scope: 'private_link.validate',
+    key: `${parsed.data.fingerprint}:${parsed.data.token.slice(0, 16)}`,
+    limit: 20,
+    windowSeconds: 60,
+    action: 'validate',
+  });
+  if (!limit.allowed) {
+    return c.json({ error: limit.error, resetAt: limit.resetAt }, privateWebLinkErrorStatus(limit.error));
+  }
+
   const result = await validatePrivateWebLink(c.env.DB, c.req.raw, parsed.data, 'validate');
   if (!result.success) {
     return c.json({ error: result.error }, privateWebLinkErrorStatus(result.error));
   }
 
-  return c.json(PrivateWebLinkValidateResponseSchema.parse({
-    valid: true,
-    linkId: result.link.linkId,
-    scope: result.link.scope,
-    incidentId: result.link.incidentId,
-    correlationId: result.link.correlationId,
-    expiresAt: result.link.expiresAt,
-    remainingUses: Math.max(0, result.link.maxUses - result.link.useCount),
-    nextAction: 'in_person_verification',
-    audit: { auditEventId: result.auditEventId },
-  }));
+  return c.json(
+    PrivateWebLinkValidateResponseSchema.parse({
+      valid: true,
+      linkId: result.link.linkId,
+      scope: result.link.scope,
+      incidentId: result.link.incidentId,
+      correlationId: result.link.correlationId,
+      expiresAt: result.link.expiresAt,
+      remainingUses: Math.max(0, result.link.maxUses - result.link.useCount),
+      nextAction: 'in_person_verification',
+      audit: { auditEventId: result.auditEventId },
+    }),
+  );
 });
 
 app.post('/private-links/consume', async (c) => {
@@ -283,15 +270,17 @@ app.post('/private-links/consume', async (c) => {
     return c.json({ error: result.error }, privateWebLinkErrorStatus(result.error));
   }
 
-  return c.json(PrivateWebLinkConsumeResponseSchema.parse({
-    accepted: true,
-    linkId: result.linkId,
-    referral: {
-      type: 'in_person_verification',
-      message: 'Continue with in-person verification. Do not share sensitive identity or location details in chat.',
-    },
-    audit: { auditEventId: result.auditEventId },
-  }));
+  return c.json(
+    PrivateWebLinkConsumeResponseSchema.parse({
+      accepted: true,
+      linkId: result.linkId,
+      referral: {
+        type: 'in_person_verification',
+        message: 'Continue with in-person verification. Do not share sensitive identity or location details in chat.',
+      },
+      audit: { auditEventId: result.auditEventId },
+    }),
+  );
 });
 
 app.post('/private-links/family-reunification/search', async (c) => {
@@ -302,39 +291,67 @@ app.post('/private-links/family-reunification/search', async (c) => {
     return c.json({ error: 'invalid_payload', issues: parsed.error.issues }, 400);
   }
 
-  const result = await validatePrivateWebLink(c.env.DB, c.req.raw, {
-    token: parsed.data.token,
+  const turnstile = await verifyTurnstileForRequest(c.env, c.req.raw, {
+    action: 'family_reunification.search',
+    remoteIp: c.req.header('cf-connecting-ip') ?? c.req.header('x-forwarded-for') ?? null,
+  });
+  if (!turnstile.success) {
+    await safeRecordOperationalAudit(c.env.DB, {
+      eventType: 'security.challenge.required',
+      category: 'security',
+      result: 'rejected',
+      scope: 'family_reunification.search',
+      action: 'turnstile',
+      subjectRef: parsed.data.fingerprint,
+      errorCode: turnstile.error,
+    });
+    return c.json({ error: turnstile.error }, privateWebLinkErrorStatus(turnstile.error));
+  }
+
+  const limit = await checkRateLimit(c.env.DB, {
     scope: 'family_reunification.search',
-    correlationId: parsed.data.correlationId,
-    fingerprint: parsed.data.fingerprint,
-  }, 'family_reunification.search');
+    key: `${parsed.data.fingerprint}:${parsed.data.correlationId}`,
+    limit: 10,
+    windowSeconds: 60,
+    action: 'family_reunification.search',
+  });
+  if (!limit.allowed) {
+    return c.json({ error: limit.error, resetAt: limit.resetAt }, privateWebLinkErrorStatus(limit.error));
+  }
+
+  const result = await validatePrivateWebLink(
+    c.env.DB,
+    c.req.raw,
+    { token: parsed.data.token, scope: 'family_reunification.search', correlationId: parsed.data.correlationId, fingerprint: parsed.data.fingerprint },
+    'family_reunification.search',
+  );
   if (!result.success) {
     return c.json({ error: result.error }, privateWebLinkErrorStatus(result.error));
   }
 
-  const debit = await debitPrivateWebLinkUse(c.env.DB, c.req.raw, {
-    token: parsed.data.token,
-    scope: 'family_reunification.search',
-    correlationId: parsed.data.correlationId,
-    fingerprint: parsed.data.fingerprint,
-  }, result, 'family_reunification.search');
+  const debit = await debitPrivateWebLinkUse(
+    c.env.DB,
+    c.req.raw,
+    { token: parsed.data.token, scope: 'family_reunification.search', correlationId: parsed.data.correlationId, fingerprint: parsed.data.fingerprint },
+    result,
+    'family_reunification.search',
+  );
   if (!debit.success) {
     return c.json({ error: debit.error }, privateWebLinkErrorStatus(debit.error));
   }
 
   const response: FamilyReunificationSearchResponse = {
-    matches: [{
-      matchId: `match_${slug(result.link.incidentId)}_referral`,
-      status: 'possible_match',
-      ...(parsed.data.query.ageBand ? { ageBand: parsed.data.query.ageBand } : {}),
-      relationHint: 'Family desk can compare details in person.',
-      ...(parsed.data.query.lastKnownAreaLabel ? { lastKnownAreaLabel: parsed.data.query.lastKnownAreaLabel } : {}),
-      verificationRequired: true,
-    }],
-    referral: {
-      type: 'in_person_verification',
-      message: 'Visit the family reunification desk. Do not send sensitive identity or location details in chat.',
-    },
+    matches: [
+      {
+        matchId: `match_${slug(result.link.incidentId)}_referral`,
+        status: 'possible_match',
+        ...(parsed.data.query.ageBand ? { ageBand: parsed.data.query.ageBand } : {}),
+        relationHint: 'Family desk can compare details in person.',
+        ...(parsed.data.query.lastKnownAreaLabel ? { lastKnownAreaLabel: parsed.data.query.lastKnownAreaLabel } : {}),
+        verificationRequired: true,
+      },
+    ],
+    referral: { type: 'in_person_verification', message: 'Visit the family reunification desk. Do not send sensitive identity or location details in chat.' },
     audit: { auditEventId: result.auditEventId },
   };
 
@@ -347,7 +364,15 @@ app.post('/incidents/:incidentId/work-centers', async (c) => {
   const incident = await findIncident(c.env.DB, incidentId);
 
   if (!incident) {
-    logOperationEvent({ channel: null, opType: 'work_center.create', opId: null, entityId: null, result: 'rejected', errorCode: 'not_found', latencyMs: Date.now() - startedAt });
+    logOperationEvent({
+      channel: null,
+      opType: 'work_center.create',
+      opId: null,
+      entityId: null,
+      result: 'rejected',
+      errorCode: 'not_found',
+      latencyMs: Date.now() - startedAt,
+    });
     return c.json({ error: 'not_found' }, 404);
   }
 
@@ -355,7 +380,15 @@ app.post('/incidents/:incidentId/work-centers', async (c) => {
   const parsed = WorkCenterConnectedCreateRequestSchema.safeParse(body);
 
   if (!parsed.success) {
-    logOperationEvent({ channel: null, opType: 'work_center.create', opId: null, entityId: null, result: 'rejected', errorCode: 'invalid_payload', latencyMs: Date.now() - startedAt });
+    logOperationEvent({
+      channel: null,
+      opType: 'work_center.create',
+      opId: null,
+      entityId: null,
+      result: 'rejected',
+      errorCode: 'invalid_payload',
+      latencyMs: Date.now() - startedAt,
+    });
     return c.json({ error: 'invalid_payload', issues: parsed.error.issues }, 400);
   }
 
@@ -414,13 +447,20 @@ app.get('/incidents/:incidentId/work-centers/:workCenterId', async (c) => {
   return c.json(WorkCenterDetailResponseSchema.parse({ workCenter }));
 });
 
-
 app.post('/incidents/:incidentId/resource-reports', async (c) => {
   const startedAt = Date.now();
   const incident = await findIncident(c.env.DB, c.req.param('incidentId'));
 
   if (!incident) {
-    logOperationEvent({ channel: null, opType: 'resource_report.create', opId: null, entityId: null, result: 'rejected', errorCode: 'not_found', latencyMs: Date.now() - startedAt });
+    logOperationEvent({
+      channel: null,
+      opType: 'resource_report.create',
+      opId: null,
+      entityId: null,
+      result: 'rejected',
+      errorCode: 'not_found',
+      latencyMs: Date.now() - startedAt,
+    });
     return c.json({ error: 'not_found' }, 404);
   }
 
@@ -428,18 +468,42 @@ app.post('/incidents/:incidentId/resource-reports', async (c) => {
   const parsed = ResourceReportConnectedCreateRequestSchema.safeParse(body);
 
   if (!parsed.success) {
-    logOperationEvent({ channel: null, opType: 'resource_report.create', opId: null, entityId: null, result: 'rejected', errorCode: 'invalid_payload', latencyMs: Date.now() - startedAt });
+    logOperationEvent({
+      channel: null,
+      opType: 'resource_report.create',
+      opId: null,
+      entityId: null,
+      result: 'rejected',
+      errorCode: 'invalid_payload',
+      latencyMs: Date.now() - startedAt,
+    });
     return c.json({ error: 'invalid_payload', issues: parsed.error.issues }, 400);
   }
 
   const membership = await findIncidentMembershipForChannel(c.env.DB, incident.incidentId, parsed.data.channel, parsed.data.externalId);
   if (!membership) {
-    logOperationEvent({ channel: parsed.data.channel, opType: 'resource_report.create', opId: null, entityId: null, result: 'rejected', errorCode: 'permission_denied', latencyMs: Date.now() - startedAt });
+    logOperationEvent({
+      channel: parsed.data.channel,
+      opType: 'resource_report.create',
+      opId: null,
+      entityId: null,
+      result: 'rejected',
+      errorCode: 'permission_denied',
+      latencyMs: Date.now() - startedAt,
+    });
     return c.json({ error: 'permission_denied' }, 403);
   }
 
   const response = await createConnectedResourceReport(c.env.DB, incident, parsed.data, membership);
-  logOperationEvent({ channel: parsed.data.channel, opType: 'resource_report.create', opId: null, entityId: response.resourceReport.resourceReportId, result: 'accepted', errorCode: null, latencyMs: Date.now() - startedAt });
+  logOperationEvent({
+    channel: parsed.data.channel,
+    opType: 'resource_report.create',
+    opId: null,
+    entityId: response.resourceReport.resourceReportId,
+    result: 'accepted',
+    errorCode: null,
+    latencyMs: Date.now() - startedAt,
+  });
   return c.json(ResourceReportCreateResponseSchema.parse(response));
 });
 
@@ -480,25 +544,57 @@ app.post('/incidents/:incidentId/dispatch-tasks', async (c) => {
   const startedAt = Date.now();
   const incident = await findIncident(c.env.DB, c.req.param('incidentId'));
   if (!incident) {
-    logOperationEvent({ channel: null, opType: 'dispatch_event.create', opId: null, entityId: null, result: 'rejected', errorCode: 'not_found', latencyMs: Date.now() - startedAt });
+    logOperationEvent({
+      channel: null,
+      opType: 'dispatch_event.create',
+      opId: null,
+      entityId: null,
+      result: 'rejected',
+      errorCode: 'not_found',
+      latencyMs: Date.now() - startedAt,
+    });
     return c.json({ error: 'not_found' }, 404);
   }
 
   const body = await c.req.json().catch(() => null);
   const parsed = DispatchTaskConnectedCreateRequestSchema.safeParse(body);
   if (!parsed.success) {
-    logOperationEvent({ channel: null, opType: 'dispatch_event.create', opId: null, entityId: null, result: 'rejected', errorCode: 'invalid_payload', latencyMs: Date.now() - startedAt });
+    logOperationEvent({
+      channel: null,
+      opType: 'dispatch_event.create',
+      opId: null,
+      entityId: null,
+      result: 'rejected',
+      errorCode: 'invalid_payload',
+      latencyMs: Date.now() - startedAt,
+    });
     return c.json({ error: 'invalid_payload', issues: parsed.error.issues }, 400);
   }
 
   const membership = await findIncidentMembershipForChannel(c.env.DB, incident.incidentId, parsed.data.channel, parsed.data.externalId);
   if (!membership) {
-    logOperationEvent({ channel: parsed.data.channel, opType: 'dispatch_event.create', opId: null, entityId: null, result: 'rejected', errorCode: 'permission_denied', latencyMs: Date.now() - startedAt });
+    logOperationEvent({
+      channel: parsed.data.channel,
+      opType: 'dispatch_event.create',
+      opId: null,
+      entityId: null,
+      result: 'rejected',
+      errorCode: 'permission_denied',
+      latencyMs: Date.now() - startedAt,
+    });
     return c.json({ error: 'permission_denied' }, 403);
   }
 
   const response = await createConnectedDispatchTask(c.env.DB, incident, parsed.data, membership);
-  logOperationEvent({ channel: parsed.data.channel, opType: 'dispatch_event.create', opId: null, entityId: response.dispatchTask.dispatchTaskId, result: 'accepted', errorCode: null, latencyMs: Date.now() - startedAt });
+  logOperationEvent({
+    channel: parsed.data.channel,
+    opType: 'dispatch_event.create',
+    opId: null,
+    entityId: response.dispatchTask.dispatchTaskId,
+    result: 'accepted',
+    errorCode: null,
+    latencyMs: Date.now() - startedAt,
+  });
   return c.json(DispatchTaskResponseSchema.parse(response));
 });
 
@@ -540,25 +636,57 @@ app.post('/incidents/:incidentId/sos', async (c) => {
   const startedAt = Date.now();
   const incident = await findIncident(c.env.DB, c.req.param('incidentId'));
   if (!incident) {
-    logOperationEvent({ channel: null, opType: 'sos.create', opId: null, entityId: null, result: 'rejected', errorCode: 'not_found', latencyMs: Date.now() - startedAt });
+    logOperationEvent({
+      channel: null,
+      opType: 'sos.create',
+      opId: null,
+      entityId: null,
+      result: 'rejected',
+      errorCode: 'not_found',
+      latencyMs: Date.now() - startedAt,
+    });
     return c.json({ error: 'not_found' }, 404);
   }
 
   const body = await c.req.json().catch(() => null);
   const parsed = SosConnectedCreateRequestSchema.safeParse(body);
   if (!parsed.success) {
-    logOperationEvent({ channel: null, opType: 'sos.create', opId: null, entityId: null, result: 'rejected', errorCode: 'invalid_payload', latencyMs: Date.now() - startedAt });
+    logOperationEvent({
+      channel: null,
+      opType: 'sos.create',
+      opId: null,
+      entityId: null,
+      result: 'rejected',
+      errorCode: 'invalid_payload',
+      latencyMs: Date.now() - startedAt,
+    });
     return c.json({ error: 'invalid_payload', issues: parsed.error.issues }, 400);
   }
 
   const membership = await findIncidentMembershipForChannel(c.env.DB, incident.incidentId, parsed.data.channel, parsed.data.externalId);
   if (!membership) {
-    logOperationEvent({ channel: parsed.data.channel, opType: 'sos.create', opId: null, entityId: null, result: 'rejected', errorCode: 'permission_denied', latencyMs: Date.now() - startedAt });
+    logOperationEvent({
+      channel: parsed.data.channel,
+      opType: 'sos.create',
+      opId: null,
+      entityId: null,
+      result: 'rejected',
+      errorCode: 'permission_denied',
+      latencyMs: Date.now() - startedAt,
+    });
     return c.json({ error: 'permission_denied' }, 403);
   }
 
   const response = await createConnectedSosAlert(c.env.DB, incident, parsed.data, membership);
-  logOperationEvent({ channel: parsed.data.channel, opType: 'sos.create', opId: null, entityId: response.sosAlert.sosAlertId, result: 'accepted', errorCode: null, latencyMs: Date.now() - startedAt });
+  logOperationEvent({
+    channel: parsed.data.channel,
+    opType: 'sos.create',
+    opId: null,
+    entityId: response.sosAlert.sosAlertId,
+    result: 'accepted',
+    errorCode: null,
+    latencyMs: Date.now() - startedAt,
+  });
   return c.json(SosAlertCreateResponseSchema.parse(response));
 });
 
@@ -568,10 +696,12 @@ app.get('/incidents/:incidentId/sos', async (c) => {
     return c.json({ error: 'not_found' }, 404);
   }
 
-  return c.json(SosAlertStatusResponseSchema.parse({
-    sosAlerts: await listSosAlerts(c.env.DB, incident.incidentId),
-    fanout: await getSosFanoutStatus(c.env.DB, incident.incidentId),
-  }));
+  return c.json(
+    SosAlertStatusResponseSchema.parse({
+      sosAlerts: await listSosAlerts(c.env.DB, incident.incidentId),
+      fanout: await getSosFanoutStatus(c.env.DB, incident.incidentId),
+    }),
+  );
 });
 
 app.post('/sync/push', async (c) => {
@@ -588,11 +718,22 @@ app.post('/sync/push', async (c) => {
 
 app.post('/incidents/:incidentId/cells/:cellId/sync/push', async (c) => {
   const startedAt = Date.now();
-  const body = await c.req.json().catch(() => null);
-  const response = await handleSyncPushRequest(c.env.DB, body, startedAt, {
-    incidentId: c.req.param('incidentId'),
-    cellId: c.req.param('cellId'),
+  const scope = { incidentId: c.req.param('incidentId'), cellId: c.req.param('cellId') };
+  const limit = await checkRateLimit(c.env.DB, {
+    scope: 'sync.push',
+    key: `${scope.incidentId}:${scope.cellId}:${c.req.header('cf-connecting-ip') ?? c.req.header('x-forwarded-for') ?? c.req.header('user-agent') ?? 'unknown'}`,
+    limit: 120,
+    windowSeconds: 60,
+    incidentId: scope.incidentId,
+    channel: 'mobile',
+    action: 'sync.push',
   });
+  if (!limit.allowed) {
+    return c.json({ error: limit.error, resetAt: limit.resetAt }, 429);
+  }
+
+  const body = await c.req.json().catch(() => null);
+  const response = await handleSyncPushRequest(c.env.DB, body, startedAt, scope);
 
   if (!response.success) {
     return c.json(response.error, 400);
@@ -616,6 +757,19 @@ app.get('/incidents/:incidentId/cells/:cellId/sync/pull', async (c) => {
     return c.json({ error: 'invalid_payload', issues: [{ message: 'limit must be an integer between 1 and 100' }] }, 400);
   }
 
+  const rateLimit = await checkRateLimit(c.env.DB, {
+    scope: 'sync.pull',
+    key: `${incidentId}:${cellId}:${c.req.header('cf-connecting-ip') ?? c.req.header('x-forwarded-for') ?? c.req.header('user-agent') ?? 'unknown'}`,
+    limit: 180,
+    windowSeconds: 60,
+    incidentId,
+    channel: 'mobile',
+    action: 'sync.pull',
+  });
+  if (!rateLimit.allowed) {
+    return c.json({ error: rateLimit.error, resetAt: rateLimit.resetAt }, 429);
+  }
+
   const response = await handleSyncPullRequest(c.env.DB, incidentId, cellId, cursor, limit.value);
 
   if (!response.success) {
@@ -628,15 +782,10 @@ app.get('/incidents/:incidentId/cells/:cellId/sync/pull', async (c) => {
 app.post('/telegram/webhook', async (c) => {
   const update = (await c.req.json().catch(() => ({}))) as TelegramUpdateLike;
   const command = resolveTelegramCommand(update);
-  const responseText = await handleTelegramConversation(c.env.DB, update, command);
+  const telemetry = createTelegramChannelTelemetrySink();
+  const responseText = await handleTelegramConversation(c.env.DB, update, command, telemetry);
 
-  return c.json(
-    TelegramWebhookResultSchema.parse({
-      accepted: true,
-      command,
-      responseText,
-    }),
-  );
+  return c.json(TelegramWebhookResultSchema.parse({ accepted: true, command, responseText }));
 });
 
 async function findIncident(db: D1Database, incidentId: string): Promise<IncidentSummary | null> {
@@ -648,28 +797,19 @@ async function findIncident(db: D1Database, incidentId: string): Promise<Inciden
 
 async function listIncidents(db: D1Database): Promise<IncidentSummary[]> {
   const { results } = await db
-    .prepare(
-      'SELECT incident_id AS incidentId, name, status, starts_at AS startsAt, location_name AS locationName FROM incidents ORDER BY starts_at DESC',
-    )
+    .prepare('SELECT incident_id AS incidentId, name, status, starts_at AS startsAt, location_name AS locationName FROM incidents ORDER BY starts_at DESC')
     .all<IncidentSummary>();
 
   return results;
 }
 
-type SyncPushBodyParseResult =
-  | { success: true; data: { operations: unknown[]; cursor?: string | null } }
-  | { success: false; error: { issues: unknown[] } };
+type SyncPushBodyParseResult = { success: true; data: { operations: unknown[]; cursor?: string | null } } | { success: false; error: { issues: unknown[] } };
 
 type SyncPushOperationResult = SyncPushResponse['results'][number];
 
-type SyncScope = {
-  incidentId: string;
-  cellId: string;
-};
+type SyncScope = { incidentId: string; cellId: string };
 
-type SyncPushRequestResult =
-  | { success: true; body: SyncPushResponse }
-  | { success: false; error: { error: ContractErrorCode; issues: unknown[] } };
+type SyncPushRequestResult = { success: true; body: SyncPushResponse } | { success: false; error: { error: ContractErrorCode; issues: unknown[] } };
 
 type ExistingSyncOperationRow = {
   payloadHash: string;
@@ -694,19 +834,11 @@ type SyncChangeLogRow = {
   serverUpdatedAt: string;
 };
 
-type SyncScopeStats = {
-  maxSequence: number;
-  latestServerUpdatedAt: string | null;
-};
+type SyncScopeStats = { maxSequence: number; latestServerUpdatedAt: string | null };
 
-type IncidentMembershipLookup = {
-  channelIdentityId: string;
-  incidentMembershipId: string;
-};
+type IncidentMembershipLookup = { channelIdentityId: string; incidentMembershipId: string };
 
-type IncidentMembershipWithPermissions = IncidentMembershipLookup & {
-  permissions: PermissionSnapshot;
-};
+type IncidentMembershipWithPermissions = IncidentMembershipLookup & { permissions: PermissionSnapshot };
 
 type PrivateWebLinkRow = {
   linkId: string;
@@ -725,15 +857,29 @@ type PrivateWebLinkRow = {
   metadataJson: string;
 };
 
-type PrivateWebLinkValidationSuccess = {
-  success: true;
-  link: PrivateWebLinkRow;
-  auditEventId: string;
-};
+type PrivateWebLinkValidationSuccess = { success: true; link: PrivateWebLinkRow; auditEventId: string };
 
-type PrivateWebLinkValidationFailure = {
-  success: false;
-  error: ContractErrorCode;
+type PrivateWebLinkValidationFailure = { success: false; error: ContractErrorCode };
+
+type RateLimitResult =
+  | { allowed: true; count: number; remaining: number; resetAt: string }
+  | { allowed: false; count: number; remaining: 0; resetAt: string; error: 'rate_limited' };
+
+type TurnstileResult =
+  | { success: true; mode: 'disabled' | 'observe' | 'enforced' }
+  | { success: false; mode: 'enforced'; error: 'security_challenge_required' | 'turnstile_failed' };
+
+type OperationalAuditInput = {
+  eventType: OperationalEventType;
+  category: 'audit' | 'sync' | 'security' | 'rate_limit';
+  result: 'accepted' | 'rejected' | 'bypassed';
+  incidentId?: string | null;
+  channel?: Channel | null;
+  scope?: string | null;
+  action?: string | null;
+  subjectRef?: string | null;
+  errorCode?: ContractErrorCode | null;
+  metadata?: Record<string, string | number | boolean | null>;
 };
 
 type PrivateWebLinkAttemptInput = {
@@ -774,13 +920,7 @@ type WorkCenterRow = {
   updatedAt: string;
 };
 
-type WorkCenterSignalRow = {
-  signalId: string;
-  signalType: WorkCenterSignalType;
-  sourceChannel: Channel;
-  sourceId: string;
-  createdAt: string;
-};
+type WorkCenterSignalRow = { signalId: string; signalType: WorkCenterSignalType; sourceChannel: Channel; sourceId: string; createdAt: string };
 
 type ResourceReportRow = {
   resourceReportId: string;
@@ -818,9 +958,7 @@ type DispatchTaskRow = {
   updatedAt: string;
 };
 
-type ExistingDispatchTaskCreateRow = DispatchTaskRow & {
-  sourceOperationId: string | null;
-};
+type ExistingDispatchTaskCreateRow = DispatchTaskRow & { sourceOperationId: string | null };
 
 type SosAlertRow = {
   sosAlertId: string;
@@ -859,13 +997,19 @@ async function handleSyncPushRequest(db: D1Database, body: unknown, startedAt: n
   const parsed = parseSyncPushBody(body);
 
   if (!parsed.success) {
-    logOperationEvent({ channel: null, opType: null, opId: null, entityId: null, result: 'rejected', errorCode: 'invalid_payload', latencyMs: Date.now() - startedAt });
+    logOperationEvent({
+      channel: null,
+      opType: null,
+      opId: null,
+      entityId: null,
+      result: 'rejected',
+      errorCode: 'invalid_payload',
+      latencyMs: Date.now() - startedAt,
+    });
     return { success: false, error: { error: 'invalid_payload', issues: parsed.error.issues } };
   }
 
-  const response: SyncPushResponse = {
-    results: [],
-  };
+  const response: SyncPushResponse = { results: [] };
 
   for (const rawOperation of parsed.data.operations) {
     const result = await handleSyncPushOperation(db, rawOperation, startedAt, scope);
@@ -923,16 +1067,7 @@ async function handleSyncPullRequest(
     };
   });
 
-  return {
-    success: true,
-    body: SyncPullResponseSchema.parse({
-      operations,
-      cursor: nextCursor,
-      hasMore: cursorLag > 0,
-      freshness,
-      conflicts,
-    }),
-  };
+  return { success: true, body: SyncPullResponseSchema.parse({ operations, cursor: nextCursor, hasMore: cursorLag > 0, freshness, conflicts }) };
 }
 
 async function handleSyncPushOperation(db: D1Database, rawOperation: unknown, startedAt: number, scope?: SyncScope): Promise<SyncPushOperationResult> {
@@ -1044,17 +1179,32 @@ async function handleSyncPushOperation(db: D1Database, rawOperation: unknown, st
   return acceptSyncOperation(db, parsed.data, payloadHash, startedAt);
 }
 
-
 async function handleResourceReportCreateSyncOperation(db: D1Database, operation: PendingSignedOperation, startedAt: number): Promise<SyncPushOperationResult> {
   const payload = ResourceReportPayloadSchema.safeParse(operation.payload);
   if (!payload.success) {
-    logOperationEvent({ channel: 'mobile', opType: operation.opType, opId: operation.opId, entityId: operation.entityId, result: 'rejected', errorCode: 'invalid_payload', latencyMs: Date.now() - startedAt });
+    logOperationEvent({
+      channel: 'mobile',
+      opType: operation.opType,
+      opId: operation.opId,
+      entityId: operation.entityId,
+      result: 'rejected',
+      errorCode: 'invalid_payload',
+      latencyMs: Date.now() - startedAt,
+    });
     return { opId: operation.opId, status: 'rejected', code: 'invalid_payload' };
   }
 
   const incident = await findIncident(db, operation.incidentId);
   if (!incident) {
-    logOperationEvent({ channel: 'mobile', opType: operation.opType, opId: operation.opId, entityId: operation.entityId, result: 'rejected', errorCode: 'not_found', latencyMs: Date.now() - startedAt });
+    logOperationEvent({
+      channel: 'mobile',
+      opType: operation.opType,
+      opId: operation.opId,
+      entityId: operation.entityId,
+      result: 'rejected',
+      errorCode: 'not_found',
+      latencyMs: Date.now() - startedAt,
+    });
     return { opId: operation.opId, status: 'rejected', code: 'not_found' };
   }
 
@@ -1164,9 +1314,28 @@ async function handleSosSyncOperation(db: D1Database, operation: PendingSignedOp
       return acceptSyncOperation(db, operation, payloadHash, startedAt);
     }
 
-    await insertSosAlert(db, operation.entityId, operation.incidentId, operation.cellId, createPayload.data, 'mobile', operation.opId, operation.actorKeyId, createPayload.data.reportedAt ?? operation.createdAtDevice);
+    await insertSosAlert(
+      db,
+      operation.entityId,
+      operation.incidentId,
+      operation.cellId,
+      createPayload.data,
+      'mobile',
+      operation.opId,
+      operation.actorKeyId,
+      createPayload.data.reportedAt ?? operation.createdAtDevice,
+    );
   } else if (cancelPayload?.success) {
-    const cancelled = await cancelSosAlert(db, operation.incidentId, operation.entityId, cancelPayload.data, 'mobile', operation.opId, operation.actorKeyId, cancelPayload.data.cancelledAt ?? operation.createdAtDevice);
+    const cancelled = await cancelSosAlert(
+      db,
+      operation.incidentId,
+      operation.entityId,
+      cancelPayload.data,
+      'mobile',
+      operation.opId,
+      operation.actorKeyId,
+      cancelPayload.data.cancelledAt ?? operation.createdAtDevice,
+    );
     if (!cancelled) {
       await recordSyncOperation(db, operation, payloadHash, 'rejected', 'not_found', 'SOS alert was not found for cancellation');
       return rejectOperation(operation, startedAt, 'not_found');
@@ -1199,7 +1368,15 @@ async function resolveExistingSyncOperation(
 
   const result = existingOperation.payloadHash === payloadHash && existingOperation.status === 'accepted' ? 'accepted' : 'rejected';
   const errorCode = result === 'accepted' ? null : 'operation_conflict';
-  logOperationEvent({ channel: 'mobile', opType: operation.opType, opId: operation.opId, entityId: operation.entityId, result, errorCode, latencyMs: Date.now() - startedAt });
+  logOperationEvent({
+    channel: 'mobile',
+    opType: operation.opType,
+    opId: operation.opId,
+    entityId: operation.entityId,
+    result,
+    errorCode,
+    latencyMs: Date.now() - startedAt,
+  });
   return result === 'accepted'
     ? {
         opId: operation.opId,
@@ -1223,12 +1400,23 @@ async function resolveExistingSyncOperation(
 }
 
 function rejectOperation(operation: PendingSignedOperation, startedAt: number, code: ContractErrorCode, conflict?: SyncConflict): SyncPushOperationResult {
-  logOperationEvent({ channel: 'mobile', opType: operation.opType, opId: operation.opId, entityId: operation.entityId, result: 'rejected', errorCode: code, latencyMs: Date.now() - startedAt });
+  logOperationEvent({
+    channel: 'mobile',
+    opType: operation.opType,
+    opId: operation.opId,
+    entityId: operation.entityId,
+    result: 'rejected',
+    errorCode: code,
+    latencyMs: Date.now() - startedAt,
+  });
   return { opId: operation.opId, status: 'rejected', code, ...(conflict ? { conflict } : {}) };
 }
 
 function encodeSyncCursor(cursor: SyncCursor): string {
-  return btoa(JSON.stringify(SyncCursorSchema.parse(cursor))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/u, '');
+  return btoa(JSON.stringify(SyncCursorSchema.parse(cursor)))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/u, '');
 }
 
 function decodeSyncCursor(encodedCursor: string | null): { success: true; cursor: SyncCursor | null } | { success: false; message: string } {
@@ -1325,16 +1513,7 @@ function buildSyncFreshness(stats: SyncScopeStats, cursorLag: number, hasConflic
     lastSyncedAt,
     cursorLag,
     hasConflicts,
-    channels: [
-      {
-        channel: 'mobile',
-        status,
-        lastFreshAt,
-        lastSyncedAt,
-        cursorLag,
-        hasConflicts,
-      },
-    ],
+    channels: [{ channel: 'mobile', status, lastFreshAt, lastSyncedAt, cursorLag, hasConflicts }],
   };
 }
 
@@ -1389,26 +1568,33 @@ function syncFreshnessRank(status: SyncFreshness['status']): number {
 }
 
 async function getExistingDispatchTaskForCreate(db: D1Database, incidentId: string, dispatchTaskId: string): Promise<ExistingDispatchTaskCreateRow | null> {
-  const row = await db.prepare(dispatchTaskSelectSql('WHERE incident_id = ? AND dispatch_task_id = ?'))
+  const row = await db
+    .prepare(dispatchTaskSelectSql('WHERE incident_id = ? AND dispatch_task_id = ?'))
     .bind(incidentId, dispatchTaskId)
     .first<ExistingDispatchTaskCreateRow>();
   return row ?? null;
 }
 
-function isConflictingDispatchTaskCreate(existing: ExistingDispatchTaskCreateRow, operation: PendingSignedOperation, payload: DispatchEventCreatePayload): boolean {
+function isConflictingDispatchTaskCreate(
+  existing: ExistingDispatchTaskCreateRow,
+  operation: PendingSignedOperation,
+  payload: DispatchEventCreatePayload,
+): boolean {
   if (existing.sourceOperationId !== operation.opId) {
     return true;
   }
 
-  return existing.incidentId !== operation.incidentId
-    || existing.cellId !== operation.cellId
-    || existing.category !== payload.category
-    || existing.quantityApprox !== payload.quantityApprox
-    || existing.fromResourceReportId !== (payload.fromResourceReportId ?? null)
-    || existing.toResourceReportId !== (payload.toResourceReportId ?? null)
-    || existing.targetWorkCenterId !== (payload.targetWorkCenterId ?? null)
-    || existing.status !== (payload.status ?? 'pending')
-    || existing.notes !== (payload.notes ?? null);
+  return (
+    existing.incidentId !== operation.incidentId ||
+    existing.cellId !== operation.cellId ||
+    existing.category !== payload.category ||
+    existing.quantityApprox !== payload.quantityApprox ||
+    existing.fromResourceReportId !== (payload.fromResourceReportId ?? null) ||
+    existing.toResourceReportId !== (payload.toResourceReportId ?? null) ||
+    existing.targetWorkCenterId !== (payload.targetWorkCenterId ?? null) ||
+    existing.status !== (payload.status ?? 'pending') ||
+    existing.notes !== (payload.notes ?? null)
+  );
 }
 
 async function materializeWorkCenterCreateOperation(
@@ -1481,7 +1667,15 @@ async function acceptSyncOperation(
   startedAt: number,
 ): Promise<SyncPushOperationResult> {
   const metadata = await recordSyncOperation(db, operation, payloadHash, 'accepted');
-  logOperationEvent({ channel: 'mobile', opType: operation.opType, opId: operation.opId, entityId: operation.entityId, result: 'accepted', errorCode: null, latencyMs: Date.now() - startedAt });
+  logOperationEvent({
+    channel: 'mobile',
+    opType: operation.opType,
+    opId: operation.opId,
+    entityId: operation.entityId,
+    result: 'accepted',
+    errorCode: null,
+    latencyMs: Date.now() - startedAt,
+  });
   return {
     opId: operation.opId,
     status: 'accepted',
@@ -1614,13 +1808,7 @@ function parsePermissionSnapshot(value: string): PermissionSnapshot {
       canManageMedical: parsed.canManageMedical === true,
     };
   } catch {
-    return {
-      canReadIncident: false,
-      canJoinIncident: false,
-      canManageIncident: false,
-      canManageLogistics: false,
-      canManageMedical: false,
-    };
+    return { canReadIncident: false, canJoinIncident: false, canManageIncident: false, canManageLogistics: false, canManageMedical: false };
   }
 }
 
@@ -1699,11 +1887,7 @@ function applyPrivateWebLinkIssuePolicy(request: PrivateWebLinkIssueRequest): Pr
     return request;
   }
 
-  return {
-    ...request,
-    ttlSeconds: Math.min(request.ttlSeconds, familyReunificationSearchLinkTtlSeconds),
-    maxUses: familyReunificationSearchLinkMaxUses,
-  };
+  return { ...request, ttlSeconds: Math.min(request.ttlSeconds, familyReunificationSearchLinkTtlSeconds), maxUses: familyReunificationSearchLinkMaxUses };
 }
 
 async function validatePrivateWebLink(
@@ -1716,32 +1900,47 @@ async function validatePrivateWebLink(
   const fingerprintHash = await hashString(payload.fingerprint);
   const rateLimited = await isPrivateWebLinkRateLimited(db, fingerprintHash, tokenHash);
   if (rateLimited) {
-    await auditPrivateWebLinkAttempt(db, await createAttemptInputFromRequest(request, {
-      action,
-      tokenHash,
-      fingerprint: payload.fingerprint,
+    await safeRecordOperationalAudit(db, {
+      eventType: 'rate_limit.checked',
+      category: 'rate_limit',
       result: 'rejected',
-      errorCode: 'permission_denied',
-      scope: payload.scope,
-      correlationId: payload.correlationId,
-    }));
-    return { success: false, error: 'permission_denied' };
+      scope: 'private_link.validate',
+      action,
+      subjectRef: fingerprintHash,
+      errorCode: 'rate_limited',
+    });
+    await auditPrivateWebLinkAttempt(
+      db,
+      await createAttemptInputFromRequest(request, {
+        action,
+        tokenHash,
+        fingerprint: payload.fingerprint,
+        result: 'rejected',
+        errorCode: 'rate_limited',
+        scope: payload.scope,
+        correlationId: payload.correlationId,
+      }),
+    );
+    return { success: false, error: 'rate_limited' };
   }
 
   const link = await findPrivateWebLinkByTokenHash(db, tokenHash);
   const nowIso = new Date().toISOString();
   const error = getPrivateWebLinkValidationError(link, payload, nowIso);
   if (error) {
-    await auditPrivateWebLinkAttempt(db, await createAttemptInputFromRequest(request, {
-      action,
-      tokenHash,
-      fingerprint: payload.fingerprint,
-      result: 'rejected',
-      errorCode: error,
-      link,
-      scope: payload.scope,
-      correlationId: payload.correlationId,
-    }));
+    await auditPrivateWebLinkAttempt(
+      db,
+      await createAttemptInputFromRequest(request, {
+        action,
+        tokenHash,
+        fingerprint: payload.fingerprint,
+        result: 'rejected',
+        errorCode: error,
+        link,
+        scope: payload.scope,
+        correlationId: payload.correlationId,
+      }),
+    );
     return { success: false, error };
   }
 
@@ -1750,16 +1949,19 @@ async function validatePrivateWebLink(
     return { success: false, error: 'permission_denied' };
   }
 
-  const auditEventId = await auditPrivateWebLinkAttempt(db, await createAttemptInputFromRequest(request, {
-    action,
-    tokenHash,
-    fingerprint: payload.fingerprint,
-    result: 'accepted',
-    errorCode: null,
-    link: activeLink,
-    scope: payload.scope,
-    correlationId: payload.correlationId,
-  }));
+  const auditEventId = await auditPrivateWebLinkAttempt(
+    db,
+    await createAttemptInputFromRequest(request, {
+      action,
+      tokenHash,
+      fingerprint: payload.fingerprint,
+      result: 'accepted',
+      errorCode: null,
+      link: activeLink,
+      scope: payload.scope,
+      correlationId: payload.correlationId,
+    }),
+  );
 
   return { success: true, link: activeLink, auditEventId };
 }
@@ -1800,20 +2002,25 @@ async function debitPrivateWebLinkUse(
        AND consumed_at IS NULL
        AND expires_at > ?
        AND use_count < max_uses`,
-  ).bind(nowIso, validation.link.linkId, nowIso).run();
+    )
+    .bind(nowIso, validation.link.linkId, nowIso)
+    .run();
 
   if (update.meta.changes === 0) {
     const tokenHash = await hashString(payload.token);
-    await auditPrivateWebLinkAttempt(db, await createAttemptInputFromRequest(request, {
-      action,
-      tokenHash,
-      fingerprint: payload.fingerprint,
-      result: 'rejected',
-      errorCode: 'link_expired',
-      link: validation.link,
-      scope: payload.scope,
-      correlationId: payload.correlationId,
-    }));
+    await auditPrivateWebLinkAttempt(
+      db,
+      await createAttemptInputFromRequest(request, {
+        action,
+        tokenHash,
+        fingerprint: payload.fingerprint,
+        result: 'rejected',
+        errorCode: 'link_expired',
+        link: validation.link,
+        scope: payload.scope,
+        correlationId: payload.correlationId,
+      }),
+    );
     return { success: false, error: 'link_expired' };
   }
 
@@ -1821,21 +2028,20 @@ async function debitPrivateWebLinkUse(
 }
 
 async function findPrivateWebLinkByTokenHash(db: D1Database, tokenHash: string): Promise<PrivateWebLinkRow | null> {
-  return db.prepare(
-    `SELECT link_id AS linkId, incident_id AS incidentId, channel_identity_id AS channelIdentityId,
+  return db
+    .prepare(
+      `SELECT link_id AS linkId, incident_id AS incidentId, channel_identity_id AS channelIdentityId,
       incident_membership_id AS incidentMembershipId, scope, token_hash AS tokenHash, correlation_id AS correlationId,
       expires_at AS expiresAt, consumed_at AS consumedAt, max_uses AS maxUses, use_count AS useCount,
       created_at AS createdAt, revoked_at AS revokedAt, metadata_json AS metadataJson
      FROM private_web_links
      WHERE token_hash = ?`,
-  ).bind(tokenHash).first<PrivateWebLinkRow>();
+    )
+    .bind(tokenHash)
+    .first<PrivateWebLinkRow>();
 }
 
-function getPrivateWebLinkValidationError(
-  link: PrivateWebLinkRow | null,
-  payload: PrivateWebLinkValidateRequest,
-  nowIso: string,
-): ContractErrorCode | null {
+function getPrivateWebLinkValidationError(link: PrivateWebLinkRow | null, payload: PrivateWebLinkValidateRequest, nowIso: string): ContractErrorCode | null {
   if (!link) {
     return 'permission_denied';
   }
@@ -1857,23 +2063,33 @@ function getPrivateWebLinkValidationError(
 
 async function isPrivateWebLinkRateLimited(db: D1Database, fingerprintHash: string, tokenHash: string): Promise<boolean> {
   const tokenHashPrefix = tokenHash.slice(0, 16);
-  const fingerprintAttempts = await db.prepare(
-    `SELECT COUNT(*) AS count
+  const fingerprintAttempts = await db
+    .prepare(
+      `SELECT COUNT(*) AS count
      FROM private_web_link_attempts
      WHERE fingerprint_hash = ? AND result = 'rejected' AND created_at >= datetime('now', '-15 minutes')`,
-  ).bind(fingerprintHash).first<{ count: number }>();
-  const tokenAttempts = await db.prepare(
-    `SELECT COUNT(*) AS count
+    )
+    .bind(fingerprintHash)
+    .first<{ count: number }>();
+  const tokenAttempts = await db
+    .prepare(
+      `SELECT COUNT(*) AS count
      FROM private_web_link_attempts
      WHERE token_hash_prefix = ? AND result = 'rejected' AND created_at >= datetime('now', '-15 minutes')`,
-  ).bind(tokenHashPrefix).first<{ count: number }>();
+    )
+    .bind(tokenHashPrefix)
+    .first<{ count: number }>();
 
   return (fingerprintAttempts?.count ?? 0) >= 5 || (tokenAttempts?.count ?? 0) >= 5;
 }
 
-function privateWebLinkErrorStatus(error: ContractErrorCode): 400 | 403 | 410 {
-  if (error === 'permission_denied') {
+function privateWebLinkErrorStatus(error: ContractErrorCode): 400 | 403 | 410 | 429 {
+  if (error === 'permission_denied' || error === 'security_challenge_required' || error === 'turnstile_failed') {
     return 403;
+  }
+
+  if (error === 'rate_limited') {
+    return 429;
   }
 
   if (error === 'link_expired') {
@@ -1917,13 +2133,8 @@ async function createAttemptInputFromRequest(
   };
 }
 
-function createRejectedAttemptInput(
-  c: { req: { raw: Request } },
-  body: unknown,
-  action: string,
-  errorCode: ContractErrorCode,
-) {
-  const raw = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+function createRejectedAttemptInput(c: { req: { raw: Request } }, body: unknown, action: string, errorCode: ContractErrorCode) {
+  const raw = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
   const fingerprint = typeof raw.fingerprint === 'string' ? raw.fingerprint : 'missing-fingerprint';
   const token = typeof raw.token === 'string' ? raw.token : 'missing-token';
   const scope = typeof raw.scope === 'string' && isWebLinkScope(raw.scope) ? raw.scope : null;
@@ -1937,37 +2148,44 @@ function createRejectedAttemptInput(
     errorCode,
     scope: scope ?? undefined,
     correlationId: correlationId ?? undefined,
-  }).then(async (input) => ({
-    ...input,
-    tokenHashPrefix: typeof raw.token === 'string' ? (await hashString(token)).slice(0, 16) : null,
-  }));
+  }).then(async (input) => ({ ...input, tokenHashPrefix: typeof raw.token === 'string' ? (await hashString(token)).slice(0, 16) : null }));
 }
 
-async function auditPrivateWebLinkAttempt(
-  db: D1Database,
-  inputOrPromise: PrivateWebLinkAttemptInput | Promise<PrivateWebLinkAttemptInput>,
-): Promise<string> {
+async function auditPrivateWebLinkAttempt(db: D1Database, inputOrPromise: PrivateWebLinkAttemptInput | Promise<PrivateWebLinkAttemptInput>): Promise<string> {
   const input = await inputOrPromise;
   const attemptId = `attempt_${crypto.randomUUID()}`;
-  await db.prepare(
-    `INSERT INTO private_web_link_attempts (
+  await db
+    .prepare(
+      `INSERT INTO private_web_link_attempts (
       attempt_id, link_id, incident_id, scope, correlation_id, fingerprint_hash, token_hash_prefix,
       result, error_code, ip_hash, user_agent_hash, metadata_json
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(
-    attemptId,
-    input.linkId,
-    input.incidentId,
-    input.scope,
-    input.correlationId,
-    input.fingerprintHash,
-    input.tokenHashPrefix,
-    input.result,
-    input.errorCode,
-    input.ipHash,
-    input.userAgentHash,
-    JSON.stringify({ action: input.action }),
-  ).run();
+    )
+    .bind(
+      attemptId,
+      input.linkId,
+      input.incidentId,
+      input.scope,
+      input.correlationId,
+      input.fingerprintHash,
+      input.tokenHashPrefix,
+      input.result,
+      input.errorCode,
+      input.ipHash,
+      input.userAgentHash,
+      JSON.stringify({ action: input.action }),
+    )
+    .run();
+  await safeRecordOperationalAudit(db, {
+    eventType: 'private_link.attempted',
+    category: 'security',
+    result: input.result,
+    incidentId: input.incidentId,
+    scope: input.scope,
+    action: input.action,
+    subjectRef: input.fingerprintHash,
+    errorCode: input.errorCode,
+  });
   return attemptId;
 }
 
@@ -2064,11 +2282,7 @@ async function createConnectedWorkCenter(
     throw new Error(`Work center was not persisted: ${workCenterId}`);
   }
 
-  return WorkCenterCreateResponseSchema.parse({
-    workCenter: detail,
-    audit: { auditEventId },
-    idempotent: insert.meta.changes === 0,
-  });
+  return WorkCenterCreateResponseSchema.parse({ workCenter: detail, audit: { auditEventId }, idempotent: insert.meta.changes === 0 });
 }
 
 async function insertWorkCenterSignal(
@@ -2182,10 +2396,7 @@ async function getWorkCenterDetail(db: D1Database, incidentId: string, workCente
     .bind(workCenterId)
     .all<WorkCenterSignalRow>();
 
-  return {
-    ...(await rowToWorkCenterBase(db, row)),
-    latestSignals: results,
-  };
+  return { ...(await rowToWorkCenterBase(db, row)), latestSignals: results };
 }
 
 async function rowToWorkCenterSummary(db: D1Database, row: WorkCenterRow): Promise<WorkCenterSummary> {
@@ -2240,10 +2451,20 @@ async function createConnectedResourceReport(
   const auditEventId = `audit_resource_report_created_${slug(incident.incidentId)}_${resourceReportId}`;
   const nowIso = new Date().toISOString();
   await insertResourceReport(db, resourceReportId, incident.incidentId, `connected-${request.channel}`, request.payload, request.channel, null, null, nowIso);
-  await db.prepare(
-    `INSERT OR IGNORE INTO audit_events (audit_event_id, incident_id, channel_identity_id, incident_membership_id, event_type, payload_json)
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO audit_events (audit_event_id, incident_id, channel_identity_id, incident_membership_id, event_type, payload_json)
      VALUES (?, ?, ?, ?, ?, ?)`,
-  ).bind(auditEventId, incident.incidentId, membership.channelIdentityId, membership.incidentMembershipId, 'resource_report.created', JSON.stringify({ resourceReportId })).run();
+    )
+    .bind(
+      auditEventId,
+      incident.incidentId,
+      membership.channelIdentityId,
+      membership.incidentMembershipId,
+      'resource_report.created',
+      JSON.stringify({ resourceReportId }),
+    )
+    .run();
   const resourceReport = await getResourceReportDetail(db, incident.incidentId, resourceReportId);
   if (!resourceReport) {
     throw new Error(`Resource report was not persisted: ${resourceReportId}`);
@@ -2257,7 +2478,17 @@ async function materializeResourceReportCreateOperation(
   payload: ResourceReportPayload,
   channel: Channel,
 ): Promise<void> {
-  await insertResourceReport(db, operation.entityId, operation.incidentId, operation.cellId, payload, channel, operation.opId, operation.actorKeyId, payload.reportedAt ?? operation.createdAtDevice);
+  await insertResourceReport(
+    db,
+    operation.entityId,
+    operation.incidentId,
+    operation.cellId,
+    payload,
+    channel,
+    operation.opId,
+    operation.actorKeyId,
+    payload.reportedAt ?? operation.createdAtDevice,
+  );
 }
 
 async function insertResourceReport(
@@ -2317,7 +2548,12 @@ function resourceReportSelectSql(whereClause: string): string {
 }
 
 function rowToResourceReportSummary(row: ResourceReportRow): ResourceReportSummary {
-  const state = deriveResourceReportState({ updatedAt: row.updatedAt, reportKind: row.reportKind, urgency: row.urgency, constraints: parseStringArray(row.constraintsJson) });
+  const state = deriveResourceReportState({
+    updatedAt: row.updatedAt,
+    reportKind: row.reportKind,
+    urgency: row.urgency,
+    constraints: parseStringArray(row.constraintsJson),
+  });
   return ResourceReportListResponseSchema.shape.resourceReports.element.parse({
     resourceReportId: row.resourceReportId,
     incidentId: row.incidentId,
@@ -2355,8 +2591,19 @@ async function createConnectedDispatchTask(
   const auditEventId = `audit_dispatch_task_created_${slug(incident.incidentId)}_${dispatchTaskId}`;
   const nowIso = new Date().toISOString();
   await insertDispatchTask(db, dispatchTaskId, incident.incidentId, `connected-${request.channel}`, request.payload, request.channel, null, nowIso);
-  await db.prepare(`INSERT OR IGNORE INTO audit_events (audit_event_id, incident_id, channel_identity_id, incident_membership_id, event_type, payload_json) VALUES (?, ?, ?, ?, ?, ?)`)
-    .bind(auditEventId, incident.incidentId, membership.channelIdentityId, membership.incidentMembershipId, 'dispatch_task.created', JSON.stringify({ dispatchTaskId })).run();
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO audit_events (audit_event_id, incident_id, channel_identity_id, incident_membership_id, event_type, payload_json) VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      auditEventId,
+      incident.incidentId,
+      membership.channelIdentityId,
+      membership.incidentMembershipId,
+      'dispatch_task.created',
+      JSON.stringify({ dispatchTaskId }),
+    )
+    .run();
   const dispatchTask = await getDispatchTask(db, incident.incidentId, dispatchTaskId);
   if (!dispatchTask) {
     throw new Error(`Dispatch task was not persisted: ${dispatchTaskId}`);
@@ -2377,16 +2624,47 @@ async function updateConnectedDispatchTask(
     return null;
   }
   const auditEventId = `audit_dispatch_task_updated_${slug(incident.incidentId)}_${slug(dispatchTaskId)}_${slug(request.status)}`;
-  await db.prepare(`INSERT OR IGNORE INTO audit_events (audit_event_id, incident_id, channel_identity_id, incident_membership_id, event_type, payload_json) VALUES (?, ?, ?, ?, ?, ?)`)
-    .bind(auditEventId, incident.incidentId, membership.channelIdentityId, membership.incidentMembershipId, 'dispatch_task.updated', JSON.stringify({ dispatchTaskId, status: request.status })).run();
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO audit_events (audit_event_id, incident_id, channel_identity_id, incident_membership_id, event_type, payload_json) VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      auditEventId,
+      incident.incidentId,
+      membership.channelIdentityId,
+      membership.incidentMembershipId,
+      'dispatch_task.updated',
+      JSON.stringify({ dispatchTaskId, status: request.status }),
+    )
+    .run();
   return { dispatchTask: updated, audit: { auditEventId } };
 }
 
-async function materializeDispatchTaskCreateOperation(db: D1Database, operation: PendingSignedOperation, payload: DispatchEventCreatePayload, channel: Channel): Promise<void> {
-  await insertDispatchTask(db, operation.entityId, operation.incidentId, operation.cellId, payload, channel, operation.opId, operation.createdAtDevice, payload.status ?? 'pending');
+async function materializeDispatchTaskCreateOperation(
+  db: D1Database,
+  operation: PendingSignedOperation,
+  payload: DispatchEventCreatePayload,
+  channel: Channel,
+): Promise<void> {
+  await insertDispatchTask(
+    db,
+    operation.entityId,
+    operation.incidentId,
+    operation.cellId,
+    payload,
+    channel,
+    operation.opId,
+    operation.createdAtDevice,
+    payload.status ?? 'pending',
+  );
 }
 
-async function materializeDispatchTaskUpdateOperation(db: D1Database, operation: PendingSignedOperation, payload: DispatchEventUpdatePayload, channel: Channel): Promise<DispatchTask | null> {
+async function materializeDispatchTaskUpdateOperation(
+  db: D1Database,
+  operation: PendingSignedOperation,
+  payload: DispatchEventUpdatePayload,
+  channel: Channel,
+): Promise<DispatchTask | null> {
   return updateDispatchTaskStatus(db, operation.incidentId, payload, channel, operation.opId, operation.actorKeyId, operation.createdAtDevice);
 }
 
@@ -2402,13 +2680,42 @@ async function insertDispatchTask(
   explicitStatus: DispatchTaskStatus = 'pending',
 ): Promise<void> {
   const status = payload.status ?? explicitStatus;
-  await db.prepare(
-    `INSERT OR IGNORE INTO dispatch_tasks (
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO dispatch_tasks (
       dispatch_task_id, incident_id, cell_id, category, quantity_approx, from_resource_report_id, to_resource_report_id,
       target_work_center_id, status, notes, source_channel, source_operation_id, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(dispatchTaskId, incidentId, cellId, payload.category, payload.quantityApprox, payload.fromResourceReportId ?? null, payload.toResourceReportId ?? null, payload.targetWorkCenterId ?? null, status, payload.notes ?? null, sourceChannel, sourceOperationId, timestamp, timestamp).run();
-  await insertDispatchEvent(db, `de_${slug(sourceOperationId ?? dispatchTaskId)}_created`, dispatchTaskId, incidentId, status, payload.notes ?? null, sourceChannel, sourceOperationId, null, timestamp);
+    )
+    .bind(
+      dispatchTaskId,
+      incidentId,
+      cellId,
+      payload.category,
+      payload.quantityApprox,
+      payload.fromResourceReportId ?? null,
+      payload.toResourceReportId ?? null,
+      payload.targetWorkCenterId ?? null,
+      status,
+      payload.notes ?? null,
+      sourceChannel,
+      sourceOperationId,
+      timestamp,
+      timestamp,
+    )
+    .run();
+  await insertDispatchEvent(
+    db,
+    `de_${slug(sourceOperationId ?? dispatchTaskId)}_created`,
+    dispatchTaskId,
+    incidentId,
+    status,
+    payload.notes ?? null,
+    sourceChannel,
+    sourceOperationId,
+    null,
+    timestamp,
+  );
 }
 
 async function updateDispatchTaskStatus(
@@ -2424,9 +2731,22 @@ async function updateDispatchTaskStatus(
   if (!existing) {
     return null;
   }
-  await db.prepare('UPDATE dispatch_tasks SET status = ?, notes = COALESCE(?, notes), updated_at = ? WHERE incident_id = ? AND dispatch_task_id = ?')
-    .bind(payload.status, payload.notes ?? null, timestamp, incidentId, payload.dispatchTaskId).run();
-  await insertDispatchEvent(db, `de_${slug(sourceOperationId ?? `${payload.dispatchTaskId}_${payload.status}`)}`, payload.dispatchTaskId, incidentId, payload.status, payload.notes ?? null, sourceChannel, sourceOperationId, actorKeyId, timestamp);
+  await db
+    .prepare('UPDATE dispatch_tasks SET status = ?, notes = COALESCE(?, notes), updated_at = ? WHERE incident_id = ? AND dispatch_task_id = ?')
+    .bind(payload.status, payload.notes ?? null, timestamp, incidentId, payload.dispatchTaskId)
+    .run();
+  await insertDispatchEvent(
+    db,
+    `de_${slug(sourceOperationId ?? `${payload.dispatchTaskId}_${payload.status}`)}`,
+    payload.dispatchTaskId,
+    incidentId,
+    payload.status,
+    payload.notes ?? null,
+    sourceChannel,
+    sourceOperationId,
+    actorKeyId,
+    timestamp,
+  );
   return getDispatchTask(db, incidentId, payload.dispatchTaskId);
 }
 
@@ -2442,8 +2762,12 @@ async function insertDispatchEvent(
   actorKeyId: string | null,
   timestamp: string,
 ): Promise<void> {
-  await db.prepare(`INSERT OR IGNORE INTO dispatch_events (dispatch_event_id, dispatch_task_id, incident_id, status, notes, source_channel, source_operation_id, actor_key_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .bind(dispatchEventId, dispatchTaskId, incidentId, status, notes, sourceChannel, sourceOperationId, actorKeyId, timestamp).run();
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO dispatch_events (dispatch_event_id, dispatch_task_id, incident_id, status, notes, source_channel, source_operation_id, actor_key_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(dispatchEventId, dispatchTaskId, incidentId, status, notes, sourceChannel, sourceOperationId, actorKeyId, timestamp)
+    .run();
 }
 
 async function listDispatchTasks(db: D1Database, incidentId: string): Promise<DispatchTask[]> {
@@ -2490,12 +2814,25 @@ async function createConnectedSosAlert(
   const timestamp = request.payload.reportedAt ?? nowIso;
   const sosAlertId = `sos_${slug(incident.incidentId)}_${slug(request.channel)}_${slug(request.externalId)}_${slug(timestamp)}`;
   const auditEventId = `audit_sos_created_${slug(incident.incidentId)}_${sosAlertId}`;
-  const inserted = await insertSosAlert(db, sosAlertId, incident.incidentId, `connected-${request.channel}`, request.payload, request.channel, null, null, timestamp);
+  const inserted = await insertSosAlert(
+    db,
+    sosAlertId,
+    incident.incidentId,
+    `connected-${request.channel}`,
+    request.payload,
+    request.channel,
+    null,
+    null,
+    timestamp,
+  );
 
-  await db.prepare(
-    `INSERT OR IGNORE INTO audit_events (audit_event_id, incident_id, channel_identity_id, incident_membership_id, event_type, payload_json)
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO audit_events (audit_event_id, incident_id, channel_identity_id, incident_membership_id, event_type, payload_json)
      VALUES (?, ?, ?, ?, ?, ?)`,
-  ).bind(auditEventId, incident.incidentId, membership.channelIdentityId, membership.incidentMembershipId, 'sos.created', JSON.stringify({ sosAlertId })).run();
+    )
+    .bind(auditEventId, incident.incidentId, membership.channelIdentityId, membership.incidentMembershipId, 'sos.created', JSON.stringify({ sosAlertId }))
+    .run();
 
   const sosAlert = await getSosAlertById(db, incident.incidentId, sosAlertId);
   if (!sosAlert) {
@@ -2521,29 +2858,43 @@ async function insertSosAlert(
   actorKeyId: string | null,
   timestamp: string,
 ): Promise<boolean> {
-  const insert = await db.prepare(
-    `INSERT OR IGNORE INTO sos_alerts (
+  const insert = await db
+    .prepare(
+      `INSERT OR IGNORE INTO sos_alerts (
       sos_alert_id, incident_id, cell_id, severity, message, latitude, longitude, accuracy_meters,
       status, source_channel, source_operation_id, actor_key_id, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(
+    )
+    .bind(
+      sosAlertId,
+      incidentId,
+      cellId,
+      payload.severity,
+      payload.message ?? null,
+      payload.location?.latitude ?? null,
+      payload.location?.longitude ?? null,
+      payload.location?.accuracyMeters ?? null,
+      'open',
+      sourceChannel,
+      sourceOperationId,
+      actorKeyId,
+      timestamp,
+      timestamp,
+    )
+    .run();
+
+  await insertSosEvent(
+    db,
+    `sos_evt_${slug(sourceOperationId ?? sosAlertId)}_created`,
     sosAlertId,
     incidentId,
-    cellId,
-    payload.severity,
-    payload.message ?? null,
-    payload.location?.latitude ?? null,
-    payload.location?.longitude ?? null,
-    payload.location?.accuracyMeters ?? null,
-    'open',
+    'sos.created',
     sourceChannel,
     sourceOperationId,
     actorKeyId,
     timestamp,
-    timestamp,
-  ).run();
-
-  await insertSosEvent(db, `sos_evt_${slug(sourceOperationId ?? sosAlertId)}_created`, sosAlertId, incidentId, 'sos.created', sourceChannel, sourceOperationId, actorKeyId, timestamp, payload);
+    payload,
+  );
   await enqueueCriticalFanoutJobs(db, sosAlertId, incidentId, 'sos.created', timestamp, payload);
   return insert.meta.changes > 0;
 }
@@ -2564,15 +2915,30 @@ async function cancelSosAlert(
   }
 
   if (existing.status !== 'cancelled') {
-    await db.prepare('UPDATE sos_alerts SET status = ?, updated_at = ?, cancelled_at = ?, cancel_reason = ? WHERE incident_id = ? AND sos_alert_id = ?')
+    await db
+      .prepare('UPDATE sos_alerts SET status = ?, updated_at = ?, cancelled_at = ?, cancel_reason = ? WHERE incident_id = ? AND sos_alert_id = ?')
       .bind('cancelled', timestamp, timestamp, payload.reason ?? null, incidentId, sosAlertId)
       .run();
-    await db.prepare("UPDATE critical_fanout_jobs SET status = ?, updated_at = ? WHERE sos_alert_id = ? AND event_type = 'sos.created' AND status IN ('queued', 'pending')")
+    await db
+      .prepare(
+        "UPDATE critical_fanout_jobs SET status = ?, updated_at = ? WHERE sos_alert_id = ? AND event_type = 'sos.created' AND status IN ('queued', 'pending')",
+      )
       .bind('cancelled', timestamp, sosAlertId)
       .run();
   }
 
-  await insertSosEvent(db, `sos_evt_${slug(sourceOperationId ?? `${sosAlertId}_cancelled`)}_cancelled`, sosAlertId, incidentId, 'sos.cancelled', sourceChannel, sourceOperationId, actorKeyId, timestamp, payload);
+  await insertSosEvent(
+    db,
+    `sos_evt_${slug(sourceOperationId ?? `${sosAlertId}_cancelled`)}_cancelled`,
+    sosAlertId,
+    incidentId,
+    'sos.cancelled',
+    sourceChannel,
+    sourceOperationId,
+    actorKeyId,
+    timestamp,
+    payload,
+  );
   await enqueueCriticalFanoutJobs(db, sosAlertId, incidentId, 'sos.cancelled', timestamp, payload);
   return true;
 }
@@ -2726,6 +3092,199 @@ function stableStringify(value: unknown): string {
     .join(',')}}`;
 }
 
+async function safeRecordOperationalAudit(db: D1Database, input: OperationalAuditInput): Promise<string | null> {
+  try {
+    return await recordOperationalAudit(db, input);
+  } catch {
+    console.warn(
+      JSON.stringify({
+        event: 'operational.audit.failed',
+        category: input.category,
+        result: input.result,
+        channel: input.channel ?? null,
+        scope: input.scope ?? null,
+        action: input.action ?? null,
+        errorCode: input.errorCode ?? null,
+      }),
+    );
+    return null;
+  }
+}
+
+async function recordOperationalAudit(db: D1Database, input: OperationalAuditInput): Promise<string> {
+  const auditId = `op_audit_${crypto.randomUUID()}`;
+  const subjectRefHash = input.subjectRef ? await hashString(input.subjectRef) : null;
+  const metadata = sanitizeOperationalMetadata(input.metadata ?? {});
+
+  await db
+    .prepare(
+      `INSERT INTO operational_audit_events (
+      audit_id, event_type, category, result, incident_id, channel, scope, action,
+      subject_ref_hash, error_code, metadata_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      auditId,
+      input.eventType,
+      input.category,
+      input.result,
+      input.incidentId ?? null,
+      input.channel ?? null,
+      input.scope ?? null,
+      input.action ?? null,
+      subjectRefHash,
+      input.errorCode ?? null,
+      JSON.stringify(metadata),
+    )
+    .run();
+
+  logStructuredOperationalEvent({
+    event: 'operational.audit.recorded',
+    category: input.category,
+    result: input.result,
+    channel: input.channel ?? null,
+    scope: input.scope ?? undefined,
+    action: input.action ?? undefined,
+    errorCode: input.errorCode ?? null,
+  });
+  return auditId;
+}
+
+async function checkRateLimit(
+  db: D1Database,
+  input: { scope: string; key: string; limit: number; windowSeconds: number; incidentId?: string | null; channel?: Channel | null; action?: string | null },
+): Promise<RateLimitResult> {
+  const nowMs = Date.now();
+  const windowStartedMs = Math.floor(nowMs / (input.windowSeconds * 1000)) * input.windowSeconds * 1000;
+  const windowStartedAt = new Date(windowStartedMs).toISOString();
+  const resetAt = new Date(windowStartedMs + input.windowSeconds * 1000).toISOString();
+  const keyHash = await hashString(`${input.scope}:${input.key}`);
+  const bucketId = `rl_${input.scope.replace(/[^a-zA-Z0-9_-]/g, '_')}_${keyHash.slice(0, 32)}_${windowStartedMs}`;
+
+  await db
+    .prepare(
+      `INSERT INTO rate_limit_buckets (bucket_id, scope, key_hash, window_started_at, window_seconds, count, updated_at)
+     VALUES (?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP)
+     ON CONFLICT(scope, key_hash, window_started_at) DO NOTHING`,
+    )
+    .bind(bucketId, input.scope, keyHash, windowStartedAt, input.windowSeconds)
+    .run();
+
+  await db
+    .prepare(
+      `UPDATE rate_limit_buckets
+     SET count = count + 1, updated_at = CURRENT_TIMESTAMP
+     WHERE scope = ? AND key_hash = ? AND window_started_at = ?`,
+    )
+    .bind(input.scope, keyHash, windowStartedAt)
+    .run();
+
+  const bucket = await db
+    .prepare(`SELECT count FROM rate_limit_buckets WHERE scope = ? AND key_hash = ? AND window_started_at = ?`)
+    .bind(input.scope, keyHash, windowStartedAt)
+    .first<{ count: number }>();
+  const count = bucket?.count ?? 1;
+  const allowed = count <= input.limit;
+
+  await safeRecordOperationalAudit(db, {
+    eventType: 'rate_limit.checked',
+    category: 'rate_limit',
+    result: allowed ? 'accepted' : 'rejected',
+    incidentId: input.incidentId ?? null,
+    channel: input.channel ?? null,
+    scope: input.scope,
+    action: input.action ?? null,
+    subjectRef: input.key,
+    errorCode: allowed ? null : 'rate_limited',
+    metadata: { limit: input.limit, windowSeconds: input.windowSeconds, count },
+  });
+
+  if (!allowed) {
+    return { allowed: false, count, remaining: 0, resetAt, error: 'rate_limited' };
+  }
+
+  return { allowed: true, count, remaining: Math.max(0, input.limit - count), resetAt };
+}
+
+async function verifyTurnstileForRequest(
+  env: Env,
+  request: Request,
+  input: { action: string; remoteIp?: string | null; token?: string | null },
+): Promise<TurnstileResult> {
+  const rollout = env.TURNSTILE_ROLLOUT ?? 'off';
+  const token = input.token ?? request.headers.get('cf-turnstile-response') ?? request.headers.get('x-turnstile-token');
+
+  if (rollout === 'off' || !env.TURNSTILE_SECRET_KEY) {
+    logStructuredOperationalEvent({ event: 'turnstile.checked', category: 'security', result: 'bypassed', action: input.action, scope: 'turnstile' });
+    return { success: true, mode: 'disabled' };
+  }
+
+  if (!token) {
+    const result = rollout === 'enforce' ? 'rejected' : 'bypassed';
+    logStructuredOperationalEvent({
+      event: 'security.challenge.required',
+      category: 'security',
+      result,
+      action: input.action,
+      scope: 'turnstile',
+      errorCode: 'security_challenge_required',
+    });
+    return rollout === 'enforce' ? { success: false, mode: 'enforced', error: 'security_challenge_required' } : { success: true, mode: 'observe' };
+  }
+
+  const body = new FormData();
+  body.set('secret', env.TURNSTILE_SECRET_KEY);
+  body.set('response', token);
+  if (input.remoteIp) {
+    body.set('remoteip', input.remoteIp);
+  }
+
+  let response: Response;
+  let payload: { success?: boolean };
+  try {
+    response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', { method: 'POST', body });
+    payload = (await response.json().catch(() => ({}))) as { success?: boolean };
+  } catch {
+    logStructuredOperationalEvent({
+      event: 'turnstile.checked',
+      category: 'security',
+      result: rollout === 'enforce' ? 'rejected' : 'bypassed',
+      action: input.action,
+      scope: 'turnstile',
+      errorCode: 'turnstile_failed',
+    });
+
+    return rollout === 'enforce' ? { success: false, mode: 'enforced', error: 'turnstile_failed' } : { success: true, mode: 'observe' };
+  }
+
+  const ok = response.ok && payload.success === true;
+  logStructuredOperationalEvent({
+    event: 'turnstile.checked',
+    category: 'security',
+    result: ok ? 'accepted' : rollout === 'enforce' ? 'rejected' : 'bypassed',
+    action: input.action,
+    scope: 'turnstile',
+    errorCode: ok ? null : 'turnstile_failed',
+  });
+
+  if (!ok && rollout === 'enforce') {
+    return { success: false, mode: 'enforced', error: 'turnstile_failed' };
+  }
+
+  return { success: true, mode: rollout === 'enforce' ? 'enforced' : 'observe' };
+}
+
+function sanitizeOperationalMetadata(metadata: Record<string, string | number | boolean | null>): Record<string, string | number | boolean | null> {
+  const safe: Record<string, string | number | boolean | null> = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    if (/token|secret|signature|fingerprint|payload|location|latitude|longitude|name|text/i.test(key)) {
+      continue;
+    }
+    safe[key] = value;
+  }
+  return safe;
+}
+
 function logOperationEvent(input: {
   channel: Channel | 'mobile' | null;
   opType: string | null;
@@ -2735,26 +3294,53 @@ function logOperationEvent(input: {
   errorCode: ContractErrorCode | null;
   latencyMs: number;
 }): void {
-  console.log(
-    JSON.stringify({
-      event: 'operation.processed',
-      channel: input.channel,
-      opType: input.opType,
-      opId: input.opId,
-      entityId: input.entityId,
-      result: input.result,
-      errorCode: input.errorCode,
-      latencyMs: input.latencyMs,
-    }),
-  );
+  logStructuredOperationalEvent({
+    event: 'operation.processed',
+    category: 'sync',
+    channel: input.channel === 'mobile' ? 'mobile' : input.channel,
+    opType: input.opType ?? undefined,
+    result: input.result,
+    errorCode: input.errorCode,
+    latencyMs: input.latencyMs,
+  });
+}
+
+function logStructuredOperationalEvent(input: Omit<OperationalEvent, 'sampled' | 'opType'> & { opType?: string }): void {
+  const parsed = OperationalEventSchema.safeParse(input);
+  const event = parsed.success ? parsed.data : OperationalEventSchema.parse({ ...input, opType: undefined });
+  console.log(JSON.stringify(event));
+}
+
+function createTelegramChannelTelemetrySink(): ChannelTelemetryPort {
+  return {
+    emit(event) {
+      const safeEvent = OperationalEventSchema.parse({
+        event: event.event,
+        category: event.category,
+        result: event.result,
+        channel: 'telegram',
+        scope: event.scope,
+        action: event.action,
+        opType: event.opType,
+        errorCode: event.errorCode ?? null,
+        latencyMs: event.latencyMs,
+        sampled: event.sampled,
+      });
+      logStructuredOperationalEvent(safeEvent);
+    },
+  };
 }
 
 function createIncidentConfigResponse(incident: IncidentSummary): IncidentConfigResponse {
   return IncidentConfigResponseSchema.parse({ incident, roles, channels, permissionSnapshots });
 }
 
-
-async function handleTelegramConversation(db: D1Database, update: TelegramUpdateLike, command: string | null): Promise<string> {
+async function handleTelegramConversation(
+  db: D1Database,
+  update: TelegramUpdateLike,
+  command: string | null,
+  telemetry?: ChannelTelemetryPort,
+): Promise<string> {
   const joinStateKey = getTelegramConversationStateKey(update);
   const workCenterStateKey = getTelegramWorkCenterConversationStateKey(update);
   const resourceStateKey = getTelegramResourceConversationStateKey(update);
@@ -2764,53 +3350,47 @@ async function handleTelegramConversation(db: D1Database, update: TelegramUpdate
 
   if (command === '/start') {
     await deleteTelegramConversationStates(db, [workCenterStateKey, resourceStateKey, dispatchStateKey, sosStateKey, familyStateKey]);
-    return handleTelegramIncidentJoinConversation(db, update, joinStateKey);
+    return handleTelegramIncidentJoinConversation(db, update, joinStateKey, telemetry);
   }
 
   if (command === '/workcenter') {
     await deleteTelegramConversationStates(db, [resourceStateKey, dispatchStateKey, sosStateKey, familyStateKey]);
-    return handleTelegramWorkCenterConversation(db, update, workCenterStateKey);
+    return handleTelegramWorkCenterConversation(db, update, workCenterStateKey, undefined, telemetry);
   }
 
   if (command === '/resource') {
     await deleteTelegramConversationStates(db, [workCenterStateKey, dispatchStateKey, sosStateKey, familyStateKey]);
-    return handleTelegramResourceConversation(db, update, resourceStateKey);
+    return handleTelegramResourceConversation(db, update, resourceStateKey, undefined, telemetry);
   }
 
   if (command === '/dispatch') {
     await deleteTelegramConversationStates(db, [workCenterStateKey, resourceStateKey, sosStateKey, familyStateKey]);
-    return handleTelegramDispatchConversation(db, update, dispatchStateKey);
+    return handleTelegramDispatchConversation(db, update, dispatchStateKey, undefined, telemetry);
   }
 
   if (command === '/sos') {
     await deleteTelegramConversationStates(db, [workCenterStateKey, resourceStateKey, dispatchStateKey, familyStateKey]);
-    return handleTelegramSosConversation(db, update, sosStateKey);
+    return handleTelegramSosConversation(db, update, sosStateKey, undefined, telemetry);
   }
-
 
   if (command === '/familia' || command === '/reunificacion') {
     await deleteTelegramConversationStates(db, [joinStateKey, workCenterStateKey, resourceStateKey, dispatchStateKey, sosStateKey]);
-    return handleTelegramFamilyReunificationConversation(db, update, familyStateKey);
+    return handleTelegramFamilyReunificationConversation(db, update, familyStateKey, undefined, telemetry);
   }
-
 
   const routedFamily = await routeExistingTelegramFlow(
     db,
     familyStateKey,
     safeParseTelegramFamilyReunificationState,
     { step: 'idle' } satisfies TelegramFamilyReunificationState,
-    (state) => handleTelegramFamilyReunificationConversation(db, update, familyStateKey, state),
+    (state) => handleTelegramFamilyReunificationConversation(db, update, familyStateKey, state, telemetry),
   );
   if (routedFamily) {
     return routedFamily;
   }
 
-  const routedSos = await routeExistingTelegramFlow(
-    db,
-    sosStateKey,
-    safeParseTelegramSosState,
-    { step: 'idle' } satisfies TelegramSosState,
-    (state) => handleTelegramSosConversation(db, update, sosStateKey, state),
+  const routedSos = await routeExistingTelegramFlow(db, sosStateKey, safeParseTelegramSosState, { step: 'idle' } satisfies TelegramSosState, (state) =>
+    handleTelegramSosConversation(db, update, sosStateKey, state, telemetry),
   );
   if (routedSos) {
     return routedSos;
@@ -2821,7 +3401,7 @@ async function handleTelegramConversation(db: D1Database, update: TelegramUpdate
     resourceStateKey,
     safeParseTelegramResourceReportState,
     { step: 'idle' } satisfies TelegramResourceReportState,
-    (state) => handleTelegramResourceConversation(db, update, resourceStateKey, state),
+    (state) => handleTelegramResourceConversation(db, update, resourceStateKey, state, telemetry),
   );
   if (routedResource) {
     return routedResource;
@@ -2832,7 +3412,7 @@ async function handleTelegramConversation(db: D1Database, update: TelegramUpdate
     dispatchStateKey,
     safeParseTelegramDispatchTaskState,
     { step: 'idle' } satisfies TelegramDispatchTaskState,
-    (state) => handleTelegramDispatchConversation(db, update, dispatchStateKey, state),
+    (state) => handleTelegramDispatchConversation(db, update, dispatchStateKey, state, telemetry),
   );
   if (routedDispatch) {
     return routedDispatch;
@@ -2843,20 +3423,25 @@ async function handleTelegramConversation(db: D1Database, update: TelegramUpdate
     workCenterStateKey,
     safeParseTelegramWorkCenterReportState,
     { step: 'idle' } satisfies TelegramWorkCenterReportState,
-    (state) => handleTelegramWorkCenterConversation(db, update, workCenterStateKey, state),
+    (state) => handleTelegramWorkCenterConversation(db, update, workCenterStateKey, state, telemetry),
   );
   if (routedWorkCenter) {
     return routedWorkCenter;
   }
 
-  return handleTelegramIncidentJoinConversation(db, update, joinStateKey);
+  return handleTelegramIncidentJoinConversation(db, update, joinStateKey, telemetry);
 }
 
-async function handleTelegramIncidentJoinConversation(db: D1Database, update: TelegramUpdateLike, stateKey: string | null): Promise<string> {
+async function handleTelegramIncidentJoinConversation(
+  db: D1Database,
+  update: TelegramUpdateLike,
+  stateKey: string | null,
+  telemetry?: ChannelTelemetryPort,
+): Promise<string> {
   const currentState = stateKey
     ? await loadTelegramConversationState(db, stateKey, safeParseTelegramIncidentJoinState, { step: 'idle' } satisfies TelegramIncidentJoinState)
     : ({ step: 'idle' } satisfies TelegramIncidentJoinState);
-  const ports = createTelegramIncidentJoinPorts(db);
+  const ports = createTelegramIncidentJoinPorts(db, telemetry);
   const result = await handleTelegramIncidentJoinFlow(currentState, update, ports);
 
   if (stateKey) {
@@ -2875,11 +3460,14 @@ async function handleTelegramWorkCenterConversation(
   update: TelegramUpdateLike,
   stateKey: string | null,
   loadedState?: TelegramWorkCenterReportState,
+  telemetry?: ChannelTelemetryPort,
 ): Promise<string> {
-  const currentState = loadedState ?? (stateKey
-    ? await loadTelegramConversationState(db, stateKey, safeParseTelegramWorkCenterReportState, { step: 'idle' } satisfies TelegramWorkCenterReportState)
-    : ({ step: 'idle' } satisfies TelegramWorkCenterReportState));
-  const ports = createTelegramWorkCenterReportPorts(db);
+  const currentState =
+    loadedState ??
+    (stateKey
+      ? await loadTelegramConversationState(db, stateKey, safeParseTelegramWorkCenterReportState, { step: 'idle' } satisfies TelegramWorkCenterReportState)
+      : ({ step: 'idle' } satisfies TelegramWorkCenterReportState));
+  const ports = createTelegramWorkCenterReportPorts(db, telemetry);
   const result = await handleTelegramWorkCenterReportFlow(currentState, update, ports);
 
   if (stateKey) {
@@ -2898,11 +3486,14 @@ async function handleTelegramResourceConversation(
   update: TelegramUpdateLike,
   stateKey: string | null,
   loadedState?: TelegramResourceReportState,
+  telemetry?: ChannelTelemetryPort,
 ): Promise<string> {
-  const currentState = loadedState ?? (stateKey
-    ? await loadTelegramConversationState(db, stateKey, safeParseTelegramResourceReportState, { step: 'idle' } satisfies TelegramResourceReportState)
-    : ({ step: 'idle' } satisfies TelegramResourceReportState));
-  const ports = createTelegramResourceReportPorts(db);
+  const currentState =
+    loadedState ??
+    (stateKey
+      ? await loadTelegramConversationState(db, stateKey, safeParseTelegramResourceReportState, { step: 'idle' } satisfies TelegramResourceReportState)
+      : ({ step: 'idle' } satisfies TelegramResourceReportState));
+  const ports = createTelegramResourceReportPorts(db, telemetry);
   const result = await handleTelegramResourceReportFlow(currentState, update, ports);
 
   if (stateKey) {
@@ -2921,11 +3512,14 @@ async function handleTelegramDispatchConversation(
   update: TelegramUpdateLike,
   stateKey: string | null,
   loadedState?: TelegramDispatchTaskState,
+  telemetry?: ChannelTelemetryPort,
 ): Promise<string> {
-  const currentState = loadedState ?? (stateKey
-    ? await loadTelegramConversationState(db, stateKey, safeParseTelegramDispatchTaskState, { step: 'idle' } satisfies TelegramDispatchTaskState)
-    : ({ step: 'idle' } satisfies TelegramDispatchTaskState));
-  const ports = createTelegramDispatchTaskPorts(db);
+  const currentState =
+    loadedState ??
+    (stateKey
+      ? await loadTelegramConversationState(db, stateKey, safeParseTelegramDispatchTaskState, { step: 'idle' } satisfies TelegramDispatchTaskState)
+      : ({ step: 'idle' } satisfies TelegramDispatchTaskState));
+  const ports = createTelegramDispatchTaskPorts(db, telemetry);
   const result = await handleTelegramDispatchTaskFlow(currentState, update, ports);
 
   if (stateKey) {
@@ -2939,17 +3533,21 @@ async function handleTelegramDispatchConversation(
   return result.responseText;
 }
 
-
 async function handleTelegramFamilyReunificationConversation(
   db: D1Database,
   update: TelegramUpdateLike,
   stateKey: string | null,
   loadedState?: TelegramFamilyReunificationState,
+  telemetry?: ChannelTelemetryPort,
 ): Promise<string> {
-  const currentState = loadedState ?? (stateKey
-    ? await loadTelegramConversationState(db, stateKey, safeParseTelegramFamilyReunificationState, { step: 'idle' } satisfies TelegramFamilyReunificationState)
-    : ({ step: 'idle' } satisfies TelegramFamilyReunificationState));
-  const ports = createTelegramFamilyReunificationPorts(db, update);
+  const currentState =
+    loadedState ??
+    (stateKey
+      ? await loadTelegramConversationState(db, stateKey, safeParseTelegramFamilyReunificationState, {
+          step: 'idle',
+        } satisfies TelegramFamilyReunificationState)
+      : ({ step: 'idle' } satisfies TelegramFamilyReunificationState));
+  const ports = createTelegramFamilyReunificationPorts(db, update, telemetry);
   const result = await handleTelegramFamilyReunificationFlow(currentState, update, ports);
 
   if (stateKey) {
@@ -2968,11 +3566,14 @@ async function handleTelegramSosConversation(
   update: TelegramUpdateLike,
   stateKey: string | null,
   loadedState?: TelegramSosState,
+  telemetry?: ChannelTelemetryPort,
 ): Promise<string> {
-  const currentState = loadedState ?? (stateKey
-    ? await loadTelegramConversationState(db, stateKey, safeParseTelegramSosState, { step: 'idle' } satisfies TelegramSosState)
-    : ({ step: 'idle' } satisfies TelegramSosState));
-  const ports = createTelegramSosPorts(db);
+  const currentState =
+    loadedState ??
+    (stateKey
+      ? await loadTelegramConversationState(db, stateKey, safeParseTelegramSosState, { step: 'idle' } satisfies TelegramSosState)
+      : ({ step: 'idle' } satisfies TelegramSosState));
+  const ports = createTelegramSosPorts(db, telemetry);
   const result = await handleTelegramSosFlow(currentState, update, ports);
 
   if (stateKey) {
@@ -3017,8 +3618,9 @@ async function routeExistingTelegramFlow<TState extends { step: string }>(
   return state.step === 'idle' ? null : handle(state);
 }
 
-function createTelegramIncidentJoinPorts(db: D1Database): TelegramIncidentJoinPorts {
+function createTelegramIncidentJoinPorts(db: D1Database, telemetry?: ChannelTelemetryPort): TelegramIncidentJoinPorts {
   return {
+    telemetry,
     async listIncidents() {
       return IncidentListResponseSchema.parse({ incidents: await listIncidents(db) });
     },
@@ -3041,8 +3643,9 @@ function createTelegramIncidentJoinPorts(db: D1Database): TelegramIncidentJoinPo
   };
 }
 
-function createTelegramWorkCenterReportPorts(db: D1Database): TelegramWorkCenterReportPorts {
+function createTelegramWorkCenterReportPorts(db: D1Database, telemetry?: ChannelTelemetryPort): TelegramWorkCenterReportPorts {
   return {
+    telemetry,
     async listIncidents() {
       return IncidentListResponseSchema.parse({ incidents: await listIncidents(db) });
     },
@@ -3070,8 +3673,9 @@ function createTelegramWorkCenterReportPorts(db: D1Database): TelegramWorkCenter
   };
 }
 
-function createTelegramResourceReportPorts(db: D1Database): TelegramResourceReportPorts {
+function createTelegramResourceReportPorts(db: D1Database, telemetry?: ChannelTelemetryPort): TelegramResourceReportPorts {
   return {
+    telemetry,
     async listIncidents() {
       return IncidentListResponseSchema.parse({ incidents: await listIncidents(db) });
     },
@@ -3091,9 +3695,13 @@ function createTelegramResourceReportPorts(db: D1Database): TelegramResourceRepo
   };
 }
 
-
-function createTelegramFamilyReunificationPorts(db: D1Database, update: TelegramUpdateLike): TelegramFamilyReunificationPorts {
+function createTelegramFamilyReunificationPorts(
+  db: D1Database,
+  update: TelegramUpdateLike,
+  telemetry?: ChannelTelemetryPort,
+): TelegramFamilyReunificationPorts {
   return {
+    telemetry,
     async listIncidents() {
       return IncidentListResponseSchema.parse({ incidents: await listIncidents(db) });
     },
@@ -3123,9 +3731,7 @@ function createTelegramFamilyReunificationPorts(db: D1Database, update: Telegram
         returnState: request.returnState ?? 'web:family-reunification:search',
         ttlSeconds: Math.min(request.ttlSeconds || 600, 900),
         maxUses: 1,
-        metadata: {
-          issuedBy: 'telegram-family-reunification-flow',
-        },
+        metadata: { issuedBy: 'telegram-family-reunification-flow' },
       });
 
       return issuePrivateWebLink(db, incident, safeRequest, membership);
@@ -3137,8 +3743,9 @@ function createTelegramFamilyReunificationPorts(db: D1Database, update: Telegram
   };
 }
 
-function createTelegramSosPorts(db: D1Database): TelegramSosPorts {
+function createTelegramSosPorts(db: D1Database, telemetry?: ChannelTelemetryPort): TelegramSosPorts {
   return {
+    telemetry,
     async listIncidents() {
       return IncidentListResponseSchema.parse({ incidents: await listIncidents(db) });
     },
@@ -3158,8 +3765,9 @@ function createTelegramSosPorts(db: D1Database): TelegramSosPorts {
   };
 }
 
-function createTelegramDispatchTaskPorts(db: D1Database): TelegramDispatchTaskPorts {
+function createTelegramDispatchTaskPorts(db: D1Database, telemetry?: ChannelTelemetryPort): TelegramDispatchTaskPorts {
   return {
+    telemetry,
     async listIncidents() {
       return IncidentListResponseSchema.parse({ incidents: await listIncidents(db) });
     },
@@ -3216,7 +3824,10 @@ function getTelegramFamilyReunificationConversationStateKey(update: TelegramUpda
   return getTelegramNamespacedConversationStateKey(update, 'family-reunification');
 }
 
-function getTelegramNamespacedConversationStateKey(update: TelegramUpdateLike, flow: 'workcenter' | 'resource' | 'dispatch' | 'sos' | 'family-reunification'): string | null {
+function getTelegramNamespacedConversationStateKey(
+  update: TelegramUpdateLike,
+  flow: 'workcenter' | 'resource' | 'dispatch' | 'sos' | 'family-reunification',
+): string | null {
   const baseKey = getTelegramConversationBaseStateKey(update);
   return baseKey ? `flow:${flow}:${baseKey}` : null;
 }
@@ -3362,13 +3973,7 @@ async function joinIncident(
       externalId: request.externalId,
       ...(request.displayName ? { displayName: request.displayName } : {}),
     },
-    membership: {
-      incidentMembershipId,
-      incidentId: incident.incidentId,
-      channelIdentityId,
-      role: request.role,
-      permissions,
-    },
+    membership: { incidentMembershipId, incidentId: incident.incidentId, channelIdentityId, role: request.role, permissions },
     audit: { auditEventId },
     idempotent,
   };

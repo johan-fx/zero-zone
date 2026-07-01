@@ -12,6 +12,7 @@ import {
   IncidentListResponseSchema,
   IncidentRoleSchema,
   OperationInputSchema,
+  OperationalEventSchema,
   OperationRejectedSchema,
   DispatchEventCreatePayloadSchema,
   DispatchEventUpdatePayloadSchema,
@@ -59,6 +60,7 @@ import {
   contractErrorSemantics,
   incidentRoles,
   operationFamilies,
+  operationalEventTypes,
   operationTypeFamilies,
   operationTypes,
   syncStates,
@@ -276,12 +278,43 @@ describe('contracts package', () => {
       'link_expired',
       'invalid_link_scope',
       'link_correlation_mismatch',
+      'rate_limited',
+      'turnstile_failed',
+      'security_challenge_required',
     ]);
     expect(ContractErrorCodeSchema.parse('unsupported_operation_type')).toBe('unsupported_operation_type');
     expect(ContractErrorCodeSchema.parse('scope_mismatch')).toBe('scope_mismatch');
+    expect(ContractErrorCodeSchema.parse('rate_limited')).toBe('rate_limited');
+    expect(ContractErrorCodeSchema.parse('turnstile_failed')).toBe('turnstile_failed');
+    expect(ContractErrorCodeSchema.parse('security_challenge_required')).toBe('security_challenge_required');
     expect(Object.keys(contractErrorSemantics)).toEqual([...contractErrorCodes]);
     expect(contractErrorSemantics.link_expired.visibleMappingKey.telegram).toBe('telegram.error.link_expired');
     expect(contractErrorSemantics.invalid_operation_version.visibleMappingKey.web).toBe('web.error.invalid_operation_version');
+  });
+
+  it('validates minimized operational event taxonomy for backend observability', () => {
+    expect(operationalEventTypes).toEqual([
+      'operational.audit.recorded',
+      'operation.processed',
+      'private_link.attempted',
+      'rate_limit.checked',
+      'turnstile.checked',
+      'security.challenge.required',
+    ]);
+
+    const event = OperationalEventSchema.parse({
+      event: 'operation.processed',
+      category: 'sync',
+      result: 'rejected',
+      channel: 'mobile',
+      opType: 'sos.create',
+      errorCode: 'rate_limited',
+      latencyMs: 12,
+    });
+    expect(event.sampled).toBe(true);
+    expect(OperationalEventSchema.safeParse({ ...event, token: 'secret-token' }).success).toBe(false);
+    expect(OperationalEventSchema.safeParse({ ...event, fingerprint: 'raw-browser-fingerprint' }).success).toBe(false);
+    expect(OperationalEventSchema.safeParse({ ...event, latitude: 41.38, longitude: 2.17 }).success).toBe(false);
   });
 
   it('validates strict private web link contracts for family reunification', () => {

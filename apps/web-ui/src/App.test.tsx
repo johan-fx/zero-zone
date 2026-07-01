@@ -471,6 +471,8 @@ describe('web ui work center shell', () => {
       '',
       `/family-reunification?token=${privateFamilyReunificationIssueResponseFixture.token}&correlationId=${privateFamilyReunificationIssueResponseFixture.correlationId}`,
     );
+    window.sessionStorage.setItem('cf-turnstile-response', 'test-turnstile-token');
+
     const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const url = String(input);
       if (url.endsWith('/private-links/validate')) return jsonResponse(privateFamilyReunificationValidateResponseFixture);
@@ -517,6 +519,10 @@ describe('web ui work center shell', () => {
     expect(payload.query).not.toHaveProperty('fullName');
     expect(payload.query).not.toHaveProperty('photo');
     expect(payload.query).not.toHaveProperty('exactLocation');
+    expect(payload).not.toHaveProperty('turnstileToken');
+    expect(searchCall?.[1]?.headers).toMatchObject({
+      'cf-turnstile-response': 'test-turnstile-token',
+    });
 
     fireEvent.click(screen.getByRole('button', { name: 'Continue to in-person verification' }));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Continue with in-person verification'));
@@ -558,3 +564,45 @@ function jsonResponse(body: unknown): Response {
     headers: { 'content-type': 'application/json' },
   });
 }
+
+
+describe('web ui telemetry and turnstile forwarding', () => {
+  it('keeps web telemetry sanitized and non-blocking', async () => {
+    const { createWebTelemetryEvent, emitChannelTelemetry } = await import('./telemetry');
+    const emit = vi.fn().mockRejectedValue(new Error('sink down'));
+
+    expect(() => {
+      emitChannelTelemetry(
+        { emit },
+        createWebTelemetryEvent({
+          action: 'private_link.rejected',
+          result: 'rejected',
+          errorCode: 'rate_limited',
+        }),
+      );
+    }).not.toThrow();
+    await Promise.resolve();
+
+    expect(emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'private_link.attempted',
+        channel: 'web-ui',
+        scope: 'web.private_link',
+        action: 'private_link.rejected',
+        errorCode: 'rate_limited',
+      }),
+    );
+    expect(JSON.stringify(emit.mock.calls)).not.toContain('token');
+    expect(JSON.stringify(emit.mock.calls)).not.toContain('fingerprint');
+    expect(JSON.stringify(emit.mock.calls)).not.toContain('relationHint');
+  });
+
+  it('forwards Turnstile header only when a token is provided', async () => {
+    const { createTurnstileHeaders } = await import('./api');
+
+    expect(createTurnstileHeaders()).toEqual({});
+    expect(createTurnstileHeaders({ turnstileToken: '  token-123  ' })).toEqual({
+      'cf-turnstile-response': 'token-123',
+    });
+  });
+});

@@ -37,17 +37,30 @@ import {
   type WorkCenterCreateResponse,
   type WorkCenterDetailResponse,
   type WorkCenterListResponse,
-} from '@zona-cero/contracts';
+} from "@zona-cero/contracts";
 
-const defaultApiBaseUrl = 'http://127.0.0.1:8787';
+const defaultApiBaseUrl = "http://127.0.0.1:8787";
 
 type Fetcher = typeof fetch;
+
+export type TurnstileForwardingOptions = {
+  turnstileToken?: string | null;
+};
+
+export function createTurnstileHeaders(
+  options: TurnstileForwardingOptions = {},
+): Record<string, string> {
+  const token = options.turnstileToken?.trim();
+  return token ? { "cf-turnstile-response": token } : {};
+}
 
 export function getApiBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || defaultApiBaseUrl;
 }
 
-export async function fetchApiHealth(fetcher: Fetcher = fetch): Promise<HealthResponse> {
+export async function fetchApiHealth(
+  fetcher: Fetcher = fetch,
+): Promise<HealthResponse> {
   const response = await fetcher(`${getApiBaseUrl()}/health`);
 
   if (!response.ok) {
@@ -57,8 +70,13 @@ export async function fetchApiHealth(fetcher: Fetcher = fetch): Promise<HealthRe
   return HealthResponseSchema.parse(await response.json());
 }
 
-export async function fetchWorkCenters(incidentId: string, fetcher: Fetcher = fetch): Promise<WorkCenterListResponse> {
-  const response = await fetcher(`${getApiBaseUrl()}${workCenterCollectionPath(incidentId)}`);
+export async function fetchWorkCenters(
+  incidentId: string,
+  fetcher: Fetcher = fetch,
+): Promise<WorkCenterListResponse> {
+  const response = await fetcher(
+    `${getApiBaseUrl()}${workCenterCollectionPath(incidentId)}`,
+  );
 
   if (!response.ok) {
     throw new Error(`Work center list failed with status ${response.status}`);
@@ -72,7 +90,9 @@ export async function fetchWorkCenterDetail(
   workCenterId: string,
   fetcher: Fetcher = fetch,
 ): Promise<WorkCenterDetailResponse> {
-  const response = await fetcher(`${getApiBaseUrl()}${workCenterDetailPath(incidentId, workCenterId)}`);
+  const response = await fetcher(
+    `${getApiBaseUrl()}${workCenterDetailPath(incidentId, workCenterId)}`,
+  );
 
   if (!response.ok) {
     throw new Error(`Work center detail failed with status ${response.status}`);
@@ -81,19 +101,30 @@ export async function fetchWorkCenterDetail(
   return WorkCenterDetailResponseSchema.parse(await response.json());
 }
 
-
-export async function fetchResourceReports(incidentId: string, fetcher: Fetcher = fetch): Promise<ResourceReportListResponse> {
-  const response = await fetcher(`${getApiBaseUrl()}${resourceReportCollectionPath(incidentId)}`);
+export async function fetchResourceReports(
+  incidentId: string,
+  fetcher: Fetcher = fetch,
+): Promise<ResourceReportListResponse> {
+  const response = await fetcher(
+    `${getApiBaseUrl()}${resourceReportCollectionPath(incidentId)}`,
+  );
 
   if (!response.ok) {
-    throw new Error(`Resource report list failed with status ${response.status}`);
+    throw new Error(
+      `Resource report list failed with status ${response.status}`,
+    );
   }
 
   return ResourceReportListResponseSchema.parse(await response.json());
 }
 
-export async function fetchDispatchTasks(incidentId: string, fetcher: Fetcher = fetch): Promise<DispatchTaskListResponse> {
-  const response = await fetcher(`${getApiBaseUrl()}${dispatchTaskCollectionPath(incidentId)}`);
+export async function fetchDispatchTasks(
+  incidentId: string,
+  fetcher: Fetcher = fetch,
+): Promise<DispatchTaskListResponse> {
+  const response = await fetcher(
+    `${getApiBaseUrl()}${dispatchTaskCollectionPath(incidentId)}`,
+  );
 
   if (!response.ok) {
     throw new Error(`Dispatch task list failed with status ${response.status}`);
@@ -109,21 +140,31 @@ export async function updateDispatchTask(
   fetcher: Fetcher = fetch,
 ): Promise<DispatchTaskResponse> {
   const payload = DispatchTaskConnectedUpdateRequestSchema.parse(request);
-  const response = await fetcher(`${getApiBaseUrl()}${dispatchTaskDetailPath(incidentId, dispatchTaskId)}`, {
-    method: 'PATCH',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+  const response = await fetcher(
+    `${getApiBaseUrl()}${dispatchTaskDetailPath(incidentId, dispatchTaskId)}`,
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
 
   if (!response.ok) {
-    throw new Error(`Dispatch task update failed with status ${response.status}`);
+    throw new Error(
+      `Dispatch task update failed with status ${response.status}`,
+    );
   }
 
   return DispatchTaskResponseSchema.parse(await response.json());
 }
 
-export async function fetchSosStatus(incidentId: string, fetcher: Fetcher = fetch): Promise<SosAlertStatusResponse> {
-  const response = await fetcher(`${getApiBaseUrl()}${sosCollectionPath(incidentId)}`);
+export async function fetchSosStatus(
+  incidentId: string,
+  fetcher: Fetcher = fetch,
+): Promise<SosAlertStatusResponse> {
+  const response = await fetcher(
+    `${getApiBaseUrl()}${sosCollectionPath(incidentId)}`,
+  );
 
   if (!response.ok) {
     throw new Error(`SOS status failed with status ${response.status}`);
@@ -138,11 +179,14 @@ export async function createSosAlert(
   fetcher: Fetcher = fetch,
 ): Promise<SosAlertCreateResponse> {
   const payload = SosConnectedCreateRequestSchema.parse(request);
-  const response = await fetcher(`${getApiBaseUrl()}${sosCollectionPath(incidentId)}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+  const response = await fetcher(
+    `${getApiBaseUrl()}${sosCollectionPath(incidentId)}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
 
   if (!response.ok) {
     throw new Error(`SOS creation failed with status ${response.status}`);
@@ -151,8 +195,14 @@ export async function createSosAlert(
   return SosAlertCreateResponseSchema.parse(await response.json());
 }
 
-export async function fetchSyncFreshness(incidentId: string, cellId: string, fetcher: Fetcher = fetch): Promise<SyncFreshness> {
-  const response = await fetcher(`${getApiBaseUrl()}${syncPullPath(incidentId, cellId)}?limit=1`);
+export async function fetchSyncFreshness(
+  incidentId: string,
+  cellId: string,
+  fetcher: Fetcher = fetch,
+): Promise<SyncFreshness> {
+  const response = await fetcher(
+    `${getApiBaseUrl()}${syncPullPath(incidentId, cellId)}?limit=1`,
+  );
 
   if (!response.ok) {
     throw new Error(`Sync freshness failed with status ${response.status}`);
@@ -167,14 +217,19 @@ export async function createWorkCenter(
   fetcher: Fetcher = fetch,
 ): Promise<WorkCenterCreateResponse> {
   const payload = WorkCenterConnectedCreateRequestSchema.parse(request);
-  const response = await fetcher(`${getApiBaseUrl()}${workCenterCollectionPath(incidentId)}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+  const response = await fetcher(
+    `${getApiBaseUrl()}${workCenterCollectionPath(incidentId)}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
 
   if (!response.ok) {
-    throw new Error(`Work center creation failed with status ${response.status}`);
+    throw new Error(
+      `Work center creation failed with status ${response.status}`,
+    );
   }
 
   return WorkCenterCreateResponseSchema.parse(await response.json());
@@ -183,16 +238,25 @@ export async function createWorkCenter(
 export async function validatePrivateFamilyReunificationLink(
   request: PrivateWebLinkValidateRequest,
   fetcher: Fetcher = fetch,
+  options: TurnstileForwardingOptions = {},
 ): Promise<PrivateWebLinkValidateResponse> {
   const payload = PrivateWebLinkValidateRequestSchema.parse(request);
   const response = await fetcher(`${getApiBaseUrl()}/private-links/validate`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...createTurnstileHeaders(options),
+    },
     body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
-    throw new Error(await readApiError(response, `Private link validation failed with status ${response.status}`));
+    throw new Error(
+      await readApiError(
+        response,
+        `Private link validation failed with status ${response.status}`,
+      ),
+    );
   }
 
   return PrivateWebLinkValidateResponseSchema.parse(await response.json());
@@ -201,16 +265,28 @@ export async function validatePrivateFamilyReunificationLink(
 export async function searchFamilyReunification(
   request: FamilyReunificationSearchRequest,
   fetcher: Fetcher = fetch,
+  options: TurnstileForwardingOptions = {},
 ): Promise<FamilyReunificationSearchResponse> {
   const payload = FamilyReunificationSearchRequestSchema.parse(request);
-  const response = await fetcher(`${getApiBaseUrl()}/private-links/family-reunification/search`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+  const response = await fetcher(
+    `${getApiBaseUrl()}/private-links/family-reunification/search`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...createTurnstileHeaders(options),
+      },
+      body: JSON.stringify(payload),
+    },
+  );
 
   if (!response.ok) {
-    throw new Error(await readApiError(response, `Family reunification search failed with status ${response.status}`));
+    throw new Error(
+      await readApiError(
+        response,
+        `Family reunification search failed with status ${response.status}`,
+      ),
+    );
   }
 
   return FamilyReunificationSearchResponseSchema.parse(await response.json());
@@ -219,16 +295,25 @@ export async function searchFamilyReunification(
 export async function consumePrivateFamilyReunificationLink(
   request: PrivateWebLinkConsumeRequest,
   fetcher: Fetcher = fetch,
+  options: TurnstileForwardingOptions = {},
 ): Promise<PrivateWebLinkConsumeResponse> {
   const payload = PrivateWebLinkConsumeRequestSchema.parse(request);
   const response = await fetcher(`${getApiBaseUrl()}/private-links/consume`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...createTurnstileHeaders(options),
+    },
     body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
-    throw new Error(await readApiError(response, `Private link consumption failed with status ${response.status}`));
+    throw new Error(
+      await readApiError(
+        response,
+        `Private link consumption failed with status ${response.status}`,
+      ),
+    );
   }
 
   return PrivateWebLinkConsumeResponseSchema.parse(await response.json());
@@ -242,10 +327,12 @@ function workCenterCollectionPath(incidentId: string): string {
   return `/incidents/${encodeURIComponent(incidentId)}/work-centers`;
 }
 
-function workCenterDetailPath(incidentId: string, workCenterId: string): string {
+function workCenterDetailPath(
+  incidentId: string,
+  workCenterId: string,
+): string {
   return `${workCenterCollectionPath(incidentId)}/${encodeURIComponent(workCenterId)}`;
 }
-
 
 function resourceReportCollectionPath(incidentId: string): string {
   return `/incidents/${encodeURIComponent(incidentId)}/resource-reports`;
@@ -255,7 +342,10 @@ function dispatchTaskCollectionPath(incidentId: string): string {
   return `/incidents/${encodeURIComponent(incidentId)}/dispatch-tasks`;
 }
 
-function dispatchTaskDetailPath(incidentId: string, dispatchTaskId: string): string {
+function dispatchTaskDetailPath(
+  incidentId: string,
+  dispatchTaskId: string,
+): string {
   return `${dispatchTaskCollectionPath(incidentId)}/${encodeURIComponent(dispatchTaskId)}`;
 }
 
@@ -263,9 +353,17 @@ function sosCollectionPath(incidentId: string): string {
   return `/incidents/${encodeURIComponent(incidentId)}/sos`;
 }
 
-async function readApiError(response: Response, fallback: string): Promise<string> {
+async function readApiError(
+  response: Response,
+  fallback: string,
+): Promise<string> {
   const body = await response.json().catch(() => null);
-  if (body && typeof body === 'object' && 'error' in body && typeof body.error === 'string') {
+  if (
+    body &&
+    typeof body === "object" &&
+    "error" in body &&
+    typeof body.error === "string"
+  ) {
     return body.error;
   }
   return fallback;

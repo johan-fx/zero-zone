@@ -152,3 +152,11 @@ Las decisiones de seguridad más importantes son:
 - [ ] Multimedia, alertas oficiales automáticas, IA y adultos desaparecidos permanecen detrás de feature flags.
 - [ ] Logs y auditoría no exponen secretos, claves ni datos sensibles innecesarios.
 
+
+## Delta técnico Slice 8 — observabilidad y controles anti-abuso backend
+
+- Se añadió una taxonomía compartida mínima para eventos operacionales (`operation.processed`, `private_link.attempted`, `rate_limit.checked`, `turnstile.checked`, `security.challenge.required`) con contratos estrictos y sin campos para tokens, fingerprints brutos, payloads, texto libre o coordenadas.
+- El backend centraliza auditoría operacional mínima en D1 para seguridad/rate-limit, usando hashes de referencias y metadatos permitidos de baja cardinalidad; no se usa como almacén analítico de payloads.
+- Los private links de reunificación mantienen auditoría de intentos minimizada y ahora diferencian `rate_limited` como error estable.
+- Turnstile server-side queda preparado para flujos sensibles con rollout seguro: `off`/sin secret degrada sin bloquear local/test, `observe` no rompe el flujo, y `enforce` bloquea cuando falta o falla el challenge.
+- Sync push/pull scoped añade rate-limit reutilizable de alta tolerancia por incidente/celda/caller minimizado para reducir abuso sin romper operación normal.

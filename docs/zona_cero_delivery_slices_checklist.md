@@ -373,17 +373,36 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 
 | Equipo | Checklist |
 |---|---|
-| A | ⬜ Métricas de comandos, abandonos y enlaces expirados. |
-| B | ⬜ Logs, métricas, rate limits, Turnstile y alertas. |
-| B | ⬜ Auditoría central por operación/canal/actor. |
-| C | ⬜ Métricas de batería, sync, offline maps y outbox. |
-| Todos | ⬜ Threat model actualizado para Telegram/Web + backend. |
+| A | ✅ Métricas de comandos, abandonos y enlaces expirados. |
+| B | ✅ Logs, métricas, rate limits, Turnstile y alertas. |
+| B | ✅ Auditoría central por operación/canal/actor. |
+| C | ✅ Métricas de batería, sync, offline maps y outbox. |
+| Todos | ✅ Threat model actualizado para Telegram/Web + backend. |
 
 **Definition of Done**
 
 - Se puede investigar quién hizo qué, desde qué canal y con qué resultado.
 - Hay límites anti-abuso para flujos sensibles.
 - Las métricas distinguen errores de canal, dominio e infraestructura.
+
+**Cierre Slice 8**
+
+- Equipo B definió la taxonomía operacional compartida, auditoría central, rate limits reutilizables, Turnstile server-side con rollout seguro y logs estructurados minimizados.
+- Equipo A instrumentó Telegram/Web UI con telemetría no bloqueante y sin PII, incluido forwarding de Turnstile en la búsqueda privada protegida.
+- Equipo C añadió observabilidad nativa/offline para sync, outbox, mapas offline, batería y fallos de campo con sanitización y buckets seguros.
+- Fresh review detectó y se remediaron P1/P2 de Turnstile observe, auditoría bloqueante, taxonomía errónea, wiring real del webhook Telegram y ruido de diff en API.
+- Fresh review final: 0 P0/P1/P2.
+- Riesgos no bloqueantes: configurar `TURNSTILE_SECRET_KEY`, decidir cuándo pasar `TURNSTILE_ROLLOUT` a `enforce`, incluir archivos nuevos/untracked al preparar commit/PR y conectar widget real de Turnstile antes de enforcement público.
+
+**Evidencia de verificación**
+
+- `git diff --check` ✅
+- `pnpm api:test:strict` ✅
+- `pnpm telegram:test:strict` ✅
+- `pnpm web:test:strict` ✅
+- `pnpm mobile:test:strict` ✅
+- `pnpm test:strict` ✅
+- Fresh review independiente final ✅
 
 ## Gates antes de implementar cada slice
 

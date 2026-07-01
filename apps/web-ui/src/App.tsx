@@ -29,6 +29,13 @@ import {
   updateDispatchTask,
   validatePrivateFamilyReunificationLink,
 } from './api';
+import {
+  classifyWebError,
+  createWebTelemetryEvent,
+  emitChannelTelemetry,
+  webTelemetry,
+  type WebTelemetryAction,
+} from './telemetry';
 import './styles.css';
 
 type HealthState =
@@ -77,6 +84,38 @@ const defaultCellId = 'cell-zc-demo';
 const defaultWebExternalId = 'web-user-1001';
 const defaultWebDisplayName = 'Field Web';
 const strongSosConfirmation = 'CONFIRM SOS';
+
+
+function reportWebTelemetry(
+  action: WebTelemetryAction,
+  result: 'accepted' | 'rejected' | 'bypassed',
+  startedAt?: number,
+  error?: unknown,
+): void {
+  const classified = error ? classifyWebError(error) : { result, errorCode: null };
+  emitChannelTelemetry(
+    webTelemetry,
+    createWebTelemetryEvent({
+      action,
+      result: classified.result ?? result,
+      errorCode: classified.errorCode,
+      latencyMs: startedAt === undefined ? undefined : Date.now() - startedAt,
+    }),
+  );
+}
+
+function getConfiguredTurnstileToken(): string | null {
+  const envToken = import.meta.env.VITE_TURNSTILE_RESPONSE;
+  if (typeof envToken === 'string' && envToken.trim()) return envToken;
+  if (typeof window === 'undefined') return null;
+  return window.sessionStorage.getItem('cf-turnstile-response') ?? window.sessionStorage.getItem('x-turnstile-token');
+}
+
+function getTurnstileForwardingOptions(): { turnstileToken?: string | null } {
+  const turnstileToken = getConfiguredTurnstileToken();
+  reportWebTelemetry(turnstileToken ? 'turnstile.forwarded' : 'turnstile.missing', turnstileToken ? 'accepted' : 'bypassed');
+  return { turnstileToken };
+}
 const dispatchActions: { label: string; status: Exclude<DispatchTaskStatus, 'pending'> }[] = [
   { label: 'Accept', status: 'accepted' },
   { label: 'En route', status: 'en_route' },
@@ -85,6 +124,7 @@ const dispatchActions: { label: string; status: Exclude<DispatchTaskStatus, 'pen
 ];
 
 export function App() {
+  reportWebTelemetry('app.loaded', 'accepted');
   const privateLinkParams = getPrivateLinkParams();
 
   if (privateLinkParams) {
@@ -121,9 +161,11 @@ function OperationsPanel() {
     fetchApiHealth()
       .then((health) => {
         if (active) setHealthState({ status: 'ready', health });
+        reportWebTelemetry('health.loaded', 'accepted');
       })
       .catch((error: unknown) => {
         if (active) setHealthState({ status: 'error', message: errorMessage(error) });
+        reportWebTelemetry('health.failed', 'rejected', undefined, error);
       });
 
     return () => {
@@ -137,6 +179,7 @@ function OperationsPanel() {
     async function loadChannelFreshness() {
       const freshness = await fetchSyncFreshness(incidentId, cellId);
       if (active) setChannelFreshnessState({ status: 'ready', freshness });
+      reportWebTelemetry('freshness.loaded', 'accepted');
     }
 
     async function loadWorkCenters() {
@@ -147,16 +190,19 @@ function OperationsPanel() {
         : null;
 
       if (active) setWorkCenterState({ status: 'ready', workCenters, selected });
+      reportWebTelemetry('work_centers.loaded', 'accepted');
     }
 
     async function loadResources() {
       const { resourceReports } = await fetchResourceReports(incidentId);
       if (active) setResourceState({ status: 'ready', reports: resourceReports });
+      reportWebTelemetry('resources.loaded', 'accepted');
     }
 
     async function loadDispatchTasks() {
       const { dispatchTasks } = await fetchDispatchTasks(incidentId);
       if (active) setDispatchState({ status: 'ready', tasks: dispatchTasks });
+      reportWebTelemetry('dispatch.loaded', 'accepted');
     }
 
     async function loadSosStatus() {
@@ -166,15 +212,19 @@ function OperationsPanel() {
 
     loadChannelFreshness().catch((error: unknown) => {
       if (active) setChannelFreshnessState({ status: 'error', message: errorMessage(error) });
+      reportWebTelemetry('freshness.failed', 'rejected', undefined, error);
     });
     loadWorkCenters().catch((error: unknown) => {
       if (active) setWorkCenterState({ status: 'error', message: errorMessage(error) });
+      reportWebTelemetry('work_centers.failed', 'rejected', undefined, error);
     });
     loadResources().catch((error: unknown) => {
       if (active) setResourceState({ status: 'error', message: errorMessage(error) });
+      reportWebTelemetry('resources.failed', 'rejected', undefined, error);
     });
     loadDispatchTasks().catch((error: unknown) => {
       if (active) setDispatchState({ status: 'error', message: errorMessage(error) });
+      reportWebTelemetry('dispatch.failed', 'rejected', undefined, error);
     });
     loadSosStatus().catch((error: unknown) => {
       if (active) setSosState({ status: 'error', message: errorMessage(error) });
@@ -187,6 +237,7 @@ function OperationsPanel() {
 
   async function handleDispatchAction(task: DispatchTask, status: Exclude<DispatchTaskStatus, 'pending'>) {
     if (dispatchState.status !== 'ready') return;
+    const startedAt = Date.now();
 
     try {
       const response = await updateDispatchTask(incidentId, task.dispatchTaskId, {
@@ -201,8 +252,10 @@ function OperationsPanel() {
         ),
         actionMessage: `Task ${response.dispatchTask.dispatchTaskId} updated to ${response.dispatchTask.status}.`,
       });
+      reportWebTelemetry('dispatch.completed', 'accepted', startedAt);
     } catch (error: unknown) {
       setDispatchState({ ...dispatchState, actionMessage: errorMessage(error) });
+      reportWebTelemetry('dispatch.rejected', 'rejected', startedAt, error);
     }
   }
 
@@ -210,17 +263,21 @@ function OperationsPanel() {
     event.preventDefault();
     if (sosState.status !== 'ready' || isSosSubmitting) return;
 
+    reportWebTelemetry('sos.started', 'accepted');
+
     if (sosConfirmation.trim() !== strongSosConfirmation) {
       setSosState({
         ...sosState,
         actionMessage: `Type ${strongSosConfirmation} exactly before submitting SOS. Backend recording does not confirm delivery or rescue.`,
       });
+      reportWebTelemetry('sos.rejected', 'rejected');
       return;
     }
 
     const reportedAt = sosPendingReportedAt ?? new Date().toISOString();
     setSosPendingReportedAt(reportedAt);
     setIsSosSubmitting(true);
+    const startedAt = Date.now();
 
     try {
       const response = await createSosAlert(incidentId, {
@@ -240,8 +297,10 @@ function OperationsPanel() {
       });
       setSosConfirmation('');
       setSosPendingReportedAt(null);
+      reportWebTelemetry('sos.completed', 'accepted', startedAt);
     } catch (error: unknown) {
       setSosState({ ...sosState, actionMessage: errorMessage(error) });
+      reportWebTelemetry('sos.rejected', 'rejected', startedAt, error);
     } finally {
       setIsSosSubmitting(false);
     }
@@ -354,17 +413,33 @@ function FamilyReunificationPrivateView({
   useEffect(() => {
     let active = true;
 
+    reportWebTelemetry('private_link.started', 'accepted');
+
     validatePrivateFamilyReunificationLink({
       token,
       scope: 'family_reunification.search',
       correlationId,
       fingerprint,
-    })
+    }, undefined, getTurnstileForwardingOptions())
       .then((validation) => {
         if (active) setState({ status: 'ready', validation });
+        reportWebTelemetry('private_link.completed', 'accepted');
       })
       .catch((error: unknown) => {
         if (active) setState({ status: 'error', message: formatPrivateLinkError(error) });
+        const classified = classifyWebError(error);
+        reportWebTelemetry(
+          classified.errorCode === 'rate_limited'
+            ? 'private_link.rate_limited'
+            : classified.errorCode === 'security_challenge_required'
+              ? 'private_link.security_challenge'
+              : classified.errorCode === 'link_expired'
+                ? 'private_link.expired'
+                : 'private_link.rejected',
+          'rejected',
+          undefined,
+          error,
+        );
       });
 
     return () => {
@@ -377,6 +452,7 @@ function FamilyReunificationPrivateView({
     if (state.status !== 'ready' || isSearching) return;
 
     setIsSearching(true);
+    const startedAt = Date.now();
     try {
       const search = await searchFamilyReunification({
         token,
@@ -387,10 +463,12 @@ function FamilyReunificationPrivateView({
           ...(form.relationHint.trim() ? { relationHint: form.relationHint.trim() } : {}),
           ...(form.lastKnownAreaLabel.trim() ? { lastKnownAreaLabel: form.lastKnownAreaLabel.trim() } : {}),
         },
-      });
+      }, undefined, getTurnstileForwardingOptions());
       setState({ ...state, search, message: 'Search completed. Continue with in-person verification.' });
+      reportWebTelemetry('private_link.completed', 'accepted', startedAt);
     } catch (error: unknown) {
       setState({ ...state, message: formatPrivateLinkError(error) });
+      reportWebTelemetry('private_link.rejected', 'rejected', startedAt, error);
     } finally {
       setIsSearching(false);
     }
@@ -400,6 +478,7 @@ function FamilyReunificationPrivateView({
     if (state.status !== 'ready' || isReferring) return;
 
     setIsReferring(true);
+    const startedAt = Date.now();
     try {
       const referral = await consumePrivateFamilyReunificationLink({
         token,
@@ -409,8 +488,10 @@ function FamilyReunificationPrivateView({
         referralReason: 'family_reunification_in_person_verification',
       });
       setState({ ...state, referral, message: referral.referral.message });
+      reportWebTelemetry('private_link.completed', 'accepted', startedAt);
     } catch (error: unknown) {
       setState({ ...state, message: formatPrivateLinkError(error) });
+      reportWebTelemetry('private_link.rejected', 'rejected', startedAt, error);
     } finally {
       setIsReferring(false);
     }

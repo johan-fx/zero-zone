@@ -1,5 +1,5 @@
 import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createSignedOperationFixture,
@@ -20,6 +20,7 @@ import {
   DispatchTaskListResponseSchema,
   DispatchTaskResponseSchema,
   IncidentJoinResponseSchema,
+  OperationalEventSchema,
   FamilyReunificationSearchResponseSchema,
   PrivateWebLinkConsumeResponseSchema,
   PrivateWebLinkIssueResponseSchema,
@@ -52,12 +53,7 @@ async function postTelegramMessage(telegramUserId: number, text: string, firstNa
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       update_id: telegramUserId,
-      message: {
-        message_id: 1,
-        text,
-        chat: { id: telegramUserId, type: 'private' },
-        from: { id: telegramUserId, is_bot: false, first_name: firstName },
-      },
+      message: { message_id: 1, text, chat: { id: telegramUserId, type: 'private' }, from: { id: telegramUserId, is_bot: false, first_name: firstName } },
     }),
   });
 
@@ -71,10 +67,7 @@ async function seedTelegramFreshnessChange(opId: string, serverUpdatedAt: string
     opId,
     entityId: `${opId}-entity`,
     cellId: 'cell-zc-demo',
-    payload: {
-      ...validWorkCenterCreateOperationFixture.payload,
-      name: `${opId} center`,
-    },
+    payload: { ...validWorkCenterCreateOperationFixture.payload, name: `${opId} center` },
   };
 
   await (env as Env).DB.prepare(
@@ -97,12 +90,7 @@ async function seedTelegramFreshnessChange(opId: string, serverUpdatedAt: string
 }
 
 async function seedTelegramFreshnessConflict(opId: string): Promise<void> {
-  const operation = {
-    ...validWorkCenterCreateOperationFixture,
-    opId,
-    entityId: `${opId}-entity`,
-    cellId: 'cell-zc-demo',
-  };
+  const operation = { ...validWorkCenterCreateOperationFixture, opId, entityId: `${opId}-entity`, cellId: 'cell-zc-demo' };
 
   await (env as Env).DB.prepare(
     `INSERT INTO sync_operations (
@@ -142,6 +130,41 @@ async function issueFamilyReunificationLink(overrides: Record<string, unknown> =
   return PrivateWebLinkIssueResponseSchema.parse(await response.json());
 }
 
+function mockOperationalAuditInsertFailure(): ReturnType<typeof vi.spyOn> {
+  const db = (env as Env).DB;
+  const originalPrepare = db.prepare.bind(db);
+
+  return vi.spyOn(db, 'prepare').mockImplementation((query: string) => {
+    const statement = originalPrepare(query);
+    if (!query.includes('INSERT INTO operational_audit_events')) {
+      return statement;
+    }
+
+    return new Proxy(statement, {
+      get(target, property, receiver) {
+        if (property !== 'bind') {
+          return Reflect.get(target, property, receiver);
+        }
+
+        return (...values: unknown[]) => {
+          const bound = target.bind(...values);
+          return new Proxy(bound, {
+            get(boundTarget, boundProperty, boundReceiver) {
+              if (boundProperty === 'run') {
+                return async () => {
+                  throw new Error('operational audit unavailable');
+                };
+              }
+
+              return Reflect.get(boundTarget, boundProperty, boundReceiver);
+            },
+          });
+        };
+      },
+    });
+  });
+}
+
 describe('api worker', () => {
   beforeEach(async () => {
     await resetApiTestDatabase((env as Env).DB);
@@ -174,11 +197,7 @@ describe('api worker', () => {
 
     expect(response.status).toBe(200);
     const body = SyncPushResponseSchema.parse(await response.json());
-    expect(body.results[0]).toMatchObject({
-      opId: 'op-work-center-create-1',
-      status: 'accepted',
-      entityId: 'center-north-triage',
-    });
+    expect(body.results[0]).toMatchObject({ opId: 'op-work-center-create-1', status: 'accepted', entityId: 'center-north-triage' });
     expect(body.results[0]?.status === 'accepted' ? body.results[0].serverVersion : null).toEqual(expect.any(Number));
 
     const list = WorkCenterListResponseSchema.parse(await (await request('/incidents/incident-zc-demo/work-centers')).json());
@@ -190,9 +209,7 @@ describe('api worker', () => {
       confidence: 'low',
     });
 
-    const detail = WorkCenterDetailResponseSchema.parse(
-      await (await request('/incidents/incident-zc-demo/work-centers/center-north-triage')).json(),
-    );
+    const detail = WorkCenterDetailResponseSchema.parse(await (await request('/incidents/incident-zc-demo/work-centers/center-north-triage')).json());
     expect(detail.workCenter.latestSignals[0]).toMatchObject({ signalType: 'creator_report', sourceChannel: 'mobile' });
   });
 
@@ -209,22 +226,10 @@ describe('api worker', () => {
       .run();
 
     const list = WorkCenterListResponseSchema.parse(await (await request('/incidents/incident-zc-demo/work-centers')).json());
-    expect(list.workCenters[0]).toMatchObject({
-      workCenterId: 'center-north-triage',
-      freshness: 'stale',
-      risk: 'medium',
-      updatedAt: oldUpdatedAt,
-    });
+    expect(list.workCenters[0]).toMatchObject({ workCenterId: 'center-north-triage', freshness: 'stale', risk: 'medium', updatedAt: oldUpdatedAt });
 
-    const detail = WorkCenterDetailResponseSchema.parse(
-      await (await request('/incidents/incident-zc-demo/work-centers/center-north-triage')).json(),
-    );
-    expect(detail.workCenter).toMatchObject({
-      workCenterId: 'center-north-triage',
-      freshness: 'stale',
-      risk: 'medium',
-      updatedAt: oldUpdatedAt,
-    });
+    const detail = WorkCenterDetailResponseSchema.parse(await (await request('/incidents/incident-zc-demo/work-centers/center-north-triage')).json());
+    expect(detail.workCenter).toMatchObject({ workCenterId: 'center-north-triage', freshness: 'stale', risk: 'medium', updatedAt: oldUpdatedAt });
 
     const persisted = await (env as Env).DB.prepare('SELECT freshness, risk FROM work_centers WHERE work_center_id = ?')
       .bind('center-north-triage')
@@ -247,12 +252,7 @@ describe('api worker', () => {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        operations: [
-          {
-            ...validWorkCenterCreateOperationFixture,
-            payload: { ...validWorkCenterCreateOperationFixture.payload, name: 'Changed center name' },
-          },
-        ],
+        operations: [{ ...validWorkCenterCreateOperationFixture, payload: { ...validWorkCenterCreateOperationFixture.payload, name: 'Changed center name' } }],
       }),
     });
 
@@ -264,6 +264,24 @@ describe('api worker', () => {
       .bind('center-north-triage')
       .first<{ count: number }>();
     expect(count?.count).toBe(1);
+  });
+
+  it('does not block scoped sync push when rate-limit operational audit persistence fails', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const prepareSpy = mockOperationalAuditInsertFailure();
+    try {
+      const response = await request('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/push', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(mobileWorkCenterCreateSyncPushFixture),
+      });
+
+      expect(response.status).toBe(200);
+      expect(SyncPushResponseSchema.parse(await response.json()).results[0]).toMatchObject({ status: 'accepted' });
+    } finally {
+      prepareSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
   });
 
   it('uses scoped sync push as source of truth with idempotent metadata and scoped conflict results', async () => {
@@ -281,12 +299,7 @@ describe('api worker', () => {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        operations: [
-          {
-            ...validWorkCenterCreateOperationFixture,
-            payload: { ...validWorkCenterCreateOperationFixture.payload, name: 'Changed center name' },
-          },
-        ],
+        operations: [{ ...validWorkCenterCreateOperationFixture, payload: { ...validWorkCenterCreateOperationFixture.payload, name: 'Changed center name' } }],
       }),
     });
 
@@ -340,9 +353,7 @@ describe('api worker', () => {
       body: JSON.stringify(mobileSosCreateSyncPushFixture),
     });
 
-    const firstPage = SyncPullResponseSchema.parse(
-      await (await request('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull?limit=1')).json(),
-    );
+    const firstPage = SyncPullResponseSchema.parse(await (await request('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull?limit=1')).json());
     expect(firstPage.operations).toHaveLength(1);
     expect(firstPage.operations[0]?.sequence).toEqual(expect.any(Number));
     expect(firstPage.operations[0]?.serverVersion).toBe(firstPage.operations[0]?.sequence);
@@ -360,9 +371,7 @@ describe('api worker', () => {
     expect(secondPage.hasMore).toBe(false);
     expect(secondPage.freshness).toMatchObject({ cursorLag: 0 });
 
-    const otherCell = SyncPullResponseSchema.parse(
-      await (await request('/incidents/incident-zc-demo/cells/cell-other/sync/pull?limit=10')).json(),
-    );
+    const otherCell = SyncPullResponseSchema.parse(await (await request('/incidents/incident-zc-demo/cells/cell-other/sync/pull?limit=10')).json());
     expect(otherCell.operations).toEqual([]);
     expect(otherCell.freshness).toMatchObject({ status: 'missing', cursorLag: 0 });
   });
@@ -377,9 +386,7 @@ describe('api worker', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(mobileWorkCenterCreateSyncPushFixture),
     });
-    const firstPage = SyncPullResponseSchema.parse(
-      await (await request('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull?limit=1')).json(),
-    );
+    const firstPage = SyncPullResponseSchema.parse(await (await request('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull?limit=1')).json());
     const forged = await request(`/incidents/incident-zc-demo/cells/cell-other/sync/pull?cursor=${encodeURIComponent(firstPage.cursor ?? '')}`);
     expect(forged.status).toBe(400);
     await expect(forged.json()).resolves.toMatchObject({ error: 'scope_mismatch' });
@@ -410,15 +417,55 @@ describe('api worker', () => {
     await expect(response.json()).resolves.toMatchObject({ accepted: true, command: '/start', responseText: expect.stringContaining('Choose an incident') });
   });
 
+  it('emits structured Telegram channel telemetry from the real webhook path', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      const response = await request('/telegram/webhook', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(telegramStartUpdateFixture),
+      });
+
+      expect(response.status).toBe(200);
+      await response.json();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const events = logSpy.mock.calls
+        .map(([entry]) => {
+          if (typeof entry !== 'string') return null;
+          try {
+            return OperationalEventSchema.safeParse(JSON.parse(entry));
+          } catch {
+            return null;
+          }
+        })
+        .filter((result): result is { success: true; data: ReturnType<typeof OperationalEventSchema.parse> } => result?.success === true)
+        .map((result) => result.data);
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          event: 'operation.processed',
+          category: 'sync',
+          result: 'accepted',
+          channel: 'telegram',
+          scope: 'telegram.incident_join',
+          action: 'idle->awaitingIncident',
+          errorCode: null,
+          sampled: true,
+        }),
+      );
+      expect(logSpy.mock.calls.map((call) => call.join(' ')).join('\n')).not.toMatch(/24001|Webhook|chat|from|text|token|fingerprint/i);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
   it('drives Telegram webhook updates through the real incident join flow', async () => {
     const telegramUserId = 24001;
     const baseUpdate = {
       update_id: 24001,
-      message: {
-        message_id: 1,
-        chat: { id: telegramUserId, type: 'private' },
-        from: { id: telegramUserId, is_bot: false, first_name: 'Webhook' },
-      },
+      message: { message_id: 1, chat: { id: telegramUserId, type: 'private' }, from: { id: telegramUserId, is_bot: false, first_name: 'Webhook' } },
     };
 
     const postTelegramMessage = async (text: string) => {
@@ -452,11 +499,7 @@ describe('api worker', () => {
     expect(firstUpdatedAtMs).toBeGreaterThanOrEqual(beforeFirstStateMs);
     expect(firstExpiresAtMs).toBeGreaterThan(Date.now());
 
-    await expect(postTelegramMessage('1')).resolves.toMatchObject({
-      accepted: true,
-      command: null,
-      responseText: expect.stringContaining('What pseudonym'),
-    });
+    await expect(postTelegramMessage('1')).resolves.toMatchObject({ accepted: true, command: null, responseText: expect.stringContaining('What pseudonym') });
 
     const refreshedState = await (env as Env).DB.prepare(
       'SELECT step, updated_at AS updatedAt, expires_at AS expiresAt FROM telegram_conversation_states WHERE state_key = ?',
@@ -474,11 +517,7 @@ describe('api worker', () => {
     });
 
     const joined = await postTelegramMessage('1');
-    expect(joined).toMatchObject({
-      accepted: true,
-      command: null,
-      responseText: expect.stringContaining('Joined Zona Cero Demo Incident as volunteer.'),
-    });
+    expect(joined).toMatchObject({ accepted: true, command: null, responseText: expect.stringContaining('Joined Zona Cero Demo Incident as volunteer.') });
 
     const externalId = String(telegramUserId);
     const channelIdentityId = `chid_telegram_${externalId}`;
@@ -506,11 +545,7 @@ describe('api worker', () => {
     await request('/incidents/incident-zc-demo/join', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        ...telegramIncidentJoinRequestFixture,
-        externalId: String(telegramUserId),
-        displayName: 'Work Center Reporter',
-      }),
+      body: JSON.stringify({ ...telegramIncidentJoinRequestFixture, externalId: String(telegramUserId), displayName: 'Work Center Reporter' }),
     });
 
     await expect(postTelegramMessage(telegramUserId, '/workcenter', 'Reporter')).resolves.toMatchObject({
@@ -538,22 +573,11 @@ describe('api worker', () => {
     });
 
     const created = await postTelegramMessage(telegramUserId, 'yes', 'Reporter');
-    expect(created).toMatchObject({
-      accepted: true,
-      command: null,
-      responseText: expect.stringContaining('Work center reported: Telegram staging center.'),
-    });
+    expect(created).toMatchObject({ accepted: true, command: null, responseText: expect.stringContaining('Work center reported: Telegram staging center.') });
 
     const workCenterId = `wc_incident-zc-demo_telegram_${telegramUserId}_Telegram-staging-center`;
-    const detail = WorkCenterDetailResponseSchema.parse(
-      await (await request(`/incidents/incident-zc-demo/work-centers/${workCenterId}`)).json(),
-    );
-    expect(detail.workCenter).toMatchObject({
-      workCenterId,
-      name: 'Telegram staging center',
-      sourceChannel: 'telegram',
-      signalCount: 1,
-    });
+    const detail = WorkCenterDetailResponseSchema.parse(await (await request(`/incidents/incident-zc-demo/work-centers/${workCenterId}`)).json());
+    expect(detail.workCenter).toMatchObject({ workCenterId, name: 'Telegram staging center', sourceChannel: 'telegram', signalCount: 1 });
 
     const terminalState = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM telegram_conversation_states WHERE state_key = ?')
       .bind(stateKey)
@@ -561,13 +585,8 @@ describe('api worker', () => {
     expect(terminalState?.count).toBe(0);
   });
 
-
   [
-    {
-      name: 'missing',
-      arrange: async () => {},
-      expected: 'Channel limitation: backend freshness is missing for this scope.',
-    },
+    { name: 'missing', arrange: async () => {}, expected: 'Channel limitation: backend freshness is missing for this scope.' },
     {
       name: 'stale',
       arrange: async () => seedTelegramFreshnessChange('op-telegram-stale', new Date(Date.now() - 20 * 60 * 1000).toISOString()),
@@ -593,11 +612,7 @@ describe('api worker', () => {
       await request('/incidents/incident-zc-demo/join', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          ...telegramIncidentJoinRequestFixture,
-          externalId: String(telegramUserId),
-          displayName: `Freshness Reporter ${index}`,
-        }),
+        body: JSON.stringify({ ...telegramIncidentJoinRequestFixture, externalId: String(telegramUserId), displayName: `Freshness Reporter ${index}` }),
       });
       await testCase.arrange();
 
@@ -625,11 +640,7 @@ describe('api worker', () => {
     await postTelegramMessage(telegramUserId, 'Unjoined staging center', 'NoMember');
 
     const denied = await postTelegramMessage(telegramUserId, 'yes', 'NoMember');
-    expect(denied).toMatchObject({
-      accepted: true,
-      command: null,
-      responseText: expect.stringContaining('Permission denied'),
-    });
+    expect(denied).toMatchObject({ accepted: true, command: null, responseText: expect.stringContaining('Permission denied') });
     expect(denied.responseText).toContain('Join this incident first with /start');
 
     const clearedWorkCenterState = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM telegram_conversation_states WHERE state_key = ?')
@@ -654,15 +665,9 @@ describe('api worker', () => {
     });
 
     const joined = await postTelegramMessage(telegramUserId, '1', 'NoMember');
-    expect(joined).toMatchObject({
-      accepted: true,
-      command: null,
-      responseText: expect.stringContaining('Joined Zona Cero Demo Incident as volunteer.'),
-    });
+    expect(joined).toMatchObject({ accepted: true, command: null, responseText: expect.stringContaining('Joined Zona Cero Demo Incident as volunteer.') });
 
-    const membership = await (env as Env).DB.prepare(
-      'SELECT role FROM incident_memberships WHERE incident_id = ? AND channel_identity_id = ?',
-    )
+    const membership = await (env as Env).DB.prepare('SELECT role FROM incident_memberships WHERE incident_id = ? AND channel_identity_id = ?')
       .bind('incident-zc-demo', `chid_telegram_${telegramUserId}`)
       .first<{ role: string }>();
     expect(membership).toMatchObject({ role: 'volunteer' });
@@ -698,11 +703,7 @@ describe('api worker', () => {
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      accepted: true,
-      command: '/start',
-      responseText: expect.stringContaining('incident-zc-demo'),
-    });
+    await expect(response.json()).resolves.toMatchObject({ accepted: true, command: '/start', responseText: expect.stringContaining('incident-zc-demo') });
 
     const repairedState = await (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?')
       .bind(stateKey)
@@ -743,11 +744,7 @@ describe('api worker', () => {
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      accepted: true,
-      command: '/start',
-      responseText: expect.stringContaining('incident-zc-demo'),
-    });
+    await expect(response.json()).resolves.toMatchObject({ accepted: true, command: '/start', responseText: expect.stringContaining('incident-zc-demo') });
 
     const repairedState = await (env as Env).DB.prepare(
       'SELECT step, created_at AS createdAt, updated_at AS updatedAt, expires_at AS expiresAt FROM telegram_conversation_states WHERE state_key = ?',
@@ -790,11 +787,7 @@ describe('api worker', () => {
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      accepted: true,
-      command: '/start',
-      responseText: expect.stringContaining('incident-zc-demo'),
-    });
+    await expect(response.json()).resolves.toMatchObject({ accepted: true, command: '/start', responseText: expect.stringContaining('incident-zc-demo') });
 
     const repairedState = await (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?')
       .bind(stateKey)
@@ -889,11 +882,7 @@ describe('api worker', () => {
 
   it('caps family private link TTL and max uses server-side', async () => {
     const requestedAt = Date.now();
-    const issued = await issueFamilyReunificationLink({
-      ttlSeconds: 86_400,
-      maxUses: 5,
-      correlationId: 'corr-family-policy-cap',
-    });
+    const issued = await issueFamilyReunificationLink({ ttlSeconds: 86_400, maxUses: 5, correlationId: 'corr-family-policy-cap' });
 
     expect(issued.maxUses).toBe(1);
     expect(Date.parse(issued.expiresAt)).toBeLessThanOrEqual(requestedAt + 910 * 1000);
@@ -931,12 +920,7 @@ describe('api worker', () => {
     });
     expect(active.status).toBe(200);
     const activeBody = PrivateWebLinkValidateResponseSchema.parse(await active.json());
-    expect(activeBody).toMatchObject({
-      valid: true,
-      linkId: issued.linkId,
-      nextAction: 'in_person_verification',
-      remainingUses: 1,
-    });
+    expect(activeBody).toMatchObject({ valid: true, linkId: issued.linkId, nextAction: 'in_person_verification', remainingUses: 1 });
 
     const mismatch = await request('/private-links/validate', {
       method: 'POST',
@@ -949,10 +933,7 @@ describe('api worker', () => {
     const consume = await request('/private-links/consume', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        ...validatePayload,
-        referralReason: 'family_reunification_in_person_verification',
-      }),
+      body: JSON.stringify({ ...validatePayload, referralReason: 'family_reunification_in_person_verification' }),
     });
     expect(consume.status).toBe(200);
     const consumeBody = PrivateWebLinkConsumeResponseSchema.parse(await consume.json());
@@ -967,7 +948,9 @@ describe('api worker', () => {
     expect(consumed.status).toBe(410);
     await expect(consumed.json()).resolves.toEqual({ error: 'link_expired' });
 
-    const attempts = await (env as Env).DB.prepare('SELECT result, error_code AS errorCode, ip_hash AS ipHash, user_agent_hash AS userAgentHash FROM private_web_link_attempts WHERE link_id = ? ORDER BY created_at ASC')
+    const attempts = await (env as Env).DB.prepare(
+      'SELECT result, error_code AS errorCode, ip_hash AS ipHash, user_agent_hash AS userAgentHash FROM private_web_link_attempts WHERE link_id = ? ORDER BY created_at ASC',
+    )
       .bind(issued.linkId)
       .all<{ result: string; errorCode: string | null; ipHash: string | null; userAgentHash: string | null }>();
     expect(attempts.results.map((attempt) => attempt.result)).toContain('accepted');
@@ -1088,12 +1071,168 @@ describe('api worker', () => {
         fingerprint: 'browser-fingerprint-abuse',
       }),
     });
-    expect(limited.status).toBe(403);
-    await expect(limited.json()).resolves.toEqual({ error: 'permission_denied' });
+    expect(limited.status).toBe(429);
+    await expect(limited.json()).resolves.toEqual({ error: 'rate_limited' });
 
-    const attempts = await (env as Env).DB.prepare("SELECT COUNT(*) AS count FROM private_web_link_attempts WHERE fingerprint_hash IS NOT NULL AND result = 'rejected'")
-      .first<{ count: number }>();
-    expect(attempts?.count).toBeGreaterThanOrEqual(7);
+    const attempts = await (env as Env).DB.prepare(
+      "SELECT COUNT(*) AS count FROM private_web_link_attempts WHERE fingerprint_hash IS NOT NULL AND result = 'rejected'",
+    ).first<{ count: number }>();
+    expect(attempts?.count).toBeGreaterThanOrEqual(6);
+
+    const rateLimitAudit = await (env as Env).DB.prepare(
+      "SELECT event_type AS eventType, result, error_code AS errorCode, metadata_json AS metadataJson FROM operational_audit_events WHERE scope = 'private_link.validate' AND error_code = 'rate_limited'",
+    ).first<{ eventType: string; result: string; errorCode: string; metadataJson: string }>();
+    expect(rateLimitAudit).toMatchObject({ eventType: 'rate_limit.checked', result: 'rejected', errorCode: 'rate_limited' });
+    expect(rateLimitAudit?.metadataJson).not.toContain('browser-fingerprint-abuse');
+  });
+
+  it('does not block private link validation when operational audit persistence fails', async () => {
+    const link = await issueFamilyReunificationLink({ correlationId: 'corr-audit-insert-fails' });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const prepareSpy = mockOperationalAuditInsertFailure();
+    try {
+      const response = await request('/private-links/validate', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          token: link.token,
+          scope: 'family_reunification.search',
+          correlationId: link.correlationId,
+          fingerprint: 'browser-fingerprint-audit-fails',
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(PrivateWebLinkValidateResponseSchema.parse(await response.json()).valid).toBe(true);
+    } finally {
+      prepareSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('writes minimized operational audit without raw private-link secrets', async () => {
+    const link = await issueFamilyReunificationLink({ correlationId: 'corr-audit-minimized' });
+    const response = await request('/private-links/validate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'user-agent': 'Sensitive Browser Agent' },
+      body: JSON.stringify({
+        token: link.token,
+        scope: 'family_reunification.search',
+        correlationId: link.correlationId,
+        fingerprint: 'raw-browser-fingerprint-secret',
+      }),
+    });
+    expect(response.status).toBe(200);
+
+    const audits = await (env as Env).DB.prepare(
+      "SELECT event_type AS eventType, subject_ref_hash AS subjectRefHash, metadata_json AS metadataJson FROM operational_audit_events WHERE scope = 'family_reunification.search'",
+    ).all<{ eventType: string; subjectRefHash: string | null; metadataJson: string }>();
+    const serialized = JSON.stringify(audits.results);
+    expect(serialized).toContain('private_link.attempted');
+    expect(serialized).not.toContain(link.token);
+    expect(serialized).not.toContain('raw-browser-fingerprint-secret');
+    expect(serialized).not.toContain('Sensitive Browser Agent');
+    expect(audits.results.some((row) => row.subjectRefHash && row.subjectRefHash.length === 64)).toBe(true);
+  });
+
+  it('keeps structured sync logs minimized without operation identifiers or payloads', async () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    let logged = '';
+    try {
+      const response = await request('/sync/push', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ operations: [createSignedOperationFixture({ opId: 'op-secret-log-id' })] }),
+      });
+      expect(response.status).toBe(200);
+      logged = spy.mock.calls.map((call) => String(call[0])).join('\n');
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(logged).toContain('operation.processed');
+    expect(logged).not.toContain('op-secret-log-id');
+    expect(logged).not.toContain('incident-fixture');
+    expect(logged).not.toMatch(/payload|signature|fingerprint|token/i);
+  });
+
+  it('allows Turnstile siteverify network failures in observe rollout', async () => {
+    const link = await issueFamilyReunificationLink({ correlationId: 'corr-turnstile-observe-fetch-fails' });
+    const mutableEnv = env as Env;
+    const previousRollout = mutableEnv.TURNSTILE_ROLLOUT;
+    const previousSecret = mutableEnv.TURNSTILE_SECRET_KEY;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('siteverify unavailable'));
+    mutableEnv.TURNSTILE_ROLLOUT = 'observe';
+    mutableEnv.TURNSTILE_SECRET_KEY = 'test-secret';
+    try {
+      const response = await request('/private-links/family-reunification/search', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-turnstile-token': 'test-token' },
+        body: JSON.stringify({
+          token: link.token,
+          correlationId: link.correlationId,
+          fingerprint: 'turnstile-observe-fetch-fails',
+          query: { ageBand: 'adult' },
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(FamilyReunificationSearchResponseSchema.parse(await response.json()).matches).toHaveLength(1);
+    } finally {
+      fetchSpy.mockRestore();
+      mutableEnv.TURNSTILE_ROLLOUT = previousRollout;
+      mutableEnv.TURNSTILE_SECRET_KEY = previousSecret;
+    }
+  });
+
+  it('fails closed when Turnstile siteverify rejects in enforce rollout', async () => {
+    const link = await issueFamilyReunificationLink({ correlationId: 'corr-turnstile-enforce-fetch-fails' });
+    const mutableEnv = env as Env;
+    const previousRollout = mutableEnv.TURNSTILE_ROLLOUT;
+    const previousSecret = mutableEnv.TURNSTILE_SECRET_KEY;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('siteverify unavailable'));
+    mutableEnv.TURNSTILE_ROLLOUT = 'enforce';
+    mutableEnv.TURNSTILE_SECRET_KEY = 'test-secret';
+    try {
+      const response = await request('/private-links/family-reunification/search', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-turnstile-token': 'test-token' },
+        body: JSON.stringify({
+          token: link.token,
+          correlationId: link.correlationId,
+          fingerprint: 'turnstile-enforce-fetch-fails',
+          query: { ageBand: 'adult' },
+        }),
+      });
+
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toEqual({ error: 'turnstile_failed' });
+    } finally {
+      fetchSpy.mockRestore();
+      mutableEnv.TURNSTILE_ROLLOUT = previousRollout;
+      mutableEnv.TURNSTILE_SECRET_KEY = previousSecret;
+    }
+  });
+
+  it('requires Turnstile only when enforcement is explicitly configured', async () => {
+    const link = await issueFamilyReunificationLink({ correlationId: 'corr-turnstile-enforced' });
+    const mutableEnv = env as Env;
+    const previousRollout = mutableEnv.TURNSTILE_ROLLOUT;
+    const previousSecret = mutableEnv.TURNSTILE_SECRET_KEY;
+    mutableEnv.TURNSTILE_ROLLOUT = 'enforce';
+    mutableEnv.TURNSTILE_SECRET_KEY = 'test-secret';
+    try {
+      const challenged = await request('/private-links/family-reunification/search', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token: link.token, correlationId: link.correlationId, fingerprint: 'turnstile-fingerprint', query: { ageBand: 'adult' } }),
+      });
+      expect(challenged.status).toBe(403);
+      await expect(challenged.json()).resolves.toEqual({ error: 'security_challenge_required' });
+    } finally {
+      mutableEnv.TURNSTILE_ROLLOUT = previousRollout;
+      mutableEnv.TURNSTILE_SECRET_KEY = previousSecret;
+    }
   });
 
   it('creates connected-channel work centers for joined identities', async () => {
@@ -1112,13 +1251,7 @@ describe('api worker', () => {
     expect(response.status).toBe(200);
     const body = WorkCenterCreateResponseSchema.parse(await response.json());
     expect(body).toMatchObject({
-      workCenter: {
-        name: 'North triage point',
-        sourceChannel: 'telegram',
-        activationState: 'pending_corroboration',
-        status: 'reported',
-        signalCount: 1,
-      },
+      workCenter: { name: 'North triage point', sourceChannel: 'telegram', activationState: 'pending_corroboration', status: 'reported', signalCount: 1 },
       idempotent: false,
     });
 
@@ -1129,14 +1262,24 @@ describe('api worker', () => {
   });
 
   it('rejects connected-channel work center creation for non-members', async () => {
-    const response = await request('/incidents/incident-zc-demo/work-centers', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(telegramWorkCenterCreateRequestFixture),
-    });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    let logged = '';
+    let response!: Response;
+    try {
+      response = await request('/incidents/incident-zc-demo/work-centers', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(telegramWorkCenterCreateRequestFixture),
+      });
+      logged = logSpy.mock.calls.map((call) => String(call[0])).join('\n');
+    } finally {
+      logSpy.mockRestore();
+    }
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({ error: 'permission_denied' });
+    expect(logged).toContain('"errorCode":"permission_denied"');
+    expect(logged).not.toContain('"errorCode":"rate_limited"');
   });
 
   it('returns 404 for missing incidents', async () => {
@@ -1183,13 +1326,7 @@ describe('api worker', () => {
         'incident-zc-demo',
         channelIdentityId,
         'volunteer',
-        JSON.stringify({
-          canReadIncident: true,
-          canJoinIncident: true,
-          canManageIncident: false,
-          canManageLogistics: false,
-          canManageMedical: false,
-        }),
+        JSON.stringify({ canReadIncident: true, canJoinIncident: true, canManageIncident: false, canManageLogistics: false, canManageMedical: false }),
       )
       .run();
 
@@ -1203,11 +1340,7 @@ describe('api worker', () => {
 
     expect(response.status).toBe(200);
     const body = IncidentJoinResponseSchema.parse(await response.json());
-    expect(body).toMatchObject({
-      membership: { incidentMembershipId },
-      audit: { auditEventId },
-      idempotent: true,
-    });
+    expect(body).toMatchObject({ membership: { incidentMembershipId }, audit: { auditEventId }, idempotent: true });
 
     const audit = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM audit_events WHERE audit_event_id = ?')
       .bind(body.audit.auditEventId)
@@ -1265,18 +1398,20 @@ describe('api worker', () => {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        operations: [{
-          ...createSignedOperationFixture({
-            opId: 'op-resource-surplus-1',
-            incidentId: 'incident-zc-demo',
-            cellId: 'connected-telegram',
-            entityId: 'rr-surplus-water-1',
-            entityType: 'resource_report',
-            opType: 'resource_report.create',
-            payload: { category: 'water', quantityApprox: '30 boxes', urgency: 'medium', constraints: [], reportKind: 'surplus' },
-          }),
-          syncState: 'pending',
-        }],
+        operations: [
+          {
+            ...createSignedOperationFixture({
+              opId: 'op-resource-surplus-1',
+              incidentId: 'incident-zc-demo',
+              cellId: 'connected-telegram',
+              entityId: 'rr-surplus-water-1',
+              entityType: 'resource_report',
+              opType: 'resource_report.create',
+              payload: { category: 'water', quantityApprox: '30 boxes', urgency: 'medium', constraints: [], reportKind: 'surplus' },
+            }),
+            syncState: 'pending',
+          },
+        ],
       }),
     });
 
@@ -1333,8 +1468,16 @@ describe('api worker', () => {
       }),
       syncState: 'pending',
     };
-    const first = await request('/sync/push', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operations: [createOperation] }) });
-    const duplicate = await request('/sync/push', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operations: [createOperation] }) });
+    const first = await request('/sync/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ operations: [createOperation] }),
+    });
+    const duplicate = await request('/sync/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ operations: [createOperation] }),
+    });
     expect(SyncPushResponseSchema.parse(await first.json()).results[0]).toMatchObject({ status: 'accepted' });
     expect(SyncPushResponseSchema.parse(await duplicate.json()).results[0]).toMatchObject({ status: 'accepted' });
 
@@ -1342,11 +1485,7 @@ describe('api worker', () => {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        operations: [{
-          ...createOperation,
-          opId: 'op-dispatch-create-conflict-1',
-          payload: { category: 'medical', quantityApprox: '12 kits' },
-        }],
+        operations: [{ ...createOperation, opId: 'op-dispatch-create-conflict-1', payload: { category: 'medical', quantityApprox: '12 kits' } }],
       }),
     });
     expect(SyncPushResponseSchema.parse(await conflict.json()).results[0]).toMatchObject({
@@ -1368,7 +1507,17 @@ describe('api worker', () => {
     const update = await request('/sync/push', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ operations: [{ ...createOperation, opId: 'op-dispatch-update-1', entityId: 'dt-mobile-water-1', opType: 'dispatch_event.update', payload: { dispatchTaskId: 'dt-mobile-water-1', status: 'delivered' } }] }),
+      body: JSON.stringify({
+        operations: [
+          {
+            ...createOperation,
+            opId: 'op-dispatch-update-1',
+            entityId: 'dt-mobile-water-1',
+            opType: 'dispatch_event.update',
+            payload: { dispatchTaskId: 'dt-mobile-water-1', status: 'delivered' },
+          },
+        ],
+      }),
     });
     expect(SyncPushResponseSchema.parse(await update.json()).results[0]).toMatchObject({ status: 'accepted' });
     const list = DispatchTaskListResponseSchema.parse(await (await request('/incidents/incident-zc-demo/dispatch-tasks')).json());
@@ -1427,11 +1576,7 @@ describe('api worker', () => {
     await request('/incidents/incident-zc-demo/join', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        ...telegramIncidentJoinRequestFixture,
-        externalId: String(telegramUserId),
-        displayName: 'Family Reporter',
-      }),
+      body: JSON.stringify({ ...telegramIncidentJoinRequestFixture, externalId: String(telegramUserId), displayName: 'Family Reporter' }),
     });
 
     await expect(postTelegramMessage(telegramUserId, '/familia', 'Family')).resolves.toMatchObject({
@@ -1461,13 +1606,10 @@ describe('api worker', () => {
        FROM private_web_links l
        JOIN channel_identities i ON i.channel_identity_id = l.channel_identity_id
        WHERE i.external_id = ?`,
-    ).bind(String(telegramUserId)).first<{ scope: string; maxUses: number; correlationId: string; channel: string; externalId: string; metadataJson: string }>();
-    expect(issued).toMatchObject({
-      scope: 'family_reunification.search',
-      maxUses: 1,
-      channel: 'telegram',
-      externalId: String(telegramUserId),
-    });
+    )
+      .bind(String(telegramUserId))
+      .first<{ scope: string; maxUses: number; correlationId: string; channel: string; externalId: string; metadataJson: string }>();
+    expect(issued).toMatchObject({ scope: 'family_reunification.search', maxUses: 1, channel: 'telegram', externalId: String(telegramUserId) });
     expect(issued?.correlationId).toMatch(/^telegram-family-incident-zc-demo-/);
     expect(JSON.parse(issued?.metadataJson ?? '{}')).toMatchObject({ returnState: 'web:family-reunification:search' });
   });
@@ -1492,11 +1634,7 @@ describe('api worker', () => {
     await request('/incidents/incident-zc-demo/join', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        ...telegramIncidentJoinRequestFixture,
-        externalId: String(telegramUserId),
-        displayName: 'SOS Reporter',
-      }),
+      body: JSON.stringify({ ...telegramIncidentJoinRequestFixture, externalId: String(telegramUserId), displayName: 'SOS Reporter' }),
     });
 
     await expect(postTelegramMessage(telegramUserId, '/sos', 'SOS')).resolves.toMatchObject({
@@ -1521,10 +1659,7 @@ describe('api worker', () => {
     expect(persistedRequest.request?.payload?.reportedAt).toEqual(expect.any(String));
 
     const created = await postTelegramMessage(telegramUserId, 'CONFIRM SOS', 'SOS');
-    expect(created).toMatchObject({
-      accepted: true,
-      responseText: expect.stringContaining('Backend recording confirmed only'),
-    });
+    expect(created).toMatchObject({ accepted: true, responseText: expect.stringContaining('Backend recording confirmed only') });
 
     await expect(
       (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?').bind(stateKey).first<{ step: string }>(),
@@ -1576,26 +1711,20 @@ describe('api worker', () => {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        operations: [{
-          ...validSosCreateOperationFixture,
-          payload: { ...validSosCreateOperationFixture.payload, message: 'Changed critical details' },
-        }],
+        operations: [{ ...validSosCreateOperationFixture, payload: { ...validSosCreateOperationFixture.payload, message: 'Changed critical details' } }],
       }),
     });
     const entityConflict = await request('/sync/push', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        operations: [{
-          ...validSosCreateOperationFixture,
-          opId: 'op-sos-create-conflict-entity',
-        }],
-      }),
+      body: JSON.stringify({ operations: [{ ...validSosCreateOperationFixture, opId: 'op-sos-create-conflict-entity' }] }),
     });
     const invalidPayload = await request('/sync/push', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ operations: [{ ...validSosCreateOperationFixture, opId: 'op-sos-invalid', entityId: 'sos-invalid', payload: { severity: 'handled' } }] }),
+      body: JSON.stringify({
+        operations: [{ ...validSosCreateOperationFixture, opId: 'op-sos-invalid', entityId: 'sos-invalid', payload: { severity: 'handled' } }],
+      }),
     });
     const cancel = await request('/sync/push', {
       method: 'POST',
@@ -1605,9 +1734,21 @@ describe('api worker', () => {
 
     expect(SyncPushResponseSchema.parse(await first.json()).results[0]).toMatchObject({ opId: 'op-sos-create-1', status: 'accepted' });
     expect(SyncPushResponseSchema.parse(await duplicate.json()).results[0]).toMatchObject({ opId: 'op-sos-create-1', status: 'accepted' });
-    expect(SyncPushResponseSchema.parse(await sameOpConflict.json()).results[0]).toMatchObject({ opId: 'op-sos-create-1', status: 'rejected', code: 'operation_conflict' });
-    expect(SyncPushResponseSchema.parse(await entityConflict.json()).results[0]).toMatchObject({ opId: 'op-sos-create-conflict-entity', status: 'rejected', code: 'operation_conflict' });
-    expect(SyncPushResponseSchema.parse(await invalidPayload.json()).results[0]).toMatchObject({ opId: 'op-sos-invalid', status: 'rejected', code: 'invalid_payload' });
+    expect(SyncPushResponseSchema.parse(await sameOpConflict.json()).results[0]).toMatchObject({
+      opId: 'op-sos-create-1',
+      status: 'rejected',
+      code: 'operation_conflict',
+    });
+    expect(SyncPushResponseSchema.parse(await entityConflict.json()).results[0]).toMatchObject({
+      opId: 'op-sos-create-conflict-entity',
+      status: 'rejected',
+      code: 'operation_conflict',
+    });
+    expect(SyncPushResponseSchema.parse(await invalidPayload.json()).results[0]).toMatchObject({
+      opId: 'op-sos-invalid',
+      status: 'rejected',
+      code: 'invalid_payload',
+    });
     expect(SyncPushResponseSchema.parse(await cancel.json()).results[0]).toMatchObject({ opId: 'op-sos-cancel-1', status: 'accepted' });
 
     const list = SosAlertStatusResponseSchema.parse(await (await request('/incidents/incident-zc-demo/sos')).json());
@@ -1623,11 +1764,7 @@ describe('api worker', () => {
       body: JSON.stringify(mobileSosCancelSyncPushFixture),
     });
 
-    expect(SyncPushResponseSchema.parse(await response.json()).results[0]).toMatchObject({
-      opId: 'op-sos-cancel-1',
-      status: 'rejected',
-      code: 'not_found',
-    });
+    expect(SyncPushResponseSchema.parse(await response.json()).results[0]).toMatchObject({ opId: 'op-sos-cancel-1', status: 'rejected', code: 'not_found' });
   });
 
   it('drives Telegram webhook /resource through persisted state and clears terminal state', async () => {
@@ -1635,11 +1772,7 @@ describe('api worker', () => {
     await request('/incidents/incident-zc-demo/join', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        ...telegramIncidentJoinRequestFixture,
-        externalId: String(telegramUserId),
-        displayName: 'Resource Reporter',
-      }),
+      body: JSON.stringify({ ...telegramIncidentJoinRequestFixture, externalId: String(telegramUserId), displayName: 'Resource Reporter' }),
     });
 
     await expect(postTelegramMessage(telegramUserId, '/resource', 'Resource')).resolves.toMatchObject({
@@ -1654,19 +1787,23 @@ describe('api worker', () => {
     ).resolves.toMatchObject({ step: 'awaitingIncident' });
 
     await expect(postTelegramMessage(telegramUserId, '1', 'Resource')).resolves.toMatchObject({ responseText: expect.stringContaining('needed or surplus') });
-    await expect(postTelegramMessage(telegramUserId, 'needed', 'Resource')).resolves.toMatchObject({ responseText: expect.stringContaining('resource category') });
-    await expect(postTelegramMessage(telegramUserId, 'water', 'Resource')).resolves.toMatchObject({ responseText: expect.stringContaining('approximate quantity') });
+    await expect(postTelegramMessage(telegramUserId, 'needed', 'Resource')).resolves.toMatchObject({
+      responseText: expect.stringContaining('resource category'),
+    });
+    await expect(postTelegramMessage(telegramUserId, 'water', 'Resource')).resolves.toMatchObject({
+      responseText: expect.stringContaining('approximate quantity'),
+    });
     await expect(postTelegramMessage(telegramUserId, '20 boxes', 'Resource')).resolves.toMatchObject({ responseText: expect.stringContaining('urgency') });
-    await expect(postTelegramMessage(telegramUserId, 'high', 'Resource')).resolves.toMatchObject({ responseText: expect.stringContaining('optional restrictions') });
+    await expect(postTelegramMessage(telegramUserId, 'high', 'Resource')).resolves.toMatchObject({
+      responseText: expect.stringContaining('optional restrictions'),
+    });
     await expect(postTelegramMessage(telegramUserId, 'sealed', 'Resource')).resolves.toMatchObject({ responseText: expect.stringContaining('work center id') });
-    await expect(postTelegramMessage(telegramUserId, 'skip', 'Resource')).resolves.toMatchObject({ responseText: expect.stringContaining('Confirm resource report') });
+    await expect(postTelegramMessage(telegramUserId, 'skip', 'Resource')).resolves.toMatchObject({
+      responseText: expect.stringContaining('Confirm resource report'),
+    });
 
     const created = await postTelegramMessage(telegramUserId, 'yes', 'Resource');
-    expect(created).toMatchObject({
-      accepted: true,
-      command: null,
-      responseText: expect.stringContaining('Resource needed reported: water (20 boxes).'),
-    });
+    expect(created).toMatchObject({ accepted: true, command: null, responseText: expect.stringContaining('Resource needed reported: water (20 boxes).') });
 
     const list = ResourceReportListResponseSchema.parse(await (await request('/incidents/incident-zc-demo/resource-reports')).json());
     expect(list.resourceReports[0]).toMatchObject({ category: 'water', reportKind: 'needed', sourceChannel: 'telegram' });
@@ -1682,11 +1819,7 @@ describe('api worker', () => {
     await request('/incidents/incident-zc-demo/join', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        ...telegramIncidentJoinRequestFixture,
-        externalId: String(telegramUserId),
-        displayName: 'Dispatch Reporter',
-      }),
+      body: JSON.stringify({ ...telegramIncidentJoinRequestFixture, externalId: String(telegramUserId), displayName: 'Dispatch Reporter' }),
     });
 
     const create = await request('/incidents/incident-zc-demo/dispatch-tasks', {
@@ -1711,16 +1844,16 @@ describe('api worker', () => {
       (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?').bind(stateKey).first<{ step: string }>(),
     ).resolves.toMatchObject({ step: 'awaitingIncident' });
 
-    await expect(postTelegramMessage(telegramUserId, '1', 'Dispatch')).resolves.toMatchObject({ responseText: expect.stringContaining('Choose a dispatch task') });
+    await expect(postTelegramMessage(telegramUserId, '1', 'Dispatch')).resolves.toMatchObject({
+      responseText: expect.stringContaining('Choose a dispatch task'),
+    });
     await expect(postTelegramMessage(telegramUserId, '1', 'Dispatch')).resolves.toMatchObject({ responseText: expect.stringContaining('new status') });
-    await expect(postTelegramMessage(telegramUserId, 'en_route', 'Dispatch')).resolves.toMatchObject({ responseText: expect.stringContaining('Confirm dispatch task update') });
+    await expect(postTelegramMessage(telegramUserId, 'en_route', 'Dispatch')).resolves.toMatchObject({
+      responseText: expect.stringContaining('Confirm dispatch task update'),
+    });
 
     const updated = await postTelegramMessage(telegramUserId, 'yes', 'Dispatch');
-    expect(updated).toMatchObject({
-      accepted: true,
-      command: null,
-      responseText: expect.stringContaining(`Dispatch task updated: ${task.dispatchTaskId}.`),
-    });
+    expect(updated).toMatchObject({ accepted: true, command: null, responseText: expect.stringContaining(`Dispatch task updated: ${task.dispatchTaskId}.`) });
 
     const list = DispatchTaskListResponseSchema.parse(await (await request('/incidents/incident-zc-demo/dispatch-tasks')).json());
     expect(list.dispatchTasks[0]).toMatchObject({ dispatchTaskId: task.dispatchTaskId, status: 'en_route' });

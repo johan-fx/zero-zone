@@ -193,4 +193,39 @@ describe('offline map pack foundation', () => {
     expect(preparation.unavailablePacks.map((pack) => pack.cellId)).toEqual(['cell-failed', 'cell-missing']);
     expect(preparation.continueCellIds).toEqual(['cell-update']);
   });
+
+  it('emits bucketed map lifecycle events without bounds or raw failure reasons', async () => {
+    const repository = new InMemoryMapPackRepository();
+    const events: unknown[] = [];
+    const service = new OfflineMapPackService(repository, { observabilitySink: { record: (event) => { events.push(event); } } });
+
+    const queued = await service.queuePack({ incidentId: 'incident-1', cellId: 'cell-a', bounds: downloadedPack.bounds, estimatedBytes: 42_000_000 });
+    await service.recordProgress(queued.packId, { downloadedBytes: 21_000_000, estimatedBytes: 42_000_000 });
+    await service.recordProgress(queued.packId, { downloadedBytes: 42_000_000, estimatedBytes: 42_000_000 });
+    await service.markFailed(queued.packId, 'native storage full near 41.387,2.168');
+
+    expect(events).toEqual([
+      expect.objectContaining({ mapPackState: 'queued', progressBucket: 0, estimatedBytesBucket: '10-50mb', downloadedBytesBucket: '0' }),
+      expect.objectContaining({ mapPackState: 'downloading', progressBucket: 50, estimatedBytesBucket: '10-50mb', downloadedBytesBucket: '10-50mb' }),
+      expect.objectContaining({ mapPackState: 'downloaded', progressBucket: 100, estimatedBytesBucket: '10-50mb', downloadedBytesBucket: '10-50mb' }),
+      expect.objectContaining({ mapPackState: 'partial', result: 'rejected', failureKind: 'unknown' }),
+    ]);
+    expect(JSON.stringify(events)).not.toContain('41.387');
+    expect(JSON.stringify(events)).not.toContain('2.168');
+    expect(JSON.stringify(events)).not.toContain('native storage full');
+    expect(JSON.stringify(events)).not.toContain('west');
+  });
+
+  it('does not block map operations when observability fails', async () => {
+    const repository = new InMemoryMapPackRepository();
+    const service = new OfflineMapPackService(repository, {
+      observabilitySink: { record: () => Promise.reject(new Error('telemetry unavailable')) },
+    });
+
+    const pack = await service.queuePack({ incidentId: 'incident-1', cellId: 'cell-a', bounds: downloadedPack.bounds, estimatedBytes: 42_000 });
+
+    expect(pack).toMatchObject({ state: 'queued' });
+    expect(await repository.findByPackId(pack.packId)).toEqual(expect.objectContaining({ state: 'queued' }));
+  });
+
 });

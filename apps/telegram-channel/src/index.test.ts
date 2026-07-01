@@ -822,3 +822,58 @@ describe('telegram channel flows', () => {
   });
 
 });
+
+
+describe('telegram channel telemetry', () => {
+  it('emits sanitized command telemetry without Telegram identifiers or message text', async () => {
+    const events: unknown[] = [];
+
+    const result = handleTelegramWebhookUpdate(telegramUserUpdate('/sos secret text'), {
+      telemetry: {
+        emit: (event) => {
+          events.push(event);
+        },
+      },
+    });
+
+    await Promise.resolve();
+
+    expect(result.accepted).toBe(true);
+    expect(events).toEqual([
+      expect.objectContaining({
+        event: 'operation.processed',
+        category: 'sync',
+        result: 'accepted',
+        channel: 'telegram',
+        scope: 'telegram.command',
+        action: '/sos',
+      }),
+    ]);
+    expect(JSON.stringify(events)).not.toContain('1001');
+    expect(JSON.stringify(events)).not.toContain('Field');
+    expect(JSON.stringify(events)).not.toContain('secret text');
+  });
+
+  it('does not block Telegram flow completion when telemetry sink fails', async () => {
+    const ports = createSosPorts({
+      telemetry: {
+        emit: vi.fn().mockRejectedValue(new Error('telemetry unavailable')),
+      },
+    });
+
+    const { state, responseText } = await advanceSos(['/sos', '1', 'CONFIRM SOS'], ports);
+    await Promise.resolve();
+
+    expect(state.step).toBe('submitted');
+    expect(responseText).toContain('Backend recording confirmed only');
+    expect(ports.telemetry?.emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'operation.processed',
+        channel: 'telegram',
+        scope: 'telegram.sos',
+        result: 'accepted',
+        action: 'awaitingConfirmation->submitted',
+      }),
+    );
+  });
+});

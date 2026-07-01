@@ -27,6 +27,9 @@ export const contractErrorCodes = [
   'link_expired',
   'invalid_link_scope',
   'link_correlation_mismatch',
+  'rate_limited',
+  'turnstile_failed',
+  'security_challenge_required',
 ] as const;
 
 export const ContractErrorCodeSchema = z.enum(contractErrorCodes);
@@ -129,6 +132,27 @@ export const contractErrorSemantics = {
     visibleMappingKey: {
       telegram: 'telegram.error.link_correlation_mismatch',
       web: 'web.error.link_correlation_mismatch',
+    },
+  },
+  rate_limited: {
+    meaning: 'The request exceeded a stable per-scope abuse-prevention limit and should be retried later.',
+    visibleMappingKey: {
+      telegram: 'telegram.error.rate_limited',
+      web: 'web.error.rate_limited',
+    },
+  },
+  turnstile_failed: {
+    meaning: 'The server-side Cloudflare Turnstile verification failed for a protected action.',
+    visibleMappingKey: {
+      telegram: 'telegram.error.turnstile_failed',
+      web: 'web.error.turnstile_failed',
+    },
+  },
+  security_challenge_required: {
+    meaning: 'The protected action requires a security challenge token before it can proceed.',
+    visibleMappingKey: {
+      telegram: 'telegram.error.security_challenge_required',
+      web: 'web.error.security_challenge_required',
     },
   },
 } as const satisfies Record<
@@ -250,6 +274,40 @@ export type SyncPushResponse = z.infer<typeof SyncPushResponseSchema>;
 export const channels = ['telegram', 'mobile', 'web-ui'] as const;
 export const ChannelSchema = z.enum(channels);
 export type Channel = z.infer<typeof ChannelSchema>;
+
+
+export const operationalEventTypes = [
+  'operational.audit.recorded',
+  'operation.processed',
+  'private_link.attempted',
+  'rate_limit.checked',
+  'turnstile.checked',
+  'security.challenge.required',
+] as const;
+export const OperationalEventTypeSchema = z.enum(operationalEventTypes);
+export type OperationalEventType = z.infer<typeof OperationalEventTypeSchema>;
+
+export const operationalEventCategories = ['audit', 'sync', 'security', 'rate_limit'] as const;
+export const OperationalEventCategorySchema = z.enum(operationalEventCategories);
+export type OperationalEventCategory = z.infer<typeof OperationalEventCategorySchema>;
+
+export const operationalEventResults = ['accepted', 'rejected', 'bypassed'] as const;
+export const OperationalEventResultSchema = z.enum(operationalEventResults);
+export type OperationalEventResult = z.infer<typeof OperationalEventResultSchema>;
+
+export const OperationalEventSchema = z.object({
+  event: OperationalEventTypeSchema,
+  category: OperationalEventCategorySchema,
+  result: OperationalEventResultSchema,
+  channel: ChannelSchema.nullable().optional(),
+  scope: z.string().min(1).max(128).optional(),
+  action: z.string().min(1).max(128).optional(),
+  opType: OperationTypeSchema.optional(),
+  errorCode: ContractErrorCodeSchema.nullable().optional(),
+  latencyMs: z.number().int().nonnegative().optional(),
+  sampled: z.boolean().default(true),
+}).strict();
+export type OperationalEvent = z.infer<typeof OperationalEventSchema>;
 
 export const syncFreshnessStatuses = ['fresh', 'stale', 'expired', 'missing'] as const;
 export const SyncFreshnessStatusSchema = z.enum(syncFreshnessStatuses);

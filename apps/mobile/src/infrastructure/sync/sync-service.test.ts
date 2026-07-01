@@ -176,4 +176,62 @@ describe('scoped operation sync service', () => {
     expect(await database.views.workCenters.findByIncident('incident-1')).toHaveLength(1);
     expect(await database.views.syncIssues.findByIncident('incident-1')).toEqual([expect.objectContaining({ state: 'conflict', entityId: 'center-2', code: 'operation_conflict' })]);
   });
+
+  it('emits aggregate sync observability metrics without raw error messages', async () => {
+    const { database, operation } = await seedOperation();
+    const events: unknown[] = [];
+    const service = createScopedOperationSyncService({
+      database,
+      client: {
+        push: jest.fn<Promise<SyncPushResponse>, any>().mockResolvedValue({
+          results: [{ opId: operation.opId, status: 'accepted', entityId: 'center-server-1', serverVersion: 7, serverUpdatedAt: '2026-06-29T09:02:00.000Z' }],
+        }),
+        pull: jest.fn<Promise<SyncPullResponse>, any>().mockResolvedValue(emptyPullResponse()),
+      },
+      clock: () => '2026-06-29T09:01:00.000Z',
+      nowMs: jest.fn().mockReturnValueOnce(1_000).mockReturnValueOnce(1_125),
+      observabilitySink: { record: (event) => { events.push(event); } },
+    });
+
+    await service.sync({ incidentId: 'incident-1', cellId: 'cell-a' });
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        event: 'operation.processed',
+        category: 'sync',
+        result: 'accepted',
+        channel: 'mobile',
+        scope: 'mobile.sync',
+        action: 'sync.completed',
+        pushed: 1,
+        pulled: 0,
+        confirmed: 1,
+        conflicts: 0,
+        rejected: 0,
+        durationMs: 125,
+        failureKind: 'none',
+      }),
+    ]);
+    expect(JSON.stringify(events)).not.toContain('Local center');
+    expect(JSON.stringify(events)).not.toContain('incident-1');
+    expect(JSON.stringify(events)).not.toContain('cell-a');
+  });
+
+  it('does not block retry handling when the observability sink fails', async () => {
+    const { database, operation } = await seedOperation();
+    const service = createScopedOperationSyncService({
+      database,
+      client: { push: jest.fn().mockRejectedValue(new Error('raw gateway message with token abc123')), pull: jest.fn() },
+      clock: () => '2026-06-29T09:01:00.000Z',
+      nowMs: jest.fn().mockReturnValueOnce(1_000).mockReturnValueOnce(1_050),
+      retryDelayMs: 1_000,
+      observabilitySink: { record: () => { throw new Error('telemetry unavailable'); } },
+    });
+
+    await expect(service.sync({ incidentId: 'incident-1', cellId: 'cell-a' })).rejects.toThrow('raw gateway message with token abc123');
+    expect(await database.syncOps.findByIncident('incident-1')).toEqual([
+      expect.objectContaining({ opId: operation.opId, syncState: 'pending', retryCount: 1, syncErrorCode: 'network_error' }),
+    ]);
+  });
+
 });

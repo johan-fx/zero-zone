@@ -2,6 +2,7 @@ import type { SignedOperation, SyncConflict, SyncPushResult } from '@zona-cero/c
 import type { LocalOperationDatabase, SyncIssueLocalView, SyncOperationLocalDocument } from '@/infrastructure/local-db/local-db';
 import { materializeOperations } from '@/infrastructure/oplog/materializer';
 import { isSignedOperation, replaceMaterializedOperationViews } from '@/infrastructure/oplog/outbox-service';
+import { createSyncObservabilityEvent, emitNativeOperationalEvent, type NativeObservabilitySink } from '@/infrastructure/observability';
 import type { ScopedSyncClient } from './sync-client';
 
 export type ScopedOperationSyncService = {
@@ -19,7 +20,9 @@ export type ScopedOperationSyncServiceOptions = {
   database: LocalOperationDatabase;
   client: ScopedSyncClient;
   clock?: () => string;
+  nowMs?: () => number;
   retryDelayMs?: number;
+  observabilitySink?: NativeObservabilitySink;
 };
 
 export type ScopedSyncResult = {
@@ -35,63 +38,111 @@ export type ScopedSyncResult = {
 export function createScopedOperationSyncService(options: ScopedOperationSyncServiceOptions): ScopedOperationSyncService {
   const clock = options.clock ?? (() => new Date().toISOString());
   const retryDelayMs = options.retryDelayMs ?? 30_000;
+  const nowMs = options.nowMs ?? (() => Date.now());
 
   return {
     async sync(input) {
+      const startedAt = nowMs();
       const pendingOperations = await listPushableOperations(options.database, input);
       const attemptAt = clock();
-
-      if (pendingOperations.length > 0) {
-        await Promise.all(pendingOperations.map((operation) => markOperationSent(options.database, operation, attemptAt)));
-      }
-
       let confirmed = 0;
       let conflicts = 0;
       let rejected = 0;
+      let pulled = 0;
+      let failureAlreadyObserved = false;
 
       try {
         if (pendingOperations.length > 0) {
-          const pushResponse = await options.client.push({ ...input, operations: pendingOperations, cursor: input.cursor ?? null });
-
-          for (const result of pushResponse.results) {
-            const applied = await applyPushResult(options.database, pendingOperations, result, clock());
-            confirmed += applied.confirmed;
-            conflicts += applied.conflicts;
-            rejected += applied.rejected;
-          }
+          await Promise.all(pendingOperations.map((operation) => markOperationSent(options.database, operation, attemptAt)));
         }
-      } catch (error) {
-        await Promise.all(pendingOperations.map((operation) => markOperationRetryable(options.database, operation, error, clock(), retryDelayMs)));
+
+        try {
+          if (pendingOperations.length > 0) {
+            const pushResponse = await options.client.push({ ...input, operations: pendingOperations, cursor: input.cursor ?? null });
+
+            for (const result of pushResponse.results) {
+              const applied = await applyPushResult(options.database, pendingOperations, result, clock());
+              confirmed += applied.confirmed;
+              conflicts += applied.conflicts;
+              rejected += applied.rejected;
+            }
+          }
+        } catch (error) {
+          await Promise.all(pendingOperations.map((operation) => markOperationRetryable(options.database, operation, error, clock(), retryDelayMs)));
+          await replayIncidentViews(options.database, input.incidentId);
+          failureAlreadyObserved = true;
+          emitSyncObservability(options.observabilitySink, {
+            result: 'rejected',
+            durationMs: nowMs() - startedAt,
+            pushed: pendingOperations.length,
+            pulled,
+            confirmed,
+            conflicts,
+            rejected,
+            retried: pendingOperations.length,
+            error,
+            errorCode: 'network_error',
+          });
+          throw error;
+        }
+
+        const pullResponse = await options.client.pull({ ...input, cursor: input.cursor ?? null, limit: input.limit });
+        pulled = pullResponse.operations.length;
+
+        for (const pulledOperation of pullResponse.operations) {
+          await options.database.syncOps.upsert({
+            ...pulledOperation.operation,
+            syncState: 'confirmed',
+            serverVersion: pulledOperation.serverVersion,
+            serverUpdatedAt: pulledOperation.serverUpdatedAt,
+          });
+        }
+
+        for (const conflict of pullResponse.conflicts) {
+          await options.database.views.syncIssues.upsert(createIssueFromConflict(input, conflict, clock()));
+        }
+
         await replayIncidentViews(options.database, input.incidentId);
+
+        const result = {
+          pushed: pendingOperations.length,
+          pulled,
+          confirmed,
+          conflicts: conflicts + pullResponse.conflicts.length,
+          rejected,
+          cursor: pullResponse.cursor,
+          hasMore: pullResponse.hasMore,
+        };
+
+        emitSyncObservability(options.observabilitySink, {
+          result: 'accepted',
+          durationMs: nowMs() - startedAt,
+          pushed: result.pushed,
+          pulled: result.pulled,
+          confirmed: result.confirmed,
+          conflicts: result.conflicts,
+          rejected: result.rejected,
+          retried: 0,
+        });
+
+        return result;
+      } catch (error) {
+        if (!failureAlreadyObserved) {
+          emitSyncObservability(options.observabilitySink, {
+            result: 'rejected',
+            durationMs: nowMs() - startedAt,
+            pushed: pendingOperations.length,
+            pulled,
+            confirmed,
+            conflicts,
+            rejected,
+            retried: 0,
+            error,
+          });
+        }
+
         throw error;
       }
-
-      const pullResponse = await options.client.pull({ ...input, cursor: input.cursor ?? null, limit: input.limit });
-
-      for (const pulled of pullResponse.operations) {
-        await options.database.syncOps.upsert({
-          ...pulled.operation,
-          syncState: 'confirmed',
-          serverVersion: pulled.serverVersion,
-          serverUpdatedAt: pulled.serverUpdatedAt,
-        });
-      }
-
-      for (const conflict of pullResponse.conflicts) {
-        await options.database.views.syncIssues.upsert(createIssueFromConflict(input, conflict, clock()));
-      }
-
-      await replayIncidentViews(options.database, input.incidentId);
-
-      return {
-        pushed: pendingOperations.length,
-        pulled: pullResponse.operations.length,
-        confirmed,
-        conflicts: conflicts + pullResponse.conflicts.length,
-        rejected,
-        cursor: pullResponse.cursor,
-        hasMore: pullResponse.hasMore,
-      };
     },
   };
 }
@@ -235,4 +286,12 @@ function clearRetryMetadata(operation: SignedOperation): SignedOperation {
   void syncErrorMessage;
 
   return confirmedOperation;
+}
+
+
+function emitSyncObservability(
+  sink: NativeObservabilitySink | undefined,
+  input: Parameters<typeof createSyncObservabilityEvent>[0],
+): void {
+  emitNativeOperationalEvent(sink, createSyncObservabilityEvent(input));
 }

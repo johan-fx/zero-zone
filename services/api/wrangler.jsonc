@@ -6,6 +6,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
     "API_VERSION": "0.0.0-boilerplate",
+    "TURNSTILE_ROLLOUT": "off",
   },
   "observability": {
     "enabled": true,
@@ -38,6 +39,7 @@
       "name": "zona-cero-api-staging",
       "vars": {
         "API_VERSION": "0.0.0-staging",
+        "TURNSTILE_ROLLOUT": "observe",
       },
       "observability": {
         "enabled": true,

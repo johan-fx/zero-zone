@@ -5,6 +5,7 @@ import resourceLogisticsMigration from '../migrations/0004_resource_reports_disp
 import sosMigration from '../migrations/0005_sos_alerts.sql?raw';
 import privateWebLinksMigration from '../migrations/0006_private_web_links.sql?raw';
 import syncHardeningMigration from '../migrations/0007_sync_hardening.sql?raw';
+import operationalObservabilityMigration from '../migrations/0008_operational_observability.sql?raw';
 import incidentDemoSeed from '../seeds/incident-zc-demo.sql?raw';
 
 export async function resetApiTestDatabase(db: D1Database): Promise<void> {
@@ -15,10 +16,13 @@ export async function resetApiTestDatabase(db: D1Database): Promise<void> {
   await execSqlStatements(db, sosMigration);
   await execSqlStatements(db, privateWebLinksMigration);
   await execSqlStatements(db, syncHardeningMigration);
+  await execSqlStatements(db, operationalObservabilityMigration);
   await execSqlStatements(
     db,
     `
     DELETE FROM sync_change_log;
+    DELETE FROM rate_limit_buckets;
+    DELETE FROM operational_audit_events;
     DELETE FROM private_web_link_attempts;
     DELETE FROM private_web_links;
     DELETE FROM critical_fanout_jobs;

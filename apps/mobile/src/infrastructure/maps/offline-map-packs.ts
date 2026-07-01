@@ -1,3 +1,4 @@
+import { createMapPackLifecycleEvent, emitNativeOperationalEvent, type NativeObservabilitySink } from '@/infrastructure/observability';
 import type { MapLibreOfflineAdapter } from './maplibre-adapter';
 
 export type MapPackLifecycleState = 'not_available' | 'queued' | 'downloading' | 'partial' | 'downloaded' | 'failed' | 'update_recommended';
@@ -88,6 +89,7 @@ export type OfflineMapPackServiceOptions = {
   minZoom?: number;
   maxZoom?: number;
   clock?: () => string;
+  observabilitySink?: NativeObservabilitySink;
 };
 
 export class OfflineMapPackService {
@@ -114,6 +116,7 @@ export class OfflineMapPackService {
     };
 
     await this.repository.upsert(pack);
+    this.recordLifecycle(pack);
     const nativeResult = await this.createNativePack(pack);
 
     if (!nativeResult.success) {
@@ -142,6 +145,7 @@ export class OfflineMapPackService {
     };
 
     await this.repository.upsert(nextPack);
+    this.recordLifecycle(nextPack);
 
     return nextPack;
   }
@@ -156,6 +160,7 @@ export class OfflineMapPackService {
     };
 
     await this.repository.upsert(nextPack);
+    this.recordLifecycle(nextPack);
 
     return nextPack;
   }
@@ -170,6 +175,7 @@ export class OfflineMapPackService {
     };
 
     await this.repository.upsert(nextPack);
+    this.recordLifecycle(nextPack);
     const nativeResult = await this.createNativePack(nextPack);
 
     if (!nativeResult.success) {
@@ -216,6 +222,23 @@ export class OfflineMapPackService {
     }
 
     return pack;
+  }
+
+  private recordLifecycle(pack: MapPackMetadata): void {
+    if (pack.state === 'not_available') {
+      return;
+    }
+
+    emitNativeOperationalEvent(
+      this.options.observabilitySink,
+      createMapPackLifecycleEvent({
+        state: pack.state,
+        progress: pack.progress,
+        estimatedBytes: pack.estimatedBytes,
+        downloadedBytes: pack.downloadedBytes,
+        error: pack.failureReason ? new Error('map_pack_failed') : undefined,
+      }),
+    );
   }
 
   private async createNativePack(pack: MapPackMetadata): Promise<{ success: true } | { success: false; reason: string }> {
