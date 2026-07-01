@@ -36,6 +36,8 @@ import {
   type IncidentJoinResponse,
   type IncidentRole,
   type IncidentSummary,
+  resolveSupportedLocale,
+  type SupportedLocale,
   type OperationalEvent,
   type OperationalEventType,
   type PermissionSnapshot,
@@ -276,7 +278,9 @@ app.post('/private-links/consume', async (c) => {
       linkId: result.linkId,
       referral: {
         type: 'in_person_verification',
-        message: 'Continue with in-person verification. Do not share sensitive identity or location details in chat.',
+        reasonCode: 'family_reunification_in_person_verification',
+        messageCode: 'family_reunification.referral.in_person_verification',
+        message: 'family_reunification.referral.in_person_verification',
       },
       audit: { auditEventId: result.auditEventId },
     }),
@@ -345,13 +349,18 @@ app.post('/private-links/family-reunification/search', async (c) => {
       {
         matchId: `match_${slug(result.link.incidentId)}_referral`,
         status: 'possible_match',
+        reasonCode: 'family_reunification.match.family_desk_compare_details',
         ...(parsed.data.query.ageBand ? { ageBand: parsed.data.query.ageBand } : {}),
-        relationHint: 'Family desk can compare details in person.',
         ...(parsed.data.query.lastKnownAreaLabel ? { lastKnownAreaLabel: parsed.data.query.lastKnownAreaLabel } : {}),
         verificationRequired: true,
       },
     ],
-    referral: { type: 'in_person_verification', message: 'Visit the family reunification desk. Do not send sensitive identity or location details in chat.' },
+    referral: {
+      type: 'in_person_verification',
+      reasonCode: 'family_reunification_in_person_verification',
+      messageCode: 'family_reunification.referral.in_person_verification',
+      message: 'family_reunification.referral.in_person_verification',
+    },
     audit: { auditEventId: result.auditEventId },
   };
 
@@ -4021,7 +4030,7 @@ async function deleteTelegramConversationStates(db: D1Database, stateKeys: Array
 async function joinIncident(
   db: D1Database,
   incident: IncidentSummary,
-  request: { channel: Channel; externalId: string; role: IncidentRole; displayName?: string },
+  request: { channel: Channel; externalId: string; role: IncidentRole; displayName?: string; preferredLocale?: SupportedLocale },
 ): Promise<IncidentJoinResponse> {
   const channelIdentityId = `chid_${slug(request.channel)}_${slug(request.externalId)}`;
   const permissions: PermissionSnapshot = permissionSnapshots[request.role];
@@ -4030,11 +4039,26 @@ async function joinIncident(
 
   await db
     .prepare(
-      `INSERT OR IGNORE INTO channel_identities (channel_identity_id, channel, external_id, display_name)
-       VALUES (?, ?, ?, ?)`,
+      `INSERT OR IGNORE INTO channel_identities (channel_identity_id, channel, external_id, display_name, preferred_locale)
+       VALUES (?, ?, ?, ?, ?)`,
     )
-    .bind(channelIdentityId, request.channel, request.externalId, request.displayName ?? null)
+    .bind(channelIdentityId, request.channel, request.externalId, request.displayName ?? null, request.preferredLocale ?? null)
     .run();
+
+  if (request.preferredLocale !== undefined) {
+    await db.prepare('UPDATE channel_identities SET preferred_locale = ? WHERE channel_identity_id = ?').bind(request.preferredLocale, channelIdentityId).run();
+  }
+
+  const channelIdentity = await db
+    .prepare(
+      `SELECT channel_identity_id AS channelIdentityId, channel, external_id AS externalId, display_name AS displayName, preferred_locale AS preferredLocale
+       FROM channel_identities
+       WHERE channel_identity_id = ?`,
+    )
+    .bind(channelIdentityId)
+    .first<{ channelIdentityId: string; channel: Channel; externalId: string; displayName: string | null; preferredLocale: string | null }>();
+
+  const preferredLocale = resolveSupportedLocale(channelIdentity?.preferredLocale ?? request.preferredLocale);
 
   const membershipInsert = await db
     .prepare(
@@ -4067,7 +4091,8 @@ async function joinIncident(
       channelIdentityId,
       channel: request.channel,
       externalId: request.externalId,
-      ...(request.displayName ? { displayName: request.displayName } : {}),
+      ...(channelIdentity?.displayName ? { displayName: channelIdentity.displayName } : {}),
+      preferredLocale,
     },
     membership: { incidentMembershipId, incidentId: incident.incidentId, channelIdentityId, role: request.role, permissions },
     audit: { auditEventId },

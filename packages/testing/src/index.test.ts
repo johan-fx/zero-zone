@@ -139,7 +139,11 @@ describe('testing package', () => {
 
     const searchResponse = FamilyReunificationSearchResponseSchema.parse(familyReunificationSearchResponseFixture);
     expect(FamilyReunificationSearchRequestSchema.parse(familyReunificationSearchRequestFixture).query.ageBand).toBe('child');
+    expect(searchResponse.matches[0]?.reasonCode).toBe('family_reunification.match.family_desk_compare_details');
+    expect(searchResponse.referral.reasonCode).toBe('family_reunification_in_person_verification');
+    expect(searchResponse.referral.messageCode).toBe('family_reunification.referral.in_person_verification');
     expect(JSON.stringify(searchResponse)).not.toMatch(/photo|fullName|latitude|longitude|exactLocation/i);
+    expect(JSON.stringify(searchResponse)).not.toMatch(/family desk|visit the family reunification desk/i);
   });
 
 

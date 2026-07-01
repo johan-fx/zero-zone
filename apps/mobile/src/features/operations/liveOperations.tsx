@@ -4,7 +4,7 @@ import { View } from 'react-native';
 import { Paragraph, Text, XStack, YStack } from 'tamagui';
 
 import { createInMemoryLocalOperationDatabase, type DispatchEventLocalView, type LocalOperationDatabase, type PresenceLocalView, type ResourceReportLocalView, type SosSignalLocalView, type SyncIssueLocalView, type SyncOperationLocalDocument, type WorkCenterView } from '@/infrastructure/local-db/local-db';
-import { resolveMapPreparationCoverage, resolveMapRenderState, type MapPackMetadata } from '@/infrastructure/maps';
+import { resolveMapPreparationCoverage, resolveMapRenderState, type MapPackMetadata, type MapRenderState } from '@/infrastructure/maps';
 import { appendSignedOperationAndMaterialize } from '@/infrastructure/oplog/outbox-service';
 import { FakeOperationSigner, type OperationSigner } from '@/infrastructure/security';
 import type { ScopedOperationSyncService } from '@/infrastructure/sync';
@@ -637,7 +637,7 @@ export function LiveOperationalEntryScreen({
 
         {state ? <OutboxStatePanel state={state} /> : null}
 
-        <LiveMapLibreSurface centers={state?.centers ?? []} indicator={mapState.indicator} />
+        <LiveMapLibreSurface centers={state?.centers ?? []} mapState={mapState} />
 
         {mapPreparation ? <MapPreparationPanel preparation={mapPreparation} /> : null}
 
@@ -721,7 +721,7 @@ function OutboxStatePanel({ state }: { state: LiveOperationalState }) {
   );
 }
 
-function LiveMapLibreSurface({ centers, indicator }: { centers: WorkCenterView[]; indicator: string }) {
+function LiveMapLibreSurface({ centers, mapState }: { centers: WorkCenterView[]; mapState: MapRenderState }) {
   return (
     <OperationalCard testID="maplibre-operational-map">
       <YStack gap="$3">
@@ -729,7 +729,7 @@ function LiveMapLibreSurface({ centers, indicator }: { centers: WorkCenterView[]
           <Text color="$text" fontSize="$lg" fontWeight="900">
             MapLibre operational map
           </Text>
-          <StatusBadge tone={indicator.includes('Offline') ? 'success' : indicator.includes('Missing') ? 'stale' : 'info'} label={indicator} />
+          <StatusBadge tone={resolveMapCoverageTone(mapState.coverage)} label={mapState.indicator} />
         </XStack>
         <View accessibilityLabel="MapLibre native surface placeholder" testID="maplibre-native-surface" />
         {centers.map((center) => (
@@ -743,6 +743,18 @@ function LiveMapLibreSurface({ centers, indicator }: { centers: WorkCenterView[]
       </YStack>
     </OperationalCard>
   );
+}
+
+function resolveMapCoverageTone(coverage: MapRenderState['coverage']) {
+  if (coverage === 'offline') {
+    return 'success';
+  }
+
+  if (coverage === 'missing') {
+    return 'stale';
+  }
+
+  return 'info';
 }
 
 function SosPanel({

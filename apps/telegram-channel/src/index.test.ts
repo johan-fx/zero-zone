@@ -63,10 +63,10 @@ import {
   type TelegramWorkCenterReportState,
 } from './index';
 
-const telegramUserUpdate = (text: string) => ({
+const telegramUserUpdate = (text: string, languageCode = 'en') => ({
   message: {
     text,
-    from: { id: 1001, first_name: 'Field' },
+    from: { id: 1001, first_name: 'Field', language_code: languageCode },
     chat: { id: 1001, type: 'private' },
   },
 });
@@ -366,6 +366,11 @@ describe('telegram channel flows', () => {
     });
   });
 
+  it('handles Telegram language commands with canonical locale resolution', () => {
+    expect(handleTelegramWebhookUpdate(telegramUserUpdate('/idioma es')).responseText).toContain('Idioma actualizado');
+    expect(handleTelegramWebhookUpdate(telegramUserUpdate('/language en')).responseText).toContain('Language updated');
+  });
+
   it('returns a stable SOS command response for API webhook integration', () => {
     expect(handleTelegramWebhookUpdate(telegramUserUpdate('/sos'))).toMatchObject({
       accepted: true,
@@ -479,7 +484,66 @@ describe('telegram channel flows', () => {
       externalId: '1001',
       displayName: 'Field Telegram',
       role: 'volunteer',
+      preferredLocale: 'en',
     });
+  });
+
+
+
+  it('localizes the incident join flow to Spanish for default Spanish users', async () => {
+    const ports = createPorts();
+    let state: TelegramIncidentJoinState = { step: 'idle' };
+
+    let result = await handleTelegramIncidentJoinFlow(state, telegramUserUpdate('/start', 'es'), ports);
+    expect(result.responseText).toContain('Elige un incidente');
+    expect(result.responseText).not.toContain('Choose an incident');
+    state = result.state;
+
+    result = await handleTelegramIncidentJoinFlow(state, telegramUserUpdate('1', 'es'), ports);
+    expect(result.responseText).toContain('Seleccionado:');
+    expect(result.responseText).not.toContain('Selected:');
+    state = result.state;
+
+    result = await handleTelegramIncidentJoinFlow(state, telegramUserUpdate('Campo Telegram', 'es'), ports);
+    expect(result.responseText).toContain('Elige tu rol');
+    expect(result.responseText).not.toContain('Choose your role');
+    state = result.state;
+
+    result = await handleTelegramIncidentJoinFlow(state, telegramUserUpdate('1', 'es'), ports);
+    expect(result.responseText).toContain('Te uniste a Zona Cero Demo Incident como volunteer');
+    expect(result.responseText).not.toContain('Joined Zona Cero Demo Incident as volunteer');
+    expect(ports.joinIncident).toHaveBeenCalledWith('incident-zc-demo', expect.objectContaining({ preferredLocale: 'es' }));
+  });
+
+  it('persists a changed locale during an active incident join flow for subsequent copy', async () => {
+    const ports = createPorts();
+    let state: TelegramIncidentJoinState = { step: 'idle' };
+
+    let result = await handleTelegramIncidentJoinFlow(state, telegramUserUpdate('/start', 'es'), ports);
+    state = result.state;
+
+    result = await handleTelegramIncidentJoinFlow(state, telegramUserUpdate('/language en', 'es'), ports);
+    expect(result.responseText).toContain('Language updated');
+    expect(result.state).toMatchObject({ step: 'awaitingIncident', preferredLocale: 'en' });
+    state = result.state;
+
+    result = await handleTelegramIncidentJoinFlow(state, telegramUserUpdate('missing-incident', 'es'), ports);
+    expect(result.responseText).toContain('Incident not found');
+    expect(result.responseText).not.toContain('Incidente no encontrado');
+  });
+
+  it('localizes incident join incident-list empty and load-failure branches to Spanish', async () => {
+    const emptyPorts = createPorts({ listIncidents: vi.fn().mockResolvedValue({ incidents: [] }) });
+    const emptyResult = await handleTelegramIncidentJoinFlow({ step: 'idle' }, telegramUserUpdate('/start', 'es'), emptyPorts);
+
+    expect(emptyResult.responseText).toBe('No hay incidentes activos ahora.');
+    expect(emptyResult.state).toEqual({ step: 'idle', preferredLocale: 'es' });
+
+    const failingPorts = createPorts({ listIncidents: vi.fn().mockRejectedValue(new Error('backend unavailable')) });
+    const failingResult = await handleTelegramIncidentJoinFlow({ step: 'idle' }, telegramUserUpdate('/start', 'es'), failingPorts);
+
+    expect(failingResult.responseText).toBe('No se pudieron cargar los incidentes desde el backend. Inténtalo de nuevo más tarde.');
+    expect(failingResult.state).toEqual({ step: 'idle', preferredLocale: 'es' });
   });
 
   it('cancels an active join flow', async () => {
@@ -521,11 +585,11 @@ describe('telegram channel flows', () => {
 
 
   it('formats Telegram channel limitations from backend freshness signals', () => {
-    expect(formatTelegramChannelLimitation({ ...freshSyncFreshnessFixture, status: 'stale' })).toContain('backend freshness is stale');
-    expect(formatTelegramChannelLimitation({ ...freshSyncFreshnessFixture, status: 'expired' })).toContain('backend freshness is expired');
-    expect(formatTelegramChannelLimitation({ ...freshSyncFreshnessFixture, status: 'missing', lastFreshAt: null, lastSyncedAt: null })).toContain('backend freshness is missing');
-    expect(formatTelegramChannelLimitation({ ...freshSyncFreshnessFixture, cursorLag: 2 })).toContain('2 backend updates may not be visible');
-    expect(formatTelegramChannelLimitation({ ...freshSyncFreshnessFixture, hasConflicts: true })).toContain('sync conflicts need coordinator review');
+    expect(formatTelegramChannelLimitation({ ...freshSyncFreshnessFixture, status: 'stale' }, 'en')).toContain('backend freshness is stale');
+    expect(formatTelegramChannelLimitation({ ...freshSyncFreshnessFixture, status: 'expired' }, 'en')).toContain('backend freshness is expired');
+    expect(formatTelegramChannelLimitation({ ...freshSyncFreshnessFixture, status: 'missing', lastFreshAt: null, lastSyncedAt: null }, 'en')).toContain('backend freshness is missing');
+    expect(formatTelegramChannelLimitation({ ...freshSyncFreshnessFixture, cursorLag: 2 }, 'en')).toContain('2 backend updates may not be visible');
+    expect(formatTelegramChannelLimitation({ ...freshSyncFreshnessFixture, hasConflicts: true }, 'en')).toContain('sync conflicts need coordinator review');
   });
 
   it('does not add Telegram channel limitation noise for fresh backend freshness', () => {
@@ -743,6 +807,24 @@ describe('telegram channel flows', () => {
     expect(isTerminalTelegramSosState(state)).toBe(true);
   });
 
+  it('localizes /sos empty incident selection in Spanish/default locale', async () => {
+    const ports = createSosPorts({ listIncidents: vi.fn().mockResolvedValue({ incidents: [] }) });
+    const result = await handleTelegramSosFlow({ step: 'idle' }, telegramUserUpdate('/sos', 'es'), ports);
+
+    expect(result.state).toEqual({ step: 'idle', preferredLocale: 'es' });
+    expect(result.responseText).toContain('No hay incidentes activos ahora para iniciar SOS.');
+    expect(result.responseText).not.toContain('No active incidents are available right now.');
+  });
+
+  it('localizes /sos incident load failures in Spanish/default locale', async () => {
+    const ports = createSosPorts({ listIncidents: vi.fn().mockRejectedValue(new Error('backend down')) });
+    const result = await handleTelegramSosFlow({ step: 'idle' }, telegramUserUpdate('/sos', 'es'), ports);
+
+    expect(result.state).toEqual({ step: 'idle', preferredLocale: 'es' });
+    expect(result.responseText).toContain('No se pudieron cargar los incidentes para SOS desde el backend.');
+    expect(result.responseText).not.toContain('Could not load incidents from the backend. Please try again later.');
+  });
+
   it('keeps SOS state and does not call the backend when confirmation is not exact', async () => {
     const ports = createSosPorts();
     const { state, responseText } = await advanceSos(['/sos', '1', 'confirm'], ports);
@@ -796,6 +878,23 @@ describe('telegram channel flows', () => {
     expect(request.scope).toBe('family_reunification.search');
     expect(request.ttlSeconds).toBe(600);
     expect(request.maxUses).toBe(1);
+  });
+
+  it('persists a changed locale during an active family reunification flow for subsequent copy', async () => {
+    const ports = createFamilyReunificationPorts();
+    let state: TelegramFamilyReunificationState = { step: 'idle' };
+
+    let result = await handleTelegramFamilyReunificationFlow(state, telegramUserUpdate('/familia', 'es'), ports);
+    state = result.state;
+
+    result = await handleTelegramFamilyReunificationFlow(state, telegramUserUpdate('/language en', 'es'), ports);
+    expect(result.responseText).toContain('Language updated');
+    expect(result.state).toMatchObject({ step: 'awaitingIncident', preferredLocale: 'en' });
+    state = result.state;
+
+    result = await handleTelegramFamilyReunificationFlow(state, telegramUserUpdate('missing-incident', 'es'), ports);
+    expect(result.responseText).toContain('Incident not found');
+    expect(result.responseText).not.toContain('Incidente no encontrado');
   });
 
   it('does not echo sensitive family details in Telegram while selecting the incident', async () => {

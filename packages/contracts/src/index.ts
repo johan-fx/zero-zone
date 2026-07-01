@@ -12,6 +12,18 @@ export type OperationFamily = z.infer<typeof OperationFamilySchema>;
 export const SyncStateSchema = z.enum(syncStates);
 export type SyncState = z.infer<typeof SyncStateSchema>;
 
+
+export const supportedLocales = ['es', 'en'] as const;
+export const SupportedLocaleSchema = z.enum(supportedLocales);
+export type SupportedLocale = z.infer<typeof SupportedLocaleSchema>;
+export const defaultSupportedLocale: SupportedLocale = 'es';
+export const fallbackSupportedLocale: SupportedLocale = 'en';
+
+export function resolveSupportedLocale(value: unknown, fallbackLocale: SupportedLocale = defaultSupportedLocale): SupportedLocale {
+  const parsed = SupportedLocaleSchema.safeParse(value);
+  return parsed.success ? parsed.data : fallbackLocale;
+}
+
 export const contractErrorCodes = [
   'invalid_payload',
   'invalid_operation_version',
@@ -368,6 +380,7 @@ export const ChannelIdentitySchema = z.object({
   channel: ChannelSchema,
   externalId: z.string().min(1),
   displayName: z.string().min(1).optional(),
+  preferredLocale: SupportedLocaleSchema.optional(),
 });
 export type ChannelIdentity = z.infer<typeof ChannelIdentitySchema>;
 
@@ -769,6 +782,7 @@ export const IncidentJoinRequestSchema = z.object({
   externalId: z.string().min(1),
   role: IncidentRoleSchema,
   displayName: z.string().min(1).optional(),
+  preferredLocale: SupportedLocaleSchema.optional(),
 });
 export type IncidentJoinRequest = z.infer<typeof IncidentJoinRequestSchema>;
 
@@ -883,11 +897,22 @@ export const PrivateWebLinkConsumeRequestSchema = z.object({
 }).strict();
 export type PrivateWebLinkConsumeRequest = z.infer<typeof PrivateWebLinkConsumeRequestSchema>;
 
+export const FamilyReunificationReferralReasonCodeSchema = z.literal('family_reunification_in_person_verification');
+export type FamilyReunificationReferralReasonCode = z.infer<typeof FamilyReunificationReferralReasonCodeSchema>;
+
+export const FamilyReunificationReferralMessageCodeSchema = z.literal('family_reunification.referral.in_person_verification');
+export type FamilyReunificationReferralMessageCode = z.infer<typeof FamilyReunificationReferralMessageCodeSchema>;
+
+export const FamilyReunificationMatchReasonCodeSchema = z.literal('family_reunification.match.family_desk_compare_details');
+export type FamilyReunificationMatchReasonCode = z.infer<typeof FamilyReunificationMatchReasonCodeSchema>;
+
 export const PrivateWebLinkConsumeResponseSchema = z.object({
   accepted: z.literal(true),
   linkId: z.string().min(1),
   referral: z.object({
     type: z.literal('in_person_verification'),
+    reasonCode: FamilyReunificationReferralReasonCodeSchema,
+    messageCode: FamilyReunificationReferralMessageCodeSchema,
     message: z.string().min(1),
   }).strict(),
   audit: AuditReferenceSchema,
@@ -910,6 +935,7 @@ export const FamilyReunificationSearchResponseSchema = z.object({
   matches: z.array(z.object({
     matchId: z.string().min(1),
     status: z.enum(['possible_match', 'no_public_result']),
+    reasonCode: FamilyReunificationMatchReasonCodeSchema,
     ageBand: z.enum(['child', 'teen', 'adult', 'older_adult']).optional(),
     relationHint: z.string().min(1).optional(),
     lastKnownAreaLabel: z.string().min(1).optional(),
@@ -917,6 +943,8 @@ export const FamilyReunificationSearchResponseSchema = z.object({
   }).strict()),
   referral: z.object({
     type: z.literal('in_person_verification'),
+    reasonCode: FamilyReunificationReferralReasonCodeSchema,
+    messageCode: FamilyReunificationReferralMessageCodeSchema,
     message: z.string().min(1),
   }).strict(),
   audit: AuditReferenceSchema,

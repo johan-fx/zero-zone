@@ -321,7 +321,9 @@ export const privateFamilyReunificationConsumeResponseFixture: PrivateWebLinkCon
   linkId: privateFamilyReunificationIssueResponseFixture.linkId,
   referral: {
     type: 'in_person_verification',
-    message: 'Continue with in-person verification. Do not share photos, exact location, or full minor identity in chat.',
+    reasonCode: 'family_reunification_in_person_verification',
+    messageCode: 'family_reunification.referral.in_person_verification',
+    message: 'family_reunification.referral.in_person_verification',
   },
   audit: { auditEventId: 'audit_private_link_consumed_fixture_1' },
 };
@@ -341,14 +343,16 @@ export const familyReunificationSearchResponseFixture: FamilyReunificationSearch
   matches: [{
     matchId: 'match_stub_1',
     status: 'possible_match',
+    reasonCode: 'family_reunification.match.family_desk_compare_details',
     ageBand: 'child',
-    relationHint: 'family desk can compare details in person',
     lastKnownAreaLabel: 'north gate area',
     verificationRequired: true,
   }],
   referral: {
     type: 'in_person_verification',
-    message: 'Visit the family reunification desk for identity-safe verification.',
+    reasonCode: 'family_reunification_in_person_verification',
+    messageCode: 'family_reunification.referral.in_person_verification',
+    message: 'family_reunification.referral.in_person_verification',
   },
   audit: { auditEventId: 'audit_family_reunification_search_fixture_1' },
 };
@@ -386,7 +390,7 @@ export const telegramStartUpdateFixture = {
     message_id: 1,
     text: '/start',
     chat: { id: 1001, type: 'private' },
-    from: { id: 1001, is_bot: false, first_name: 'Field' },
+    from: { id: 1001, is_bot: false, first_name: 'Field', language_code: 'en' },
   },
 } as const;
 

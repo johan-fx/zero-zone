@@ -53,7 +53,12 @@ async function postTelegramMessage(telegramUserId: number, text: string, firstNa
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       update_id: telegramUserId,
-      message: { message_id: 1, text, chat: { id: telegramUserId, type: 'private' }, from: { id: telegramUserId, is_bot: false, first_name: firstName } },
+      message: {
+        message_id: 1,
+        text,
+        chat: { id: telegramUserId, type: 'private' },
+        from: { id: telegramUserId, is_bot: false, first_name: firstName, language_code: 'en' },
+      },
     }),
   });
 
@@ -583,7 +588,7 @@ describe('api worker', () => {
     const telegramUserId = 24001;
     const baseUpdate = {
       update_id: 24001,
-      message: { message_id: 1, chat: { id: telegramUserId, type: 'private' }, from: { id: telegramUserId, is_bot: false, first_name: 'Webhook' } },
+      message: { message_id: 1, chat: { id: telegramUserId, type: 'private' }, from: { id: telegramUserId, is_bot: false, first_name: 'Webhook', language_code: 'en' } },
     };
 
     const postTelegramMessage = async (text: string) => {
@@ -1055,8 +1060,17 @@ describe('api worker', () => {
     });
     expect(consume.status).toBe(200);
     const consumeBody = PrivateWebLinkConsumeResponseSchema.parse(await consume.json());
-    expect(consumeBody).toMatchObject({ accepted: true, linkId: issued.linkId, referral: { type: 'in_person_verification' } });
+    expect(consumeBody).toMatchObject({
+      accepted: true,
+      linkId: issued.linkId,
+      referral: {
+        type: 'in_person_verification',
+        reasonCode: 'family_reunification_in_person_verification',
+        messageCode: 'family_reunification.referral.in_person_verification',
+      },
+    });
     expect(JSON.stringify(consumeBody)).not.toMatch(/photo|fullName|latitude|longitude|exactLocation/i);
+    expect(JSON.stringify(consumeBody)).not.toMatch(/continue with in-person verification|family desk|visit the family reunification desk/i);
 
     const consumed = await request('/private-links/validate', {
       method: 'POST',
@@ -1094,7 +1108,11 @@ describe('api worker', () => {
     expect(search.status).toBe(200);
     const searchBody = FamilyReunificationSearchResponseSchema.parse(await search.json());
     expect(JSON.stringify(searchBody)).not.toMatch(/photo|fullName|latitude|longitude|exactLocation/i);
+    expect(JSON.stringify(searchBody)).not.toMatch(/family desk|visit the family reunification desk/i);
+    expect(searchBody.matches[0]?.reasonCode).toBe('family_reunification.match.family_desk_compare_details');
     expect(searchBody.referral.type).toBe('in_person_verification');
+    expect(searchBody.referral.reasonCode).toBe('family_reunification_in_person_verification');
+    expect(searchBody.referral.messageCode).toBe('family_reunification.referral.in_person_verification');
 
     const persisted = await (env as Env).DB.prepare(
       `SELECT use_count AS useCount, consumed_at AS consumedAt
@@ -1418,6 +1436,51 @@ describe('api worker', () => {
     });
 
     expect(response.status).toBe(400);
+  });
+
+  it('persists canonical preferred locale for joined channel identities', async () => {
+    const response = await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...telegramIncidentJoinRequestFixture, externalId: 'telegram-user-locale-en', preferredLocale: 'en' }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = IncidentJoinResponseSchema.parse(await response.json());
+    expect(body.channelIdentity.preferredLocale).toBe('en');
+
+    const persisted = await (env as Env).DB.prepare('SELECT preferred_locale AS preferredLocale FROM channel_identities WHERE channel_identity_id = ?')
+      .bind(body.channelIdentity.channelIdentityId)
+      .first<{ preferredLocale: string | null }>();
+    expect(persisted?.preferredLocale).toBe('en');
+  });
+
+  it('rejects arbitrary preferred locale values at the API boundary', async () => {
+    const response = await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...telegramIncidentJoinRequestFixture, preferredLocale: 'fr' }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: 'invalid_payload' });
+  });
+
+  it('falls back to the pilot locale for legacy channel identities without a stored preference', async () => {
+    const response = await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...telegramIncidentJoinRequestFixture, externalId: 'telegram-user-locale-default' }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = IncidentJoinResponseSchema.parse(await response.json());
+    expect(body.channelIdentity.preferredLocale).toBe('es');
+
+    const persisted = await (env as Env).DB.prepare('SELECT preferred_locale AS preferredLocale FROM channel_identities WHERE channel_identity_id = ?')
+      .bind(body.channelIdentity.channelIdentityId)
+      .first<{ preferredLocale: string | null }>();
+    expect(persisted?.preferredLocale).toBeNull();
   });
 
   it('recovers a missing audit event for an idempotent retry after partial join persistence', async () => {

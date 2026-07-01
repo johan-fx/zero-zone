@@ -6,6 +6,7 @@ import sosMigration from '../migrations/0005_sos_alerts.sql?raw';
 import privateWebLinksMigration from '../migrations/0006_private_web_links.sql?raw';
 import syncHardeningMigration from '../migrations/0007_sync_hardening.sql?raw';
 import operationalObservabilityMigration from '../migrations/0008_operational_observability.sql?raw';
+import channelIdentityPreferredLocaleMigration from '../migrations/0009_channel_identity_preferred_locale.sql?raw';
 import incidentDemoSeed from '../seeds/incident-zc-demo.sql?raw';
 
 export async function resetApiTestDatabase(db: D1Database): Promise<void> {
@@ -17,6 +18,7 @@ export async function resetApiTestDatabase(db: D1Database): Promise<void> {
   await execSqlStatements(db, privateWebLinksMigration);
   await execSqlStatements(db, syncHardeningMigration);
   await execSqlStatements(db, operationalObservabilityMigration);
+  await execSqlStatements(db, channelIdentityPreferredLocaleMigration);
   await execSqlStatements(
     db,
     `
@@ -51,6 +53,14 @@ async function execSqlStatements(db: D1Database, sql: string): Promise<void> {
     .filter(Boolean);
 
   for (const statement of statements) {
-    await db.exec(`${statement.replace(/\s+/g, ' ')};`);
+    const normalized = `${statement.replace(/\s+/g, ' ')};`;
+    try {
+      await db.exec(normalized);
+    } catch (error) {
+      if (normalized.includes('ADD COLUMN preferred_locale') && error instanceof Error && error.message.includes('duplicate column name')) {
+        continue;
+      }
+      throw error;
+    }
   }
 }

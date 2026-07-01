@@ -122,9 +122,30 @@ afterEach(() => {
   cleanup();
   window.history.pushState({}, '', '/');
   window.sessionStorage.clear();
+  window.localStorage.clear();
 });
 
 describe('web ui work center shell', () => {
+  it('sets document language from query locale and renders the language selector', async () => {
+    window.history.pushState({}, '', '/?lang=es');
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/health')) return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
+      if (url.includes('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull')) return jsonResponse(freshSyncPullFixture);
+      if (url.endsWith('/incidents/incident-zc-demo/work-centers')) return jsonResponse({ workCenters: [] });
+      if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) return jsonResponse({ resourceReports: [] });
+      if (url.endsWith('/incidents/incident-zc-demo/dispatch-tasks')) return jsonResponse({ dispatchTasks: [] });
+      if (url.endsWith('/incidents/incident-zc-demo/sos')) return jsonResponse({ sosAlerts: [], fanout: { total: 0, queued: 0, pending: 0, failed: 0, cancelled: 0 } });
+      return new Response('not found', { status: 404 });
+    });
+
+    render(<App />);
+
+    expect(document.documentElement.lang).toBe('es');
+    expect(screen.getByLabelText('Idioma')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Panel de operaciones en vivo de centros de trabajo' })).toBeInTheDocument();
+  });
+
   it('renders backend health plus work center list, detail and map-lite from shared contracts', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = String(input);
@@ -536,6 +557,78 @@ describe('web ui work center shell', () => {
     });
   });
 
+
+
+  it('renders private family reunification validation and search copy in Spanish', async () => {
+    window.history.pushState(
+      {},
+      '',
+      `/family-reunification?lang=es&token=${privateFamilyReunificationIssueResponseFixture.token}&correlationId=${privateFamilyReunificationIssueResponseFixture.correlationId}`,
+    );
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/private-links/validate')) return jsonResponse(privateFamilyReunificationValidateResponseFixture);
+      if (url.endsWith('/private-links/family-reunification/search') && init?.method === 'POST') {
+        return jsonResponse(familyReunificationSearchResponseFixture);
+      }
+      if (url.endsWith('/private-links/consume') && init?.method === 'POST') {
+        return jsonResponse(privateFamilyReunificationConsumeResponseFixture);
+      }
+      return new Response('not found', { status: 404 });
+    });
+
+    render(<App />);
+
+    expect(screen.getByRole('heading', { name: 'Búsqueda segura de identidad y derivación presencial' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Comprobando enlace privado' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Búsqueda privada minimizada' })).toBeInTheDocument());
+    expect(screen.queryByText('Checking private link')).not.toBeInTheDocument();
+    expect(screen.queryByText('Minimized private search')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Rango de edad aproximado'), { target: { value: 'child' } });
+    fireEvent.change(screen.getByLabelText('Pista de relación'), { target: { value: 'madre busca a su hijo' } });
+    fireEvent.change(screen.getByLabelText('Zona amplia de último avistamiento'), { target: { value: 'puerta norte' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Buscar de forma segura' }));
+
+    expect(await screen.findByText('Posible coincidencia presencial')).toBeInTheDocument();
+    expect(screen.getByText('Rango de edad: Niñez')).toBeInTheDocument();
+    expect(screen.getByText('Verificación requerida: sí')).toBeInTheDocument();
+    expect(document.body).toHaveTextContent('La mesa familiar puede comparar detalles de relación en persona.');
+    expect(document.body).toHaveTextContent('Continúa con verificación presencial.');
+    expect(document.body).not.toHaveTextContent(/\bchild\b/);
+    expect(document.body).not.toHaveTextContent(/\bteen\b/);
+    expect(document.body).not.toHaveTextContent(/\badult\b/);
+    expect(document.body).not.toHaveTextContent(/\bolder_adult\b/);
+    expect(document.body).not.toHaveTextContent('family desk can compare details in person');
+    expect(document.body).not.toHaveTextContent('Visit the family reunification desk for identity-safe verification.');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continuar a verificación presencial' }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Continúa con verificación presencial'));
+    expect(document.body).not.toHaveTextContent('Continue with in-person verification. Do not share photos, exact location, or full minor identity in chat.');
+  });
+
+  it('renders private family reunification validation errors in Spanish', async () => {
+    window.history.pushState(
+      {},
+      '',
+      `/family-reunification?lang=es&token=${privateFamilyReunificationIssueResponseFixture.token}&correlationId=${privateFamilyReunificationIssueResponseFixture.correlationId}`,
+    );
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/private-links/validate')) {
+        return new Response(JSON.stringify({ error: 'link_expired' }), { status: 410 });
+      }
+      return new Response('not found', { status: 404 });
+    });
+
+    render(<App />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('El enlace privado expiró');
+    expect(screen.getByText(/Ve al punto de reunificación familiar/)).toBeInTheDocument();
+    expect(screen.queryByText('Private link unavailable')).not.toBeInTheDocument();
+  });
+
   it('shows safe visible errors for invalid or expired private links', async () => {
     window.history.pushState(
       {},
@@ -552,7 +645,7 @@ describe('web ui work center shell', () => {
 
     render(<App />);
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('link_expired');
+    expect(await screen.findByRole('alert')).toHaveTextContent('The private link expired');
     expect(screen.getByText(/Go to the family reunification desk/)).toBeInTheDocument();
     expect(screen.queryByLabelText(/full name/i)).not.toBeInTheDocument();
   });

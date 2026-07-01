@@ -35,7 +35,8 @@ Usar este reparto como contrato de trabajo para todas las slices. La clave es qu
 | 5 | SOS conectado + nativo crítico | 🟢 | 🟢 | 🟢 | Hecho |
 | 6 | Reunificación familiar web | 🟢 | 🟢 | 🟢 | Hecho |
 | 7 | Sync/offline hardening | 🟢 | 🟢 | 🟢 | Hecho |
-| 8 | Observabilidad + seguridad | ⬜ | ⬜ | ⬜ | No iniciado |
+| 8 | Observabilidad + seguridad | 🟢 | 🟢 | 🟢 | Hecho |
+| 9 | Localización multi-idioma | 🟢 | 🟢 | 🟢 | Hecho |
 
 Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloqueado.
 
@@ -403,6 +404,77 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 - `pnpm mobile:test:strict` ✅
 - `pnpm test:strict` ✅
 - Fresh review independiente final ✅
+
+## Slice 9 - Localización multi-idioma
+
+**Objetivo:** preparar Telegram y Web UI para el piloto en español sin cerrar la puerta a inglés u otros idiomas.
+
+**Decisión técnica inicial:** usar una base compartida de mensajes ICU con FormatJS (`@formatjs/intl` / `intl-messageformat`) y añadir `react-intl` solo donde aporte valor en Web UI. Mantener los contratos/API en códigos canónicos; los canales traducen esos códigos a copy visible.
+
+### Investigación de librerías i18n
+
+| Librería | Encaje en Zona Cero | Tradeoff | Decisión |
+|---|---|---|---|
+| FormatJS / React Intl | ICU sólido, `createIntl` funciona fuera de React y `IntlProvider`/`useIntl` encajan con React 19. Permite compartir mensajes entre Web UI y Telegram Worker. | Requiere disciplina de IDs/catálogos y tooling si se activa extracción. | Recomendada para Slice 9. |
+| i18next / react-i18next | Ecosistema muy completo: namespaces, fallback, detección, backend plugins, plural/context/interpolation. | Más superficie runtime y modelo global/plugin; útil si más adelante hay CMS o carga remota de traducciones. | No usar como primera base; reevaluar si aparece traducción remota. |
+| Lingui | Buen DX para React, catálogos compilados y macros con Vite. | Añade plugin/macro/build step; menos directo para compartir el mismo núcleo con Telegram Worker. | Diferir hasta necesitar extracción editorial fuerte. |
+| Messageformat standalone | Ligero y centrado en ICU/plurales. | Menos integración de app completa que FormatJS. | Alternativa viable si se quiere evitar React Intl. |
+
+### Reparto de ownership
+
+| Equipo | Owns | Consume de | No debe hacer | Handoff esperado |
+|---|---|---|---|---|
+| A | Catálogo de copy para Telegram/Web UI, selector de idioma, `/idioma`/`/language`, mensajes críticos en español e inglés y pruebas de render por locale. | Locale persistido, códigos canónicos y errores estables de B. | Traducir enums/errores dentro de contratos o duplicar códigos de dominio. | Canales que resuelven locale y traducen sin mezclar español/inglés en flujos críticos. |
+| B | Contrato de `locale`, persistencia de preferencia por identidad/canal, migración D1 y helpers seguros de fallback. | Necesidades de UX/copy de A. | Hacer que API devuelva copy localizado como fuente canónica del dominio. | `preferred_locale` auditado/persistido y errores/códigos estables traducibles por canal. |
+| C | Confirmar que la app nativa no queda bloqueada por el modelo de locale y documentar si mobile adoptará el paquete i18n en una slice posterior. | Paquete compartido y contratos de B. | Mezclar esta slice con localización completa nativa si no forma parte del piloto. | Validación de compatibilidad y no regresión para flujos nativos existentes. |
+
+| Equipo | Checklist |
+|---|---|
+| A | 🟢 Crear `packages/i18n` con `es` como locale piloto y `en` como fallback completo. |
+| A | 🟢 Migrar copy de Telegram a mensajes tipados, incluyendo SOS, reunificación familiar, frescura, errores y cancelaciones. |
+| A | 🟢 Añadir comando `/idioma`/`/language` y resolver locale desde preferencia, `language_code`, query/localStorage o fallback. |
+| A | 🟢 Migrar Web UI a provider/helper i18n, selector mínimo y `document.documentElement.lang`. |
+| B | 🟢 Añadir contrato `SupportedLocale` y validación/fallback sin aceptar locales arbitrarios. |
+| B | 🟢 Persistir `preferred_locale` por `channel_identity` o tabla de preferencias, con migración D1. |
+| B | 🟢 Eliminar dependencias de lógica sobre texto traducido; usar estado/códigos, no `responseText.includes(...)`. |
+| C | 🟢 Validar que los cambios de contrato no rompen mobile ni operación offline existente. |
+| Todos | 🟢 Añadir test que falla si `es` y `en` no tienen las mismas keys. |
+
+**Definition of Done**
+
+- Telegram y Web UI usan español por defecto para el piloto.
+- Inglés existe como fallback completo y verificable por CI.
+- La preferencia de idioma puede cambiarse sin perder estado conversacional.
+- API/contratos siguen exponiendo códigos canónicos, no copy traducido.
+- Ningún flujo crítico mezcla idiomas en una misma respuesta salvo datos operativos no traducibles.
+
+**Riesgos y límites**
+
+- Los nombres de incidentes, ubicaciones y categorías operativas sembradas pueden seguir siendo contenido operativo no traducido en esta slice.
+- No se localiza la app nativa completa salvo validación de compatibilidad.
+- No se introduce CMS ni carga remota de traducciones; los catálogos quedan versionados en repo.
+- Antes de activar más idiomas, se necesita revisión humana del copy crítico: SOS, menores, privacidad y errores de seguridad.
+
+**Evidencia esperada de verificación**
+
+- `pnpm --filter @zona-cero/i18n test:strict`
+- `pnpm telegram:test:strict`
+- `pnpm web:test:strict`
+- `pnpm contracts:test:strict`
+- `pnpm mobile:test:strict`
+- `pnpm test:strict`
+- Fresh review independiente sin P0/P1/P2
+
+**Cierre Slice 9**
+
+- `packages/i18n` centraliza catálogos `es`/`en`, helper de formato ICU y test de paridad de keys.
+- `packages/contracts` expone `SupportedLocale`, fallback seguro y códigos canónicos para copy traducible, incluyendo reunificación familiar.
+- `services/api` persiste `preferred_locale` en `channel_identities` mediante migración D1 aditiva y mantiene la API como fuente de códigos/estado, no de copy localizado.
+- Telegram localiza flujos críticos (`/start`, `/idioma`/`/language`, incident join, SOS y reunificación familiar), conserva el locale al cambiar idioma dentro de flujos activos y evita mezclar español/inglés en ramas de error o vacío.
+- Web UI añade provider/helper i18n, selector mínimo, resolución por query/localStorage/navegador, `document.documentElement.lang` y render localizado de reunificación familiar sin mostrar copy inglés ni enums crudos de backend.
+- Mobile queda compatible con el nuevo contrato sin adoptar localización nativa completa en esta slice; se corrigió una dependencia de UI sobre texto visible para usar estado canónico.
+- Verificación ejecutada: `pnpm --filter @zona-cero/i18n test:strict`, `pnpm telegram:test:strict`, `pnpm web:test:strict`, `pnpm contracts:test:strict`, `pnpm api:test:strict`, `pnpm mobile:test:strict`, `pnpm test:strict`, `git diff --check` y `git status --short -- packages/i18n/node_modules`.
+- Fresh review final independiente: P0/P1/P2/P3 = 0.
 
 ## Gates antes de implementar cada slice
 

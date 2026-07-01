@@ -18,7 +18,8 @@
     "@vitejs/plugin-react": "latest",
     "vite": "latest",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "@zona-cero/i18n": "workspace:*"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "latest",

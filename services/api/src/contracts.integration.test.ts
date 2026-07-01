@@ -47,11 +47,12 @@ describe('api contract integration', () => {
         await request('/incidents/incident-zc-demo/join', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ ...telegramIncidentJoinRequestFixture, externalId: 'contract-telegram-user' }),
+          body: JSON.stringify({ ...telegramIncidentJoinRequestFixture, externalId: 'contract-telegram-user', preferredLocale: 'en' }),
         })
       ).json(),
     );
     expect(join.channelIdentity.channel).toBe('telegram');
+    expect(join.channelIdentity.preferredLocale).toBe('en');
   });
 
   it('returns work center payloads accepted by shared contracts', async () => {

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ContractErrorCodeSchema,
   ChannelSchema,
+  SupportedLocaleSchema,
   FamilyReunificationSearchRequestSchema,
   FamilyReunificationSearchResponseSchema,
   HealthResponseSchema,
@@ -56,6 +57,10 @@ import {
   WorkCenterListResponseSchema,
   WorkCenterSignalTypeSchema,
   channels,
+  supportedLocales,
+  defaultSupportedLocale,
+  fallbackSupportedLocale,
+  resolveSupportedLocale,
   contractErrorCodes,
   contractErrorSemantics,
   incidentRoles,
@@ -262,6 +267,41 @@ describe('contracts package', () => {
     expect(syncFreshnessStatuses).toEqual(['fresh', 'stale', 'expired', 'missing']);
   });
 
+  it('validates supported locale contracts without accepting arbitrary locale tags', () => {
+    expect(supportedLocales).toEqual(['es', 'en']);
+    expect(defaultSupportedLocale).toBe('es');
+    expect(fallbackSupportedLocale).toBe('en');
+    expect(SupportedLocaleSchema.parse('es')).toBe('es');
+    expect(SupportedLocaleSchema.parse('en')).toBe('en');
+    expect(SupportedLocaleSchema.safeParse('fr').success).toBe(false);
+    expect(SupportedLocaleSchema.safeParse('es-ES').success).toBe(false);
+    expect(resolveSupportedLocale('en')).toBe('en');
+    expect(resolveSupportedLocale('fr')).toBe('es');
+    expect(resolveSupportedLocale(undefined, fallbackSupportedLocale)).toBe('en');
+  });
+
+  it('validates channel identity and join locale as canonical supported codes', () => {
+    const join = IncidentJoinRequestSchema.parse({ channel: 'telegram', externalId: 'telegram-user-1', role: 'volunteer', preferredLocale: 'en' });
+    expect(join.preferredLocale).toBe('en');
+    expect(IncidentJoinRequestSchema.safeParse({ ...join, preferredLocale: 'fr' }).success).toBe(false);
+
+    const response = IncidentJoinResponseSchema.parse({
+      incident: { incidentId: 'incident-1', name: 'Drill', status: 'active', startsAt: '2026-07-01T00:00:00.000Z', locationName: 'North zone' },
+      channelIdentity: { channelIdentityId: 'chid-1', channel: 'telegram', externalId: 'telegram-user-1', preferredLocale: 'es' },
+      membership: {
+        incidentMembershipId: 'mship-1',
+        incidentId: 'incident-1',
+        channelIdentityId: 'chid-1',
+        role: 'volunteer',
+        permissions: { canReadIncident: true, canJoinIncident: true, canManageIncident: false, canManageLogistics: false, canManageMedical: false },
+      },
+      audit: { auditEventId: 'audit-1' },
+      idempotent: false,
+    });
+    expect(response.channelIdentity.preferredLocale).toBe('es');
+    expect(IncidentJoinResponseSchema.safeParse({ ...response, channelIdentity: { ...response.channelIdentity, preferredLocale: 'de' } }).success).toBe(false);
+  });
+
   it('exposes stable contract error codes', () => {
     expect(contractErrorCodes).toEqual([
       'invalid_payload',
@@ -378,7 +418,12 @@ describe('contracts package', () => {
       PrivateWebLinkConsumeResponseSchema.parse({
         accepted: true,
         linkId: 'pwl_1',
-        referral: { type: 'in_person_verification', message: 'Continue with in-person verification.' },
+        referral: {
+          type: 'in_person_verification',
+          reasonCode: 'family_reunification_in_person_verification',
+          messageCode: 'family_reunification.referral.in_person_verification',
+          message: 'family_reunification.referral.in_person_verification',
+        },
         audit: { auditEventId: 'audit_private_link_consumed_1' },
       }).referral.type,
     ).toBe('in_person_verification');
@@ -401,16 +446,25 @@ describe('contracts package', () => {
       matches: [{
         matchId: 'match_stub_1',
         status: 'possible_match',
+        reasonCode: 'family_reunification.match.family_desk_compare_details',
         ageBand: 'child',
-        relationHint: 'family desk can compare details in person',
         lastKnownAreaLabel: 'north gate area',
         verificationRequired: true,
       }],
-      referral: { type: 'in_person_verification', message: 'Visit the family reunification desk.' },
+      referral: {
+        type: 'in_person_verification',
+        reasonCode: 'family_reunification_in_person_verification',
+        messageCode: 'family_reunification.referral.in_person_verification',
+        message: 'family_reunification.referral.in_person_verification',
+      },
       audit: { auditEventId: 'audit_family_search_1' },
     });
 
+    expect(response.matches[0]?.reasonCode).toBe('family_reunification.match.family_desk_compare_details');
+    expect(response.referral.reasonCode).toBe('family_reunification_in_person_verification');
+    expect(response.referral.messageCode).toBe('family_reunification.referral.in_person_verification');
     expect(JSON.stringify(response)).not.toMatch(/photo|latitude|longitude|fullName|exactLocation/i);
+    expect(JSON.stringify(response)).not.toMatch(/family desk|visit the family reunification desk/i);
     expect(FamilyReunificationSearchResponseSchema.safeParse({
       ...response,
       matches: [{ ...response.matches[0], fullName: 'Sensitive Minor Name' }],

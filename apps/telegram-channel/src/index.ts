@@ -1,5 +1,7 @@
 import { Bot, type Context } from 'grammy';
 
+import { formatMessage, resolveLocaleFromCandidates, type SupportedLocale } from '@zona-cero/i18n';
+
 import {
   IncidentConfigResponseSchema,
   IncidentJoinRequestSchema,
@@ -154,7 +156,7 @@ export type TelegramUpdateLike = {
   message?: {
     text?: string;
     chat?: { id?: number | string; type?: string };
-    from?: { id?: number | string; first_name?: string };
+    from?: { id?: number | string; first_name?: string; language_code?: string };
   };
 };
 
@@ -193,10 +195,10 @@ export type TelegramFamilyReunificationPorts = TelegramTelemetryOptions & {
 };
 
 export type TelegramIncidentJoinState =
-  | { step: 'idle' }
-  | { step: 'awaitingIncident'; incidents: IncidentSummary[]; externalUserId: string }
-  | { step: 'awaitingPseudonym'; incident: IncidentSummary; externalUserId: string }
-  | { step: 'awaitingRole'; config: IncidentConfigResponse; externalUserId: string; pseudonym: string }
+  | { step: 'idle'; preferredLocale?: SupportedLocale }
+  | { step: 'awaitingIncident'; incidents: IncidentSummary[]; externalUserId: string; preferredLocale?: SupportedLocale }
+  | { step: 'awaitingPseudonym'; incident: IncidentSummary; externalUserId: string; preferredLocale?: SupportedLocale }
+  | { step: 'awaitingRole'; config: IncidentConfigResponse; externalUserId: string; pseudonym: string; preferredLocale?: SupportedLocale }
   | { step: 'joined'; response: IncidentJoinResponse }
   | { step: 'cancelled' };
 
@@ -223,15 +225,15 @@ export type TelegramDispatchTaskState =
   | { step: 'cancelled' };
 
 export type TelegramSosState =
-  | { step: 'idle' }
-  | { step: 'awaitingIncident'; incidents: IncidentSummary[]; externalUserId: string; displayName?: string }
-  | { step: 'awaitingConfirmation'; incident: IncidentSummary; externalUserId: string; displayName?: string; request: SosConnectedCreateRequest }
+  | { step: 'idle'; preferredLocale?: SupportedLocale }
+  | { step: 'awaitingIncident'; incidents: IncidentSummary[]; externalUserId: string; displayName?: string; preferredLocale?: SupportedLocale }
+  | { step: 'awaitingConfirmation'; incident: IncidentSummary; externalUserId: string; displayName?: string; request: SosConnectedCreateRequest; preferredLocale?: SupportedLocale }
   | { step: 'submitted'; response: SosAlertCreateResponse }
   | { step: 'cancelled' };
 
 export type TelegramFamilyReunificationState =
-  | { step: 'idle' }
-  | { step: 'awaitingIncident'; incidents: IncidentSummary[]; externalUserId: string; displayName?: string }
+  | { step: 'idle'; preferredLocale?: SupportedLocale }
+  | { step: 'awaitingIncident'; incidents: IncidentSummary[]; externalUserId: string; displayName?: string; preferredLocale?: SupportedLocale }
   | { step: 'linked'; response: PrivateWebLinkIssueResponse }
   | { step: 'cancelled' };
 
@@ -447,7 +449,8 @@ function parseTelegramIncidentJoinStateValue(value: unknown): TelegramIncidentJo
   }
 
   if (value.step === 'idle') {
-    return hasOnlyKeys(value, ['step']) ? { step: 'idle' } : null;
+    const preferredLocale = parsePreferredLocale(value);
+    return hasOnlyKeys(value, ['step', 'preferredLocale']) && preferredLocale ? { step: 'idle', ...preferredLocale } : null;
   }
 
   if (value.step === 'cancelled') {
@@ -455,11 +458,13 @@ function parseTelegramIncidentJoinStateValue(value: unknown): TelegramIncidentJo
   }
 
   if (value.step === 'awaitingIncident') {
+    const preferredLocale = parsePreferredLocale(value);
     if (
-      !hasOnlyKeys(value, ['step', 'incidents', 'externalUserId']) ||
+      !hasOnlyKeys(value, ['step', 'incidents', 'externalUserId', 'preferredLocale']) ||
       typeof value.externalUserId !== 'string' ||
       value.externalUserId.length === 0 ||
-      !Array.isArray(value.incidents)
+      !Array.isArray(value.incidents) ||
+      !preferredLocale
     ) {
       return null;
     }
@@ -477,32 +482,42 @@ function parseTelegramIncidentJoinStateValue(value: unknown): TelegramIncidentJo
       step: 'awaitingIncident',
       incidents,
       externalUserId: value.externalUserId,
+      ...preferredLocale,
     };
   }
 
   if (value.step === 'awaitingPseudonym') {
     const incident = IncidentSummarySchema.safeParse(value.incident);
+    const preferredLocale = parsePreferredLocale(value);
     if (
-      !hasOnlyKeys(value, ['step', 'incident', 'externalUserId']) ||
+      !hasOnlyKeys(value, ['step', 'incident', 'externalUserId', 'preferredLocale']) ||
       typeof value.externalUserId !== 'string' ||
       value.externalUserId.length === 0 ||
-      !incident.success
+      !incident.success ||
+      !preferredLocale
     ) {
       return null;
     }
 
-    return { step: 'awaitingPseudonym', incident: incident.data, externalUserId: value.externalUserId };
+    return {
+      step: 'awaitingPseudonym',
+      incident: incident.data,
+      externalUserId: value.externalUserId,
+      ...preferredLocale,
+    };
   }
 
   if (value.step === 'awaitingRole') {
     const config = IncidentConfigResponseSchema.safeParse(value.config);
+    const preferredLocale = parsePreferredLocale(value);
     if (
-      !hasOnlyKeys(value, ['step', 'config', 'externalUserId', 'pseudonym']) ||
+      !hasOnlyKeys(value, ['step', 'config', 'externalUserId', 'pseudonym', 'preferredLocale']) ||
       typeof value.externalUserId !== 'string' ||
       value.externalUserId.length === 0 ||
       typeof value.pseudonym !== 'string' ||
       value.pseudonym.length === 0 ||
-      !config.success
+      !config.success ||
+      !preferredLocale
     ) {
       return null;
     }
@@ -512,6 +527,7 @@ function parseTelegramIncidentJoinStateValue(value: unknown): TelegramIncidentJo
       config: config.data,
       externalUserId: value.externalUserId,
       pseudonym: value.pseudonym,
+      ...preferredLocale,
     };
   }
 
@@ -724,13 +740,22 @@ function parseTelegramDispatchTaskStateValue(value: unknown): TelegramDispatchTa
 
 function parseTelegramSosStateValue(value: unknown): TelegramSosState | null {
   if (!isRecord(value) || typeof value.step !== 'string') return null;
-  if (value.step === 'idle') return hasOnlyKeys(value, ['step']) ? { step: 'idle' } : null;
+  if (value.step === 'idle') {
+    const preferredLocale = parsePreferredLocale(value);
+    return hasOnlyKeys(value, ['step', 'preferredLocale']) && preferredLocale ? { step: 'idle', ...preferredLocale } : null;
+  }
   if (value.step === 'cancelled') return hasOnlyKeys(value, ['step']) ? { step: 'cancelled' } : null;
 
   const base = parseConversationBase(value);
 
   if (value.step === 'awaitingIncident') {
-    if (!hasOnlyKeys(value, ['step', 'incidents', 'externalUserId', 'displayName']) || !base || !Array.isArray(value.incidents)) return null;
+    if (
+      !hasOnlyKeys(value, ['step', 'incidents', 'externalUserId', 'displayName', 'preferredLocale']) ||
+      !base ||
+      !Array.isArray(value.incidents)
+    ) {
+      return null;
+    }
     const incidents = parseIncidentArray(value.incidents);
     return incidents ? { step: 'awaitingIncident', incidents, ...base } : null;
   }
@@ -738,7 +763,14 @@ function parseTelegramSosStateValue(value: unknown): TelegramSosState | null {
   if (value.step === 'awaitingConfirmation') {
     const incident = IncidentSummarySchema.safeParse(value.incident);
     const request = SosConnectedCreateRequestSchema.safeParse(value.request);
-    if (!hasOnlyKeys(value, ['step', 'incident', 'externalUserId', 'displayName', 'request']) || !base || !incident.success || !request.success) return null;
+    if (
+      !hasOnlyKeys(value, ['step', 'incident', 'externalUserId', 'displayName', 'request', 'preferredLocale']) ||
+      !base ||
+      !incident.success ||
+      !request.success
+    ) {
+      return null;
+    }
     return { step: 'awaitingConfirmation', incident: incident.data, ...base, request: request.data };
   }
 
@@ -752,13 +784,22 @@ function parseTelegramSosStateValue(value: unknown): TelegramSosState | null {
 
 function parseTelegramFamilyReunificationStateValue(value: unknown): TelegramFamilyReunificationState | null {
   if (!isRecord(value) || typeof value.step !== 'string') return null;
-  if (value.step === 'idle') return hasOnlyKeys(value, ['step']) ? { step: 'idle' } : null;
+  if (value.step === 'idle') {
+    const preferredLocale = parsePreferredLocale(value);
+    return hasOnlyKeys(value, ['step', 'preferredLocale']) && preferredLocale ? { step: 'idle', ...preferredLocale } : null;
+  }
   if (value.step === 'cancelled') return hasOnlyKeys(value, ['step']) ? { step: 'cancelled' } : null;
 
   const base = parseConversationBase(value);
 
   if (value.step === 'awaitingIncident') {
-    if (!hasOnlyKeys(value, ['step', 'incidents', 'externalUserId', 'displayName']) || !base || !Array.isArray(value.incidents)) return null;
+    if (
+      !hasOnlyKeys(value, ['step', 'incidents', 'externalUserId', 'displayName', 'preferredLocale']) ||
+      !base ||
+      !Array.isArray(value.incidents)
+    ) {
+      return null;
+    }
     const incidents = parseIncidentArray(value.incidents);
     return incidents ? { step: 'awaitingIncident', incidents, ...base } : null;
   }
@@ -781,9 +822,21 @@ function parseIncidentArray(values: unknown[]): IncidentSummary[] | null {
   return incidents;
 }
 
-function parseConversationBase(value: Record<string, unknown>): { externalUserId: string; displayName?: string } | null {
+function parseConversationBase(value: Record<string, unknown>): { externalUserId: string; displayName?: string; preferredLocale?: SupportedLocale } | null {
   if (!isNonEmptyString(value.externalUserId) || !isOptionalString(value.displayName)) return null;
-  return { externalUserId: value.externalUserId, ...(value.displayName ? { displayName: value.displayName } : {}) };
+  const preferredLocale = parsePreferredLocale(value);
+  if (!preferredLocale) return null;
+  return {
+    externalUserId: value.externalUserId,
+    ...(value.displayName ? { displayName: value.displayName } : {}),
+    ...preferredLocale,
+  };
+}
+
+function parsePreferredLocale(value: Record<string, unknown>): { preferredLocale?: SupportedLocale } | null {
+  if (value.preferredLocale === undefined) return {};
+  if (value.preferredLocale === 'es' || value.preferredLocale === 'en') return { preferredLocale: value.preferredLocale };
+  return null;
 }
 
 function parseReportKind(value: unknown): ResourceReportKind | null {
@@ -855,6 +908,50 @@ export function resolveTelegramCommand(update: TelegramUpdateLike): string | nul
   return text.split(/\s+/)[0].toLowerCase();
 }
 
+function readCommandArgument(update: TelegramUpdateLike): string | null {
+  const text = update.message?.text?.trim();
+  if (!text?.startsWith('/')) return null;
+  const [, argument] = text.split(/\s+/, 2);
+  return argument?.trim() || null;
+}
+
+export function resolveTelegramLocale(update: TelegramUpdateLike, preferredLocale?: string | null): SupportedLocale {
+  return resolveLocaleFromCandidates([preferredLocale, update.message?.from?.language_code]);
+}
+
+function localeName(locale: SupportedLocale, displayLocale: SupportedLocale): string {
+  return formatMessage(displayLocale, `locale.${locale}`);
+}
+
+function getPreferredLocaleFromState(state: unknown): SupportedLocale | undefined {
+  return isRecord(state) && (state.preferredLocale === 'es' || state.preferredLocale === 'en') ? state.preferredLocale : undefined;
+}
+
+function withPreferredLocale<TState extends object>(state: TState, locale: SupportedLocale): TState & { preferredLocale: SupportedLocale } {
+  return { ...state, preferredLocale: locale };
+}
+
+type TelegramLanguageCommandResult = TelegramWebhookResult & { locale: SupportedLocale };
+
+function handleTelegramLanguageCommand(update: TelegramUpdateLike, currentLocale?: SupportedLocale): TelegramLanguageCommandResult | null {
+  const command = resolveTelegramCommand(update);
+  if (command !== '/idioma' && command !== '/language') return null;
+
+  const requestedLocale = readCommandArgument(update);
+  if (!requestedLocale) {
+    const locale = resolveTelegramLocale(update, currentLocale);
+    return { accepted: true, command, locale, responseText: formatMessage(locale, 'telegram.language.choose') };
+  }
+
+  const locale = resolveLocaleFromCandidates([requestedLocale, currentLocale, update.message?.from?.language_code]);
+  return {
+    accepted: true,
+    command,
+    locale,
+    responseText: formatMessage(locale, 'telegram.language.changed', { localeName: localeName(locale, locale) }),
+  };
+}
+
 export function handleTelegramWebhookUpdate(
   update: TelegramUpdateLike,
   options: TelegramTelemetryOptions = {},
@@ -871,11 +968,15 @@ export function handleTelegramWebhookUpdate(
     );
   }
 
+  const locale = resolveTelegramLocale(update);
+  const languageResult = handleTelegramLanguageCommand(update);
+  if (languageResult) return languageResult;
+
   if (command === '/start') {
     return {
       accepted: true,
       command,
-      responseText: 'Zona Cero is ready. Choose an incident to continue.',
+      responseText: formatMessage(locale, 'telegram.start.ready'),
     };
   }
 
@@ -883,7 +984,7 @@ export function handleTelegramWebhookUpdate(
     return {
       accepted: true,
       command,
-      responseText: 'SOS requires incident selection and an exact CONFIRM SOS reply. Backend recording does not confirm delivery or rescue.',
+      responseText: formatMessage(locale, 'telegram.sos.command'),
     };
   }
 
@@ -891,14 +992,14 @@ export function handleTelegramWebhookUpdate(
     return {
       accepted: true,
       command,
-      responseText: 'Family reunification uses a private web link and in-person verification. Do not send photos, exact locations, or full minor identities in Telegram.',
+      responseText: formatMessage(locale, 'telegram.family.command'),
     };
   }
 
   return {
     accepted: true,
     command,
-    responseText: 'Zona Cero received the update. A guided flow will handle it in the matching slice.',
+    responseText: formatMessage(locale, 'telegram.default.received'),
   };
 }
 
@@ -918,13 +1019,16 @@ export async function handleTelegramIncidentJoinFlow(
     async () => {
       const text = update.message?.text?.trim() ?? '';
       const command = resolveTelegramCommand(update);
+      const locale = resolveTelegramLocale(update, getPreferredLocaleFromState(state));
+      const languageResult = handleTelegramLanguageCommand(update, locale);
+      if (languageResult) return { state: withPreferredLocale(state, languageResult.locale), responseText: languageResult.responseText };
 
       if (command === '/cancel') {
-        return { state: { step: 'cancelled' }, responseText: 'Join cancelled. Send /start to begin again.' };
+        return { state: { step: 'cancelled' }, responseText: formatMessage(locale, 'telegram.join.cancelled') };
       }
 
       if (command === '/start' || state.step === 'idle' || state.step === 'cancelled' || state.step === 'joined') {
-        return startIncidentSelection(update, ports);
+        return startIncidentSelection(update, ports, locale);
       }
 
       if (state.step === 'awaitingIncident') {
@@ -932,40 +1036,40 @@ export async function handleTelegramIncidentJoinFlow(
         if (!incident) {
           return {
             state,
-            responseText: `Incident not found. Reply with a number or incident id from the list.\n${formatIncidentList(state.incidents)}`,
+            responseText: formatMessage(locale, 'telegram.error.incident_not_found', { incidentList: formatIncidentList(state.incidents) }),
           };
         }
 
         return {
-          state: { step: 'awaitingPseudonym', incident, externalUserId: state.externalUserId },
-          responseText: `Selected: ${incident.name}. What pseudonym should we show to coordinators?`,
+          state: { step: 'awaitingPseudonym', incident, externalUserId: state.externalUserId, preferredLocale: locale },
+          responseText: formatMessage(locale, 'telegram.join.selected', { incidentName: incident.name }),
         };
       }
 
       if (state.step === 'awaitingPseudonym') {
         if (!text || text.startsWith('/')) {
-          return { state, responseText: 'Please send a visible pseudonym, or /cancel to stop.' };
+          return { state, responseText: formatMessage(locale, 'telegram.join.pseudonym.required') };
         }
 
         try {
           const config = await ports.getIncidentConfig(state.incident.incidentId);
           if (config.incident.incidentId !== state.incident.incidentId) {
-            return { state, responseText: 'Incident configuration does not match the selected incident. Please try /start again.' };
+            return { state, responseText: formatMessage(locale, 'telegram.join.config_mismatch') };
           }
 
           return {
-            state: { step: 'awaitingRole', config, externalUserId: state.externalUserId, pseudonym: text },
-            responseText: `Choose your role:\n${formatRoles(config.roles)}`,
+            state: { step: 'awaitingRole', config, externalUserId: state.externalUserId, pseudonym: text, preferredLocale: locale },
+            responseText: formatMessage(locale, 'telegram.join.role.choose', { roleList: formatRoles(config.roles) }),
           };
         } catch {
-          return { state, responseText: 'Could not load incident roles from the backend. Please try again later.' };
+          return { state, responseText: formatMessage(locale, 'telegram.join.roles_load_failed') };
         }
       }
 
       if (state.step === 'awaitingRole') {
         const role = selectRole(state.config.roles, text);
         if (!role) {
-          return { state, responseText: `Invalid role. Choose one of:\n${formatRoles(state.config.roles)}` };
+          return { state, responseText: formatMessage(locale, 'telegram.join.role.invalid', { roleList: formatRoles(state.config.roles) }) };
         }
 
         const request = IncidentJoinRequestSchema.parse({
@@ -973,49 +1077,44 @@ export async function handleTelegramIncidentJoinFlow(
           externalId: state.externalUserId,
           displayName: state.pseudonym,
           role,
+          preferredLocale: locale,
         });
 
         try {
           const response = await ports.joinIncident(state.config.incident.incidentId, request);
-          return { state: { step: 'joined', response }, responseText: formatJoinSuccess(response) };
+          return { state: { step: 'joined', response }, responseText: formatJoinSuccess(locale, response) };
         } catch {
-          return { state, responseText: 'Could not join the incident. The backend rejected or failed the join request.' };
+          return { state, responseText: formatMessage(locale, 'telegram.join.error.default') };
         }
       }
 
-      return { state, responseText: 'Send /start to begin the incident join flow.' };
+      return { state, responseText: formatMessage(locale, 'telegram.join.prompt') };
     },
   );
 }
 
 
-export function formatTelegramChannelLimitation(freshness: SyncFreshness): string | null {
+export function formatTelegramChannelLimitation(freshness: SyncFreshness, locale: SupportedLocale = 'es'): string | null {
   if (freshness.status === 'fresh' && freshness.cursorLag === 0 && !freshness.hasConflicts) return null;
 
   const details: string[] = [];
-  if (freshness.cursorLag > 0) details.push(`${freshness.cursorLag} backend updates may not be visible here yet`);
-  if (freshness.hasConflicts) details.push('sync conflicts need coordinator review');
+  if (freshness.cursorLag > 0) details.push(formatMessage(locale, 'telegram.freshness.cursor_lag', { count: freshness.cursorLag }));
+  if (freshness.hasConflicts) details.push(formatMessage(locale, 'telegram.freshness.conflicts'));
 
   const suffix = details.length > 0 ? ` ${details.join('; ')}.` : '';
 
-  if (freshness.status === 'missing') {
-    return `Channel limitation: backend freshness is missing for this scope. Telegram may be incomplete.${suffix}`;
-  }
-
-  if (freshness.status === 'expired') {
-    return `Channel limitation: backend freshness is expired for this scope. Do not treat Telegram data as current.${suffix}`;
-  }
-
-  return `Channel limitation: backend freshness is stale for this scope. Recent operations may not be visible in Telegram.${suffix}`;
+  if (freshness.status === 'missing') return formatMessage(locale, 'telegram.freshness.missing', { suffix });
+  if (freshness.status === 'expired') return formatMessage(locale, 'telegram.freshness.expired', { suffix });
+  return formatMessage(locale, 'telegram.freshness.stale', { suffix });
 }
 
-async function getTelegramChannelLimitation(ports: TelegramWorkCenterReportPorts, incidentId: string): Promise<string | null> {
+async function getTelegramChannelLimitation(ports: TelegramWorkCenterReportPorts, incidentId: string, locale: SupportedLocale = 'es'): Promise<string | null> {
   if (!ports.getChannelFreshness) return null;
 
   try {
-    return formatTelegramChannelLimitation(await ports.getChannelFreshness(incidentId));
+    return formatTelegramChannelLimitation(await ports.getChannelFreshness(incidentId), locale);
   } catch {
-    return 'Channel limitation: backend freshness could not be loaded. Treat Telegram as informational until the API responds.';
+    return formatMessage(locale, 'telegram.freshness.unavailable');
   }
 }
 
@@ -1035,6 +1134,7 @@ export async function handleTelegramWorkCenterReportFlow(
     async () => {
       const text = update.message?.text?.trim() ?? '';
       const command = resolveTelegramCommand(update);
+      const locale = resolveTelegramLocale(update);
 
       if (command === '/cancel') {
         return { state: { step: 'cancelled' }, responseText: 'Work center report cancelled. Send /workcenter to begin again.' };
@@ -1049,11 +1149,11 @@ export async function handleTelegramWorkCenterReportFlow(
         if (!incident) {
           return {
             state,
-            responseText: `Incident not found. Reply with a number or incident id from the list.\n${formatIncidentList(state.incidents)}`,
+            responseText: formatMessage(locale, 'telegram.error.incident_not_found', { incidentList: formatIncidentList(state.incidents) }),
           };
         }
 
-        const limitation = await getTelegramChannelLimitation(ports, incident.incidentId);
+        const limitation = await getTelegramChannelLimitation(ports, incident.incidentId, locale);
 
         return {
           state: {
@@ -1291,9 +1391,12 @@ export async function handleTelegramSosFlow(
     async () => {
       const text = update.message?.text?.trim() ?? '';
       const command = resolveTelegramCommand(update);
+      const locale = resolveTelegramLocale(update, getPreferredLocaleFromState(state));
+      const languageResult = handleTelegramLanguageCommand(update, locale);
+      if (languageResult) return { state: withPreferredLocale(state, languageResult.locale), responseText: languageResult.responseText };
 
       if (command === '/cancel') {
-        return { state: { step: 'cancelled' }, responseText: 'SOS cancelled before backend submission. Send /sos to begin again.' };
+        return { state: { step: 'cancelled' }, responseText: formatMessage(locale, 'telegram.sos.cancelled') };
       }
 
       if (command === '/sos' || state.step === 'idle' || state.step === 'cancelled' || state.step === 'submitted') {
@@ -1305,7 +1408,7 @@ export async function handleTelegramSosFlow(
         if (!incident) {
           return {
             state,
-            responseText: `Incident not found. Reply with a number or incident id from the list.\n${formatIncidentList(state.incidents)}`,
+            responseText: formatMessage(locale, 'telegram.error.incident_not_found', { incidentList: formatIncidentList(state.incidents) }),
           };
         }
 
@@ -1323,32 +1426,33 @@ export async function handleTelegramSosFlow(
             externalUserId: state.externalUserId,
             displayName: state.displayName,
             request,
+            preferredLocale: locale,
           },
-          responseText: formatSosConfirmation(incident),
+          responseText: formatSosConfirmation(locale, incident),
         };
       }
 
       if (state.step === 'awaitingConfirmation') {
         if (isCancellation(text)) {
-          return { state: { step: 'cancelled' }, responseText: 'SOS cancelled before backend submission. Send /sos to begin again.' };
+          return { state: { step: 'cancelled' }, responseText: formatMessage(locale, 'telegram.sos.cancelled') };
         }
 
         if (!isStrongSosConfirmation(text)) {
           return {
             state,
-            responseText: 'For safety, reply exactly CONFIRM SOS to submit, no to cancel, or /cancel to stop. This does not confirm delivery or rescue.',
+            responseText: formatMessage(locale, 'telegram.sos.confirmation.required'),
           };
         }
 
         try {
           const response = await ports.createSosAlert(state.incident.incidentId, state.request);
-          return { state: { step: 'submitted', response }, responseText: formatSosSuccess(response) };
+          return { state: { step: 'submitted', response }, responseText: formatSosSuccess(locale, response) };
         } catch (error) {
-          return { state, responseText: formatSosError(error) };
+          return { state, responseText: formatSosError(locale, error) };
         }
       }
 
-      return { state, responseText: 'Send /sos to begin the SOS flow.' };
+      return { state, responseText: formatMessage(locale, 'telegram.sos.command') };
     },
   );
 }
@@ -1369,9 +1473,12 @@ export async function handleTelegramFamilyReunificationFlow(
     async () => {
       const text = update.message?.text?.trim() ?? '';
       const command = resolveTelegramCommand(update);
+      const locale = resolveTelegramLocale(update, getPreferredLocaleFromState(state));
+      const languageResult = handleTelegramLanguageCommand(update, locale);
+      if (languageResult) return { state: withPreferredLocale(state, languageResult.locale), responseText: languageResult.responseText };
 
       if (command === '/cancel') {
-        return { state: { step: 'cancelled' }, responseText: 'Family reunification link cancelled. Go to the in-person desk if you need help now.' };
+        return { state: { step: 'cancelled' }, responseText: formatMessage(locale, 'telegram.family.cancelled') };
       }
 
       if (isFamilyReunificationCommand(command) || state.step === 'idle' || state.step === 'cancelled' || state.step === 'linked') {
@@ -1383,7 +1490,7 @@ export async function handleTelegramFamilyReunificationFlow(
         if (!incident) {
           return {
             state,
-            responseText: `Incident not found. Reply with a number or incident id from the list.\n${formatIncidentList(state.incidents)}`,
+            responseText: formatMessage(locale, 'telegram.error.incident_not_found', { incidentList: formatIncidentList(state.incidents) }),
           };
         }
 
@@ -1394,36 +1501,37 @@ export async function handleTelegramFamilyReunificationFlow(
           const url = ports.formatPrivateLinkUrl?.(response) ?? formatFamilyReunificationPrivateUrl(response);
           return {
             state: { step: 'linked', response },
-            responseText: formatFamilyReunificationLinkSuccess(url),
+            responseText: formatFamilyReunificationLinkSuccess(locale, url),
           };
         } catch {
-          return { state, responseText: formatFamilyReunificationLinkError() };
+          return { state, responseText: formatFamilyReunificationLinkError(locale) };
         }
       }
 
-      return { state, responseText: 'Send /familia or /reunificacion to get a private family reunification link.' };
+      return { state, responseText: formatMessage(locale, 'telegram.family.prompt') };
     },
   );
 }
 
-async function startIncidentSelection(update: TelegramUpdateLike, ports: TelegramIncidentJoinPorts): Promise<TelegramIncidentJoinFlowResult> {
+async function startIncidentSelection(update: TelegramUpdateLike, ports: TelegramIncidentJoinPorts, preferredLocale?: SupportedLocale): Promise<TelegramIncidentJoinFlowResult> {
+  const locale = resolveTelegramLocale(update, preferredLocale);
   const externalUserId = getTelegramExternalUserId(update);
   if (!externalUserId) {
-    return { state: { step: 'idle' }, responseText: 'Telegram user id is required to join an incident.' };
+    return { state: { step: 'idle', preferredLocale: locale }, responseText: formatMessage(locale, 'telegram.join.user.required') };
   }
 
   try {
     const { incidents } = await ports.listIncidents();
     if (incidents.length === 0) {
-      return { state: { step: 'idle' }, responseText: 'No active incidents are available right now.' };
+      return { state: { step: 'idle', preferredLocale: locale }, responseText: formatMessage(locale, 'telegram.error.no_active_incidents') };
     }
 
     return {
-      state: { step: 'awaitingIncident', incidents, externalUserId },
-      responseText: `Choose an incident:\n${formatIncidentList(incidents)}`,
+      state: { step: 'awaitingIncident', incidents, externalUserId, preferredLocale: locale },
+      responseText: formatMessage(locale, 'telegram.join.start', { incidentList: formatIncidentList(incidents) }),
     };
   } catch {
-    return { state: { step: 'idle' }, responseText: 'Could not load incidents from the backend. Please try again later.' };
+    return { state: { step: 'idle', preferredLocale: locale }, responseText: formatMessage(locale, 'telegram.error.incidents_load_failed') };
   }
 }
 
@@ -1431,22 +1539,19 @@ async function startFamilyReunificationIncidentSelection(
   update: TelegramUpdateLike,
   ports: TelegramFamilyReunificationPorts,
 ): Promise<TelegramFamilyReunificationFlowResult> {
+  const locale = resolveTelegramLocale(update);
   const externalUserId = getTelegramExternalUserId(update);
-  if (!externalUserId) return { state: { step: 'idle' }, responseText: 'Telegram user id is required to request a private family reunification link.' };
+  if (!externalUserId) return { state: { step: 'idle', preferredLocale: locale }, responseText: formatMessage(locale, 'telegram.family.user.required') };
 
   try {
     const { incidents } = await ports.listIncidents();
-    if (incidents.length === 0) return { state: { step: 'idle' }, responseText: 'No active incidents are available right now. Go to the family reunification desk for help.' };
+    if (incidents.length === 0) return { state: { step: 'idle', preferredLocale: locale }, responseText: formatMessage(locale, 'telegram.family.no.incidents') };
     return {
-      state: { step: 'awaitingIncident', incidents, externalUserId, displayName: getTelegramDisplayName(update) },
-      responseText: [
-        'Family reunification is handled in private web and completed with in-person verification.',
-        'Do not send photos, exact locations, or full minor identities in Telegram.',
-        `Choose an incident:\n${formatIncidentList(incidents)}`,
-      ].join('\n'),
+      state: { step: 'awaitingIncident', incidents, externalUserId, displayName: getTelegramDisplayName(update), preferredLocale: locale },
+      responseText: formatMessage(locale, 'telegram.family.start', { incidentList: formatIncidentList(incidents) }),
     };
   } catch {
-    return { state: { step: 'idle' }, responseText: formatFamilyReunificationLinkError() };
+    return { state: { step: 'idle', preferredLocale: locale }, responseText: formatFamilyReunificationLinkError(locale) };
   }
 }
 
@@ -1509,18 +1614,19 @@ ${formatIncidentList(incidents)}` };
 }
 
 async function startSosIncidentSelection(update: TelegramUpdateLike, ports: TelegramSosPorts): Promise<TelegramSosFlowResult> {
+  const locale = resolveTelegramLocale(update);
   const externalUserId = getTelegramExternalUserId(update);
-  if (!externalUserId) return { state: { step: 'idle' }, responseText: 'Telegram user id is required to submit SOS.' };
+  if (!externalUserId) return { state: { step: 'idle', preferredLocale: locale }, responseText: formatMessage(locale, 'telegram.sos.user.required') };
 
   try {
     const { incidents } = await ports.listIncidents();
-    if (incidents.length === 0) return { state: { step: 'idle' }, responseText: 'No active incidents are available right now.' };
+    if (incidents.length === 0) return { state: { step: 'idle', preferredLocale: locale }, responseText: formatMessage(locale, 'telegram.sos.no.incidents') };
     return {
-      state: { step: 'awaitingIncident', incidents, externalUserId, displayName: getTelegramDisplayName(update) },
-      responseText: `Choose an incident before starting SOS:\n${formatIncidentList(incidents)}`,
+      state: { step: 'awaitingIncident', incidents, externalUserId, displayName: getTelegramDisplayName(update), preferredLocale: locale },
+      responseText: formatMessage(locale, 'telegram.sos.start', { incidentList: formatIncidentList(incidents) }),
     };
   } catch {
-    return { state: { step: 'idle' }, responseText: 'Could not load incidents from the backend. Please try again later.' };
+    return { state: { step: 'idle', preferredLocale: locale }, responseText: formatMessage(locale, 'telegram.sos.incidents_load_failed') };
   }
 }
 
@@ -1563,12 +1669,13 @@ function formatRoles(roles: IncidentRole[]): string {
   return roles.map((role, index) => `${index + 1}. ${role}`).join('\n');
 }
 
-function formatJoinSuccess(response: IncidentJoinResponse): string {
-  return [
-    `Joined ${response.incident.name} as ${response.membership.role}.`,
-    `Permissions: ${formatPermissions(response.membership.permissions)}`,
-    `Audit: ${response.audit.auditEventId}`,
-  ].join('\n');
+function formatJoinSuccess(locale: SupportedLocale, response: IncidentJoinResponse): string {
+  return formatMessage(locale, 'telegram.join.success', {
+    incidentName: response.incident.name,
+    role: response.membership.role,
+    permissions: formatPermissions(response.membership.permissions),
+    auditEventId: response.audit.auditEventId,
+  });
 }
 
 function isConfirmation(text: string): boolean {
@@ -1609,17 +1716,12 @@ function formatFamilyReunificationPrivateUrl(response: PrivateWebLinkIssueRespon
   return `/family-reunification?${params.toString()}`;
 }
 
-function formatFamilyReunificationLinkSuccess(url: string): string {
-  return [
-    'Open this private web link for minimized family reunification search:',
-    url,
-    'Limits: no photos, no exact location, and no full identity of minors in chat or the form.',
-    'All results require in-person verification at the family reunification desk.',
-  ].join('\n');
+function formatFamilyReunificationLinkSuccess(locale: SupportedLocale, url: string): string {
+  return formatMessage(locale, 'telegram.family.link.success', { url });
 }
 
-function formatFamilyReunificationLinkError(): string {
-  return 'Could not create a private family reunification link. Go to the family reunification desk for in-person help. Do not send photos, exact locations, or full minor identities in Telegram.';
+function formatFamilyReunificationLinkError(locale: SupportedLocale = 'es'): string {
+  return formatMessage(locale, 'telegram.family.link.error');
 }
 
 
@@ -1685,30 +1787,28 @@ function formatDispatchTaskSuccess(response: DispatchTaskResponse): string {
   return [`Dispatch task updated: ${response.dispatchTask.dispatchTaskId}.`, `Status: ${response.dispatchTask.status}`].join('\n');
 }
 
-function formatSosConfirmation(incident: IncidentSummary): string {
-  return [
-    'Critical SOS request.',
-    `Incident: ${incident.name}`,
-    'Reply exactly CONFIRM SOS to record this SOS in the backend and queue fan-out.',
-    'This does not confirm delivery, rescue, or exact location. Use /cancel to stop.',
-  ].join('\n');
+function formatSosConfirmation(locale: SupportedLocale, incident: IncidentSummary): string {
+  return formatMessage(locale, 'telegram.sos.confirmation', { incidentName: incident.name });
 }
 
-function formatSosSuccess(response: SosAlertCreateResponse): string {
-  return [
-    `SOS ID: ${response.sosAlert.sosAlertId}`,
-    `Status: ${response.sosAlert.status}`,
-    `Fan-out: total ${response.fanout.total}, queued ${response.fanout.queued}, pending ${response.fanout.pending}, failed ${response.fanout.failed}, cancelled ${response.fanout.cancelled}`,
-    'Backend recording confirmed only. This does not confirm delivery, rescue, or exact location.',
-  ].join('\n');
+function formatSosSuccess(locale: SupportedLocale, response: SosAlertCreateResponse): string {
+  return formatMessage(locale, 'telegram.sos.success', {
+    sosAlertId: response.sosAlert.sosAlertId,
+    status: response.sosAlert.status,
+    total: response.fanout.total,
+    queued: response.fanout.queued,
+    pending: response.fanout.pending,
+    failed: response.fanout.failed,
+    cancelled: response.fanout.cancelled,
+  });
 }
 
-function formatSosError(error: unknown): string {
+function formatSosError(locale: SupportedLocale, error: unknown): string {
   const code = readErrorCode(error);
-  if (code === 'permission_denied') return 'Permission denied. Join this incident first with /start, then start SOS again.';
-  if (code === 'not_found') return 'Incident not found. Send /sos and choose an available incident.';
-  if (code === 'invalid_payload') return 'Invalid SOS payload. Send /sos and try again.';
-  return 'Could not record SOS. The backend rejected or failed the request.';
+  if (code === 'permission_denied') return formatMessage(locale, 'telegram.sos.error.permission_denied');
+  if (code === 'not_found') return formatMessage(locale, 'telegram.sos.error.not_found');
+  if (code === 'invalid_payload') return formatMessage(locale, 'telegram.sos.error.invalid_payload');
+  return formatMessage(locale, 'telegram.sos.error.default');
 }
 
 function formatDispatchTaskError(error: unknown): string {

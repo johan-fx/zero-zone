@@ -36,6 +36,7 @@ import {
   webTelemetry,
   type WebTelemetryAction,
 } from './telemetry';
+import { I18nProvider, LanguageSelector, useI18n } from './i18n';
 import './styles.css';
 
 type HealthState =
@@ -124,6 +125,14 @@ const dispatchActions: { label: string; status: Exclude<DispatchTaskStatus, 'pen
 ];
 
 export function App() {
+  return (
+    <I18nProvider>
+      <AppContent />
+    </I18nProvider>
+  );
+}
+
+function AppContent() {
   reportWebTelemetry('app.loaded', 'accepted');
   const privateLinkParams = getPrivateLinkParams();
 
@@ -141,6 +150,7 @@ export function App() {
 }
 
 function OperationsPanel() {
+  const { t } = useI18n();
   const incidentId = import.meta.env.VITE_INCIDENT_ID || defaultIncidentId;
   const cellId = import.meta.env.VITE_CELL_ID || defaultCellId;
   const webExternalId = import.meta.env.VITE_WEB_EXTERNAL_ID || defaultWebExternalId;
@@ -268,7 +278,7 @@ function OperationsPanel() {
     if (sosConfirmation.trim() !== strongSosConfirmation) {
       setSosState({
         ...sosState,
-        actionMessage: `Type ${strongSosConfirmation} exactly before submitting SOS. Backend recording does not confirm delivery or rescue.`,
+        actionMessage: t('web.sos.exact.required'),
       });
       reportWebTelemetry('sos.rejected', 'rejected');
       return;
@@ -293,7 +303,7 @@ function OperationsPanel() {
           sosAlerts: upsertSosAlert(sosState.response.sosAlerts, response.sosAlert),
           fanout: response.fanout,
         },
-        actionMessage: `SOS ID: ${response.sosAlert.sosAlertId}. Status: ${response.sosAlert.status}. ${formatFanout(response.fanout)} Backend recording only; delivery, rescue, and exact location are not confirmed.`,
+        actionMessage: t('web.sos.action.success', { sosAlertId: response.sosAlert.sosAlertId, status: response.sosAlert.status, fanout: formatFanout(response.fanout, t) }),
       });
       setSosConfirmation('');
       setSosPendingReportedAt(null);
@@ -309,16 +319,19 @@ function OperationsPanel() {
   return (
     <main className="shell">
       <section className="hero" aria-labelledby="page-title">
-        <p className="eyebrow">Zona Cero Web UI</p>
-        <h1 id="page-title">Work centers live operations panel</h1>
-        <p className="summary">Online list, detail, resources and logistics views consume backend contracts directly.</p>
+        <div className="hero-topline">
+          <p className="eyebrow">{t('web.hero.eyebrow')}</p>
+          <LanguageSelector />
+        </div>
+        <h1 id="page-title">{t('web.hero.title')}</h1>
+        <p className="summary">{t('web.hero.summary')}</p>
       </section>
 
       <section className="status-card" aria-live="polite">
-        <h2>Backend health</h2>
-        {healthState.status === 'loading' ? <p>Checking API health…</p> : null}
+        <h2>{t('web.health.title')}</h2>
+        {healthState.status === 'loading' ? <p>{t('web.health.loading')}</p> : null}
         {healthState.status === 'ready' ? (
-          <p data-testid="api-health">{healthState.health.service} is online ({healthState.health.version})</p>
+          <p data-testid="api-health">{t('web.health.online', { service: healthState.health.service, version: healthState.health.version })}</p>
         ) : null}
         {healthState.status === 'error' ? <p role="alert">{healthState.message}</p> : null}
       </section>
@@ -356,12 +369,12 @@ function OperationsPanel() {
         <div className="section-header">
           <div>
             <p className="eyebrow">Critical</p>
-            <h2 id="sos-title">Connected SOS</h2>
+            <h2 id="sos-title">{t('web.sos.title')}</h2>
           </div>
           {sosState.status === 'ready' ? <strong>{sosState.response.sosAlerts.length} alerts</strong> : null}
         </div>
-        <p className="summary">Records SOS in the backend and shows backend fan-out state. It does not confirm delivery or rescue.</p>
-        {sosState.status === 'loading' ? <p>Loading SOS status…</p> : null}
+        <p className="summary">{t('web.sos.summary')}</p>
+        {sosState.status === 'loading' ? <p>{t('web.sos.loading')}</p> : null}
         {sosState.status === 'error' ? <p role="alert">{sosState.message}</p> : null}
         {sosState.status === 'ready' ? (
           <SosPanel
@@ -401,6 +414,7 @@ function FamilyReunificationPrivateView({
   correlationId: string;
   fingerprint: string;
 }) {
+  const { t } = useI18n();
   const [state, setState] = useState<FamilyReunificationState>({ status: 'validating' });
   const [form, setForm] = useState<FamilyReunificationForm>({
     ageBand: '',
@@ -426,7 +440,7 @@ function FamilyReunificationPrivateView({
         reportWebTelemetry('private_link.completed', 'accepted');
       })
       .catch((error: unknown) => {
-        if (active) setState({ status: 'error', message: formatPrivateLinkError(error) });
+        if (active) setState({ status: 'error', message: formatPrivateLinkError(error, t) });
         const classified = classifyWebError(error);
         reportWebTelemetry(
           classified.errorCode === 'rate_limited'
@@ -464,10 +478,10 @@ function FamilyReunificationPrivateView({
           ...(form.lastKnownAreaLabel.trim() ? { lastKnownAreaLabel: form.lastKnownAreaLabel.trim() } : {}),
         },
       }, undefined, getTurnstileForwardingOptions());
-      setState({ ...state, search, message: 'Search completed. Continue with in-person verification.' });
+      setState({ ...state, search, message: t('web.family.search.completed') });
       reportWebTelemetry('private_link.completed', 'accepted', startedAt);
     } catch (error: unknown) {
-      setState({ ...state, message: formatPrivateLinkError(error) });
+      setState({ ...state, message: formatPrivateLinkError(error, t) });
       reportWebTelemetry('private_link.rejected', 'rejected', startedAt, error);
     } finally {
       setIsSearching(false);
@@ -487,10 +501,10 @@ function FamilyReunificationPrivateView({
         fingerprint,
         referralReason: 'family_reunification_in_person_verification',
       });
-      setState({ ...state, referral, message: referral.referral.message });
+      setState({ ...state, referral, message: formatFamilyReferralMessage(referral.referral.type, t) });
       reportWebTelemetry('private_link.completed', 'accepted', startedAt);
     } catch (error: unknown) {
-      setState({ ...state, message: formatPrivateLinkError(error) });
+      setState({ ...state, message: formatPrivateLinkError(error, t) });
       reportWebTelemetry('private_link.rejected', 'rejected', startedAt, error);
     } finally {
       setIsReferring(false);
@@ -500,35 +514,36 @@ function FamilyReunificationPrivateView({
   return (
     <main className="shell private-shell">
       <section className="hero private-hero" aria-labelledby="family-reunification-title">
-        <p className="eyebrow">Private family reunification</p>
-        <h1 id="family-reunification-title">Identity-safe search and in-person referral</h1>
-        <p className="summary">
-          This private web page uses the server-side link authority. It never trusts TTL, scope, correlation, or consumption status from this browser.
-        </p>
+        <div className="hero-topline">
+          <p className="eyebrow">{t('web.family.private.eyebrow')}</p>
+          <LanguageSelector />
+        </div>
+        <h1 id="family-reunification-title">{t('web.family.private.title')}</h1>
+        <p className="summary">{t('web.family.private.summary')}</p>
       </section>
 
       <section className="status-card safety-card" aria-labelledby="family-limits-title">
-        <h2 id="family-limits-title">Safety limits</h2>
+        <h2 id="family-limits-title">{t('web.family.safety.title')}</h2>
         <ul className="safety-list">
-          <li>No photos are requested or shown.</li>
-          <li>No exact location is requested or shown.</li>
-          <li>No full identity of minors is requested or shown.</li>
-          <li>All possible matches require in-person verification at the family reunification desk.</li>
+          <li>{t('web.family.safety.no_photos')}</li>
+          <li>{t('web.family.safety.no_exact_location')}</li>
+          <li>{t('web.family.safety.no_minor_identity')}</li>
+          <li>{t('web.family.safety.in_person')}</li>
         </ul>
       </section>
 
       {state.status === 'validating' ? (
         <section className="status-card" aria-live="polite">
-          <h2>Checking private link</h2>
-          <p>Validating access with the backend…</p>
+          <h2>{t('web.family.validation.checking.title')}</h2>
+          <p>{t('web.family.validation.checking.body')}</p>
         </section>
       ) : null}
 
       {state.status === 'error' ? (
         <section className="status-card" aria-live="polite">
-          <h2>Private link unavailable</h2>
+          <h2>{t('web.family.error.title')}</h2>
           <p role="alert">{state.message}</p>
-          <p>Go to the family reunification desk for in-person help. Do not share sensitive details in chat.</p>
+          <p>{t('web.family.error.help')}</p>
         </section>
       ) : null}
 
@@ -536,56 +551,56 @@ function FamilyReunificationPrivateView({
         <section className="status-card" aria-labelledby="private-search-title" aria-live="polite">
           <div className="section-header">
             <div>
-              <p className="eyebrow">Incident {state.validation.incidentId}</p>
-              <h2 id="private-search-title">Minimized private search</h2>
+              <p className="eyebrow">{t('web.family.search.incident', { incidentId: state.validation.incidentId })}</p>
+              <h2 id="private-search-title">{t('web.family.search.title')}</h2>
             </div>
-            <strong>In-person verification required</strong>
+            <strong>{t('web.family.search.verification_required')}</strong>
           </div>
 
           {state.message ? <p role="status">{state.message}</p> : null}
 
           <form className="family-form" onSubmit={handleSearchSubmit}>
-            <label htmlFor="family-age-band">Approximate age band</label>
+            <label htmlFor="family-age-band">{t('web.family.form.age.label')}</label>
             <select
               id="family-age-band"
               name="ageBand"
               value={form.ageBand}
               onChange={(event) => setForm({ ...form, ageBand: event.currentTarget.value as FamilyReunificationForm['ageBand'] })}
             >
-              <option value="">Unknown</option>
-              <option value="child">Child</option>
-              <option value="teen">Teen</option>
-              <option value="adult">Adult</option>
-              <option value="older_adult">Older adult</option>
+              <option value="">{t('web.family.form.age.unknown')}</option>
+              <option value="child">{t('web.family.form.age.child')}</option>
+              <option value="teen">{t('web.family.form.age.teen')}</option>
+              <option value="adult">{t('web.family.form.age.adult')}</option>
+              <option value="older_adult">{t('web.family.form.age.older_adult')}</option>
             </select>
 
-            <label htmlFor="family-relation-hint">Relationship hint</label>
+            <label htmlFor="family-relation-hint">{t('web.family.form.relation.label')}</label>
             <input
               id="family-relation-hint"
               name="relationHint"
               maxLength={80}
               value={form.relationHint}
               onChange={(event) => setForm({ ...form, relationHint: event.currentTarget.value })}
-              placeholder="Example: parent looking for child"
+              placeholder={t('web.family.form.relation.placeholder')}
             />
 
-            <label htmlFor="family-area-label">Broad last-known area label</label>
+            <label htmlFor="family-area-label">{t('web.family.form.area.label')}</label>
             <input
               id="family-area-label"
               name="lastKnownAreaLabel"
               maxLength={120}
               value={form.lastKnownAreaLabel}
               onChange={(event) => setForm({ ...form, lastKnownAreaLabel: event.currentTarget.value })}
-              placeholder="Example: north gate area"
+              placeholder={t('web.family.form.area.placeholder')}
             />
 
-            <button type="submit" disabled={isSearching}>{isSearching ? 'Searching…' : 'Search safely'}</button>
+            <button type="submit" disabled={isSearching}>{isSearching ? t('web.family.form.searching') : t('web.family.form.search')}</button>
           </form>
 
           {state.search ? <FamilyReunificationResults response={state.search} /> : null}
 
           <button className="primary-action" type="button" onClick={handleInPersonReferral} disabled={isReferring}>
-            {isReferring ? 'Preparing referral…' : 'Continue to in-person verification'}
+            {isReferring ? t('web.family.referral.prepare') : t('web.family.referral.continue')}
           </button>
         </section>
       ) : null}
@@ -593,25 +608,46 @@ function FamilyReunificationPrivateView({
   );
 }
 
+
+function formatFamilyMatchRelation(status: FamilyReunificationSearchResponse['matches'][number]['status'], t: ReturnType<typeof useI18n>['t']): string {
+  if (status === 'possible_match') return t('web.family.results.relation.possible_match');
+  return t('web.family.results.not_provided');
+}
+
+function formatFamilyAgeBand(ageBand: FamilyReunificationSearchResponse['matches'][number]['ageBand'], t: ReturnType<typeof useI18n>['t']): string {
+  if (ageBand === 'child') return t('web.family.form.age.child');
+  if (ageBand === 'teen') return t('web.family.form.age.teen');
+  if (ageBand === 'adult') return t('web.family.form.age.adult');
+  if (ageBand === 'older_adult') return t('web.family.form.age.older_adult');
+  return t('web.family.results.not_provided');
+}
+
+function formatFamilyReferralMessage(type: FamilyReunificationSearchResponse['referral']['type'], t: ReturnType<typeof useI18n>['t']): string {
+  if (type === 'in_person_verification') return t('web.family.referral.in_person_verification');
+  return t('web.family.link.unavailable');
+}
+
 function FamilyReunificationResults({ response }: { response: FamilyReunificationSearchResponse }) {
+  const { t } = useI18n();
+
   return (
     <div className="family-results">
-      <h3>Minimized results</h3>
-      {response.matches.length === 0 ? <p>No public result. Continue with in-person verification.</p> : null}
+      <h3>{t('web.family.results.title')}</h3>
+      {response.matches.length === 0 ? <p>{t('web.family.results.none')}</p> : null}
       <ul className="work-center-list">
         {response.matches.map((match) => (
           <li key={match.matchId}>
             <article className="work-center-card">
-              <h4>{match.status === 'possible_match' ? 'Possible in-person match' : 'No public result'}</h4>
-              <p>Age band: {match.ageBand ?? 'not provided'}</p>
-              <p>Relationship hint: {match.relationHint ?? 'not provided'}</p>
-              <p>Broad area: {match.lastKnownAreaLabel ?? 'not provided'}</p>
-              <p>Verification required: {match.verificationRequired ? 'yes' : 'no'}</p>
+              <h4>{match.status === 'possible_match' ? t('web.family.results.possible_match') : t('web.family.results.none')}</h4>
+              <p>{t('web.family.results.age', { value: formatFamilyAgeBand(match.ageBand, t) })}</p>
+              <p>{t('web.family.results.relation', { value: formatFamilyMatchRelation(match.status, t) })}</p>
+              <p>{t('web.family.results.area', { value: match.lastKnownAreaLabel ?? t('web.family.results.not_provided') })}</p>
+              <p>{t('web.family.results.verification', { value: match.verificationRequired ? t('web.family.results.yes') : t('web.family.results.no') })}</p>
             </article>
           </li>
         ))}
       </ul>
-      <p>{response.referral.message}</p>
+      <p>{formatFamilyReferralMessage(response.referral.type, t)}</p>
     </div>
   );
 }
@@ -629,12 +665,14 @@ function SosPanel({
   isSubmitting: boolean;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  const { t } = useI18n();
+
   return (
     <div>
       {state.actionMessage ? <p role="status">{state.actionMessage}</p> : null}
       <FanoutStrip fanout={state.response.fanout} />
       <form className="sos-form" onSubmit={onSubmit}>
-        <label htmlFor="sos-confirmation">Type CONFIRM SOS to submit</label>
+        <label htmlFor="sos-confirmation">{t('web.sos.confirm.label')}</label>
         <input
           id="sos-confirmation"
           name="sos-confirmation"
@@ -643,8 +681,8 @@ function SosPanel({
           aria-describedby="sos-copy"
           disabled={isSubmitting}
         />
-        <p id="sos-copy">No delivery, rescue, or exact-location confirmation is implied by this action.</p>
-        <button type="submit" disabled={isSubmitting}>{isSubmitting ? 'Submitting SOS…' : 'Submit SOS'}</button>
+        <p id="sos-copy">{t('web.sos.confirm.help')}</p>
+        <button type="submit" disabled={isSubmitting}>{isSubmitting ? t('web.sos.submitting') : t('web.sos.submit')}</button>
       </form>
       <SosAlertList alerts={state.response.sosAlerts} />
     </div>
@@ -684,57 +722,58 @@ function SosAlertList({ alerts }: { alerts: SosAlert[] }) {
 
 
 function ChannelFreshnessBanner({ state }: { state: ChannelFreshnessState }) {
+  const { t } = useI18n();
   if (state.status === 'loading') return null;
 
   if (state.status === 'error') {
     return (
       <section className="status-card channel-warning" role="status" aria-live="polite">
-        <h2>Channel freshness unavailable</h2>
-        <p>Could not load backend freshness signals. Treat this web view as informational until the API responds.</p>
+        <h2>{t('web.freshness.unavailable.title')}</h2>
+        <p>{t('web.freshness.unavailable.body')}</p>
       </section>
     );
   }
 
-  const warning = describeChannelFreshnessWarning(state.freshness);
+  const warning = describeChannelFreshnessWarning(state.freshness, t);
   if (!warning) return null;
 
   return (
     <section className="status-card channel-warning" role="status" aria-live="polite">
       <div className="section-header">
         <div>
-          <p className="eyebrow">Channel limitation</p>
+          <p className="eyebrow">{t('web.freshness.limitation')}</p>
           <h2>{warning.title}</h2>
         </div>
         <strong>{state.freshness.status}</strong>
       </div>
       <p>{warning.body}</p>
-      {state.freshness.cursorLag > 0 ? <p>{state.freshness.cursorLag} backend updates are not reflected in this view yet.</p> : null}
-      {state.freshness.hasConflicts ? <p>Sync conflicts are present. Use coordinator review before acting on disputed records.</p> : null}
-      <p>Refresh from the backend before operational decisions.</p>
+      {state.freshness.cursorLag > 0 ? <p>{t('web.freshness.cursor_lag', { count: state.freshness.cursorLag })}</p> : null}
+      {state.freshness.hasConflicts ? <p>{t('web.freshness.conflicts')}</p> : null}
+      <p>{t('web.freshness.refresh')}</p>
     </section>
   );
 }
 
-function describeChannelFreshnessWarning(freshness: SyncFreshness): { title: string; body: string } | null {
+function describeChannelFreshnessWarning(freshness: SyncFreshness, t: ReturnType<typeof useI18n>['t']): { title: string; body: string } | null {
   if (freshness.status === 'fresh' && freshness.cursorLag === 0 && !freshness.hasConflicts) return null;
 
   if (freshness.status === 'missing') {
     return {
-      title: 'Freshness signal missing',
-      body: 'The backend has no freshness record for this channel scope. This web view may be incomplete.',
+      title: t('web.freshness.missing.title'),
+      body: t('web.freshness.missing.body'),
     };
   }
 
   if (freshness.status === 'expired') {
     return {
-      title: 'Channel data expired',
-      body: 'The backend marked this channel scope as expired. Do not treat the visible data as current.',
+      title: t('web.freshness.expired.title'),
+      body: t('web.freshness.expired.body'),
     };
   }
 
   return {
-    title: 'Channel data may be stale',
-    body: 'The backend marked this channel scope as stale. Some recent operations may not be visible here.',
+    title: t('web.freshness.stale.title'),
+    body: t('web.freshness.stale.body'),
   };
 }
 
@@ -898,8 +937,14 @@ function formatSosAlertLocation(alert: SosAlert): string {
   return 'Location: reported by backend';
 }
 
-function formatFanout(fanout: SosFanoutStatus): string {
-  return `Fan-out: total ${fanout.total}, queued ${fanout.queued}, pending ${fanout.pending}, failed ${fanout.failed}, cancelled ${fanout.cancelled}.`;
+function formatFanout(fanout: SosFanoutStatus, t: ReturnType<typeof useI18n>['t']): string {
+  return t('web.sos.fanout', {
+    total: fanout.total,
+    queued: fanout.queued,
+    pending: fanout.pending,
+    failed: fanout.failed,
+    cancelled: fanout.cancelled,
+  });
 }
 
 function upsertSosAlert(alerts: SosAlert[], alert: SosAlert): SosAlert[] {
@@ -911,7 +956,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error';
 }
 
-function formatPrivateLinkError(error: unknown): string {
+function formatPrivateLinkError(error: unknown, t: ReturnType<typeof useI18n>['t']): string {
   const message = errorMessage(error);
   if (
     message === 'invalid_payload' ||
@@ -920,10 +965,10 @@ function formatPrivateLinkError(error: unknown): string {
     message === 'link_correlation_mismatch' ||
     message === 'link_expired'
   ) {
-    return message;
+    return t(`web.family.error.${message}`);
   }
 
-  return 'Private link unavailable. Continue with in-person verification.';
+  return t('web.family.link.unavailable');
 }
 
 function getPrivateLinkParams(): { token: string; correlationId: string } | null {

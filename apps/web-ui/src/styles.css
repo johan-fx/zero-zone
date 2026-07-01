@@ -268,3 +268,24 @@ dd {
 .channel-warning strong {
   color: #fde68a;
 }
+
+.hero-topline {
+  align-items: center;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.language-selector {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.language-selector select {
+  border: 1px solid rgba(148, 163, 184, 0.55);
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+}
