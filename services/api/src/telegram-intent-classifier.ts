@@ -1,6 +1,6 @@
 import { TelegramIntentClassificationSchema, type TelegramIntentClassification } from '@zona-cero/contracts';
 
-export const DEFAULT_TELEGRAM_INTENT_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8';
+export const DEFAULT_TELEGRAM_INTENT_MODEL = '@cf/meta/llama-3.1-8b-instruct-fast';
 export const DEFAULT_TELEGRAM_INTENT_CONFIDENCE_THRESHOLD = 0.75;
 
 const TELEGRAM_INTENT_RESPONSE_SCHEMA = {
