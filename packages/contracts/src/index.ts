@@ -825,6 +825,28 @@ export type TelegramIntent = z.infer<typeof TelegramIntentSchema>;
 export const TelegramIntentExtractedFactsSchema = JsonObjectPayloadSchema;
 export type TelegramIntentExtractedFacts = z.infer<typeof TelegramIntentExtractedFactsSchema>;
 
+export const telegramResourceFactDirections = ['offer', 'need', 'report', 'unknown'] as const;
+export const TelegramResourceFactDirectionSchema = z.enum(telegramResourceFactDirections);
+export type TelegramResourceFactDirection = z.infer<typeof TelegramResourceFactDirectionSchema>;
+
+export const telegramResourceFactTypes = ['water', 'food', 'medicine', 'shelter', 'equipment', 'transport', 'fuel', 'other', 'unknown'] as const;
+export const TelegramResourceFactTypeSchema = z.enum(telegramResourceFactTypes);
+export type TelegramResourceFactType = z.infer<typeof TelegramResourceFactTypeSchema>;
+
+export const telegramResourceImplicitQuestions = ['where_needed', 'where_available', 'how_to_deliver', 'none'] as const;
+export const TelegramResourceImplicitQuestionSchema = z.enum(telegramResourceImplicitQuestions);
+export type TelegramResourceImplicitQuestion = z.infer<typeof TelegramResourceImplicitQuestionSchema>;
+
+export const TelegramResourceIntentFactsSchema = z.object({
+  resourceDirection: TelegramResourceFactDirectionSchema.default('unknown'),
+  resourceType: TelegramResourceFactTypeSchema.default('unknown'),
+  resourceLabel: z.string().min(1).max(120).optional(),
+  quantityApprox: z.string().min(1).max(120).optional(),
+  locationHint: z.string().min(1).max(160).optional(),
+  implicitQuestion: TelegramResourceImplicitQuestionSchema.default('none'),
+}).strict();
+export type TelegramResourceIntentFacts = z.infer<typeof TelegramResourceIntentFactsSchema>;
+
 export const TelegramIntentClassificationSchema = z.object({
   intent: TelegramIntentSchema,
   confidence: z.number().min(0).max(1),

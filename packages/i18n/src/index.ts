@@ -138,6 +138,12 @@ const esCatalog = {
   'web.family.results.not_provided': 'no indicado',
   'web.family.results.yes': 'sí',
   'web.family.results.no': 'no',
+  'web.hub.tile.work_centers.description': 'Lista, detalle y mapa ligero de los centros activos.',
+  'web.hub.tile.resources.description': 'Necesidades y sobrantes reportados por categoría.',
+  'web.hub.tile.dispatch.description': 'Tareas logísticas y su estado de entrega.',
+  'web.hub.tile.sos.description': 'Alertas críticas conectadas y estado de envío al backend.',
+  'web.hub.tile.open': 'Ver detalle',
+  'web.hub.back': '← Volver al panel',
 } as const;
 
 const enCatalog: Record<keyof typeof esCatalog, string> = {
@@ -266,6 +272,12 @@ const enCatalog: Record<keyof typeof esCatalog, string> = {
   'web.family.results.not_provided': 'not provided',
   'web.family.results.yes': 'yes',
   'web.family.results.no': 'no',
+  'web.hub.tile.work_centers.description': 'List, detail, and lightweight map of active centers.',
+  'web.hub.tile.resources.description': 'Needs and surplus reported by category.',
+  'web.hub.tile.dispatch.description': 'Logistics tasks and their delivery status.',
+  'web.hub.tile.sos.description': 'Connected critical alerts and backend delivery status.',
+  'web.hub.tile.open': 'View detail',
+  'web.hub.back': '← Back to hub',
 };
 
 export const catalogs = {

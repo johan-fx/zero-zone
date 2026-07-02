@@ -49,6 +49,7 @@ import {
   SyncPushRequestSchema,
   SyncPushResponseSchema,
   TelegramIntentClassificationSchema,
+  TelegramResourceIntentFactsSchema,
   TelegramIntentSchema,
   WebLinkRequestSchema,
   WebLinkSessionSchema,
@@ -84,6 +85,9 @@ import {
   sosFanoutJobStatuses,
   sosSeverities,
   telegramIntents,
+  telegramResourceFactDirections,
+  telegramResourceFactTypes,
+  telegramResourceImplicitQuestions,
   workCenterStatuses,
 } from './index';
 
@@ -690,6 +694,38 @@ describe('contracts package', () => {
     expect(TelegramIntentClassificationSchema.safeParse({ ...classification, intent: 'admin' }).success).toBe(false);
     expect(TelegramIntentClassificationSchema.safeParse({ ...classification, executeCommand: '/resource' }).success).toBe(false);
     expect(TelegramIntentClassificationSchema.safeParse({ ...classification, extractedFacts: { category: undefined } }).success).toBe(false);
+  });
+
+  it('validates typed Telegram resource intent facts without turning them into actions', () => {
+    expect(telegramResourceFactDirections).toEqual(['offer', 'need', 'report', 'unknown']);
+    expect(telegramResourceFactTypes).toContain('water');
+    expect(telegramResourceImplicitQuestions).toContain('where_needed');
+
+    const facts = TelegramResourceIntentFactsSchema.parse({
+      resourceDirection: 'offer',
+      resourceType: 'water',
+      resourceLabel: 'agua potable',
+      quantityApprox: '20 cajas',
+      locationHint: 'entrada norte',
+      implicitQuestion: 'where_needed',
+    });
+
+    expect(facts).toEqual({
+      resourceDirection: 'offer',
+      resourceType: 'water',
+      resourceLabel: 'agua potable',
+      quantityApprox: '20 cajas',
+      locationHint: 'entrada norte',
+      implicitQuestion: 'where_needed',
+    });
+
+    expect(TelegramResourceIntentFactsSchema.parse({ resourceLabel: 'agua potable' })).toMatchObject({
+      resourceDirection: 'unknown',
+      resourceType: 'unknown',
+      implicitQuestion: 'none',
+    });
+    expect(TelegramResourceIntentFactsSchema.safeParse({ ...facts, resourceType: 'cash' }).success).toBe(false);
+    expect(TelegramResourceIntentFactsSchema.safeParse({ ...facts, executeCommand: '/resource' }).success).toBe(false);
   });
 
   it('validates canonical resource report contracts', () => {

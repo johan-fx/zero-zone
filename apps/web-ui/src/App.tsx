@@ -37,6 +37,19 @@ import {
   type WebTelemetryAction,
 } from './telemetry';
 import { I18nProvider, LanguageSelector, useI18n } from './i18n';
+import {
+  activationStateTone,
+  confidenceTone,
+  dispatchStatusTone,
+  freshnessTone,
+  riskTone,
+  sosAlertStatusTone,
+  sosFanoutStatTone,
+  urgencyTone,
+  workCenterStatusTone,
+} from './statusTones';
+import type { StatusTone } from '@zona-cero/ui';
+import { Card, MetaRow, SectionHeader, StatusBadge } from '@zona-cero/ui/web';
 import './styles.css';
 
 type HealthState =
@@ -79,6 +92,47 @@ type FamilyReunificationForm = {
   relationHint: string;
   lastKnownAreaLabel: string;
 };
+
+type HubRoute = 'hub' | 'work-centers' | 'resources' | 'sos' | 'dispatch';
+
+const hubRoutes: readonly HubRoute[] = ['hub', 'work-centers', 'resources', 'sos', 'dispatch'];
+
+function isHubRoute(value: string): value is HubRoute {
+  return (hubRoutes as readonly string[]).includes(value);
+}
+
+function readHubRouteFromLocation(): HubRoute {
+  if (typeof window === 'undefined') return 'hub';
+  const raw = window.location.hash.replace(/^#\/?/, '');
+  return isHubRoute(raw) ? raw : 'hub';
+}
+
+/**
+ * Tiny hash-based router scoped to the operations hub. Deliberately avoids a
+ * routing library to keep the bundle small for field conditions, and uses
+ * the hash (not the path) so it never collides with the private family
+ * reunification link, which is addressed by `?token=&correlationId=`.
+ */
+function useHubRoute(): [HubRoute, (route: HubRoute) => void] {
+  const [route, setRoute] = useState<HubRoute>(() => readHubRouteFromLocation());
+
+  useEffect(() => {
+    function handleHashChange() {
+      setRoute(readHubRouteFromLocation());
+    }
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  function navigate(nextRoute: HubRoute) {
+    if (typeof window !== 'undefined') {
+      window.location.hash = nextRoute === 'hub' ? '' : `/${nextRoute}`;
+    }
+    setRoute(nextRoute);
+  }
+
+  return [route, navigate];
+}
 
 const defaultIncidentId = 'incident-zc-demo';
 const defaultCellId = 'cell-zc-demo';
@@ -164,6 +218,7 @@ function OperationsPanel() {
   const [sosConfirmation, setSosConfirmation] = useState('');
   const [isSosSubmitting, setIsSosSubmitting] = useState(false);
   const [sosPendingReportedAt, setSosPendingReportedAt] = useState<string | null>(null);
+  const [route, navigate] = useHubRoute();
 
   useEffect(() => {
     let active = true;
@@ -338,70 +393,248 @@ function OperationsPanel() {
 
       <ChannelFreshnessBanner state={channelFreshnessState} />
 
-      <section className="status-card" aria-labelledby="work-centers-title" aria-live="polite">
-        <div className="section-header">
-          <div>
-            <p className="eyebrow">Incident {incidentId}</p>
-            <h2 id="work-centers-title">Work centers</h2>
-          </div>
-          {workCenterState.status === 'ready' ? <strong>{workCenterState.workCenters.length} online</strong> : null}
-        </div>
+      <HubNav route={route} onNavigate={navigate} />
 
-        {workCenterState.status === 'loading' ? <p>Loading work centers…</p> : null}
-        {workCenterState.status === 'error' ? <p role="alert">{workCenterState.message}</p> : null}
-        {workCenterState.status === 'ready' ? <WorkCenterOnlineView state={workCenterState} /> : null}
-      </section>
+      {route === 'hub' ? (
+        <HubGrid
+          workCenterState={workCenterState}
+          resourceState={resourceState}
+          dispatchState={dispatchState}
+          sosState={sosState}
+          onNavigate={navigate}
+        />
+      ) : null}
 
-      <section className="status-card" aria-labelledby="resources-title" aria-live="polite">
-        <div className="section-header">
-          <div>
-            <p className="eyebrow">Resources</p>
-            <h2 id="resources-title">Needs and surplus</h2>
-          </div>
-          {resourceState.status === 'ready' ? <strong>{resourceState.reports.length} reports</strong> : null}
-        </div>
-        {resourceState.status === 'loading' ? <p>Loading resource reports…</p> : null}
-        {resourceState.status === 'error' ? <p role="alert">{resourceState.message}</p> : null}
-        {resourceState.status === 'ready' ? <ResourceReportView reports={resourceState.reports} /> : null}
-      </section>
-
-      <section className="status-card sos-card" aria-labelledby="sos-title" aria-live="polite">
-        <div className="section-header">
-          <div>
-            <p className="eyebrow">Critical</p>
-            <h2 id="sos-title">{t('web.sos.title')}</h2>
-          </div>
-          {sosState.status === 'ready' ? <strong>{sosState.response.sosAlerts.length} alerts</strong> : null}
-        </div>
-        <p className="summary">{t('web.sos.summary')}</p>
-        {sosState.status === 'loading' ? <p>{t('web.sos.loading')}</p> : null}
-        {sosState.status === 'error' ? <p role="alert">{sosState.message}</p> : null}
-        {sosState.status === 'ready' ? (
-          <SosPanel
-            state={sosState}
-            confirmation={sosConfirmation}
-            onConfirmationChange={setSosConfirmation}
-            isSubmitting={isSosSubmitting}
-            onSubmit={handleSosSubmit}
+      {route === 'work-centers' ? (
+        <section className="status-card" aria-labelledby="work-centers-title" aria-live="polite">
+          <HubBackLink onNavigate={navigate} />
+          <SectionHeader
+            eyebrow={`Incident ${incidentId}`}
+            title="Work centers"
+            titleId="work-centers-title"
+            trailing={workCenterState.status === 'ready' ? <strong>{workCenterState.workCenters.length} online</strong> : null}
           />
-        ) : null}
-      </section>
 
-      <section className="status-card" aria-labelledby="dispatch-title" aria-live="polite">
-        <div className="section-header">
-          <div>
-            <p className="eyebrow">Logistics</p>
-            <h2 id="dispatch-title">Dispatch tasks</h2>
-          </div>
-          {dispatchState.status === 'ready' ? <strong>{dispatchState.tasks.length} tasks</strong> : null}
-        </div>
-        {dispatchState.status === 'loading' ? <p>Loading dispatch tasks…</p> : null}
-        {dispatchState.status === 'error' ? <p role="alert">{dispatchState.message}</p> : null}
-        {dispatchState.status === 'ready' ? (
-          <DispatchTaskView state={dispatchState} onAction={handleDispatchAction} />
-        ) : null}
-      </section>
+          {workCenterState.status === 'loading' ? <p>Loading work centers…</p> : null}
+          {workCenterState.status === 'error' ? <p role="alert">{workCenterState.message}</p> : null}
+          {workCenterState.status === 'ready' ? <WorkCenterOnlineView state={workCenterState} /> : null}
+        </section>
+      ) : null}
+
+      {route === 'resources' ? (
+        <section className="status-card" aria-labelledby="resources-title" aria-live="polite">
+          <HubBackLink onNavigate={navigate} />
+          <SectionHeader
+            eyebrow="Resources"
+            title="Needs and surplus"
+            titleId="resources-title"
+            trailing={resourceState.status === 'ready' ? <strong>{resourceState.reports.length} reports</strong> : null}
+          />
+          {resourceState.status === 'loading' ? <p>Loading resource reports…</p> : null}
+          {resourceState.status === 'error' ? <p role="alert">{resourceState.message}</p> : null}
+          {resourceState.status === 'ready' ? <ResourceReportView reports={resourceState.reports} /> : null}
+        </section>
+      ) : null}
+
+      {route === 'sos' ? (
+        <section className="status-card sos-card" aria-labelledby="sos-title" aria-live="polite">
+          <HubBackLink onNavigate={navigate} />
+          <SectionHeader
+            eyebrow="Critical"
+            title={t('web.sos.title')}
+            titleId="sos-title"
+            trailing={sosState.status === 'ready' ? <strong>{sosState.response.sosAlerts.length} alerts</strong> : null}
+          />
+          <p className="summary">{t('web.sos.summary')}</p>
+          {sosState.status === 'loading' ? <p>{t('web.sos.loading')}</p> : null}
+          {sosState.status === 'error' ? <p role="alert">{sosState.message}</p> : null}
+          {sosState.status === 'ready' ? (
+            <SosPanel
+              state={sosState}
+              confirmation={sosConfirmation}
+              onConfirmationChange={setSosConfirmation}
+              isSubmitting={isSosSubmitting}
+              onSubmit={handleSosSubmit}
+            />
+          ) : null}
+        </section>
+      ) : null}
+
+      {route === 'dispatch' ? (
+        <section className="status-card" aria-labelledby="dispatch-title" aria-live="polite">
+          <HubBackLink onNavigate={navigate} />
+          <SectionHeader
+            eyebrow="Logistics"
+            title="Dispatch tasks"
+            titleId="dispatch-title"
+            trailing={dispatchState.status === 'ready' ? <strong>{dispatchState.tasks.length} tasks</strong> : null}
+          />
+          {dispatchState.status === 'loading' ? <p>Loading dispatch tasks…</p> : null}
+          {dispatchState.status === 'error' ? <p role="alert">{dispatchState.message}</p> : null}
+          {dispatchState.status === 'ready' ? (
+            <DispatchTaskView state={dispatchState} onAction={handleDispatchAction} />
+          ) : null}
+        </section>
+      ) : null}
     </main>
+  );
+}
+
+const hubNavTabs: { route: HubRoute; label: string }[] = [
+  { route: 'hub', label: 'Hub' },
+  { route: 'work-centers', label: 'Work centers' },
+  { route: 'resources', label: 'Resources' },
+  { route: 'dispatch', label: 'Dispatch tasks' },
+  { route: 'sos', label: 'SOS' },
+];
+
+function HubNav({ route, onNavigate }: { route: HubRoute; onNavigate: (route: HubRoute) => void }) {
+  return (
+    <nav className="hub-nav" aria-label="Operational areas">
+      {hubNavTabs.map((tab) => (
+        <button
+          key={tab.route}
+          type="button"
+          className={`hub-nav__tab${route === tab.route ? ' hub-nav__tab--active' : ''}`}
+          aria-current={route === tab.route ? 'page' : undefined}
+          onClick={() => onNavigate(tab.route)}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+function HubBackLink({ onNavigate }: { onNavigate: (route: HubRoute) => void }) {
+  const { t } = useI18n();
+  return (
+    <button type="button" className="hub-back" onClick={() => onNavigate('hub')}>
+      {t('web.hub.back')}
+    </button>
+  );
+}
+
+type HubTileSummary = { tone: StatusTone; countLabel: string };
+
+function summarizeWorkCenters(state: WorkCenterState): HubTileSummary {
+  if (state.status === 'loading') return { tone: 'info', countLabel: '…' };
+  if (state.status === 'error') return { tone: 'conflict', countLabel: 'Error' };
+  const hasHighRisk = state.workCenters.some((workCenter) => workCenter.risk === 'high');
+  const needsReview = state.workCenters.some((workCenter) => workCenter.activationState === 'needs_review');
+  const tone: StatusTone = hasHighRisk ? 'risk' : needsReview ? 'warning' : state.workCenters.length > 0 ? 'success' : 'info';
+  return { tone, countLabel: `${state.workCenters.length} online` };
+}
+
+function summarizeResources(state: ResourceState): HubTileSummary {
+  if (state.status === 'loading') return { tone: 'info', countLabel: '…' };
+  if (state.status === 'error') return { tone: 'conflict', countLabel: 'Error' };
+  const hasCritical = state.reports.some((report) => report.urgency === 'critical');
+  const hasHigh = state.reports.some((report) => report.urgency === 'high');
+  const tone: StatusTone = hasCritical ? 'sos' : hasHigh ? 'risk' : state.reports.length > 0 ? 'warning' : 'info';
+  return { tone, countLabel: `${state.reports.length} reports` };
+}
+
+function summarizeDispatch(state: DispatchState): HubTileSummary {
+  if (state.status === 'loading') return { tone: 'info', countLabel: '…' };
+  if (state.status === 'error') return { tone: 'conflict', countLabel: 'Error' };
+  const hasActive = state.tasks.some((task) => task.status === 'pending' || task.status === 'en_route');
+  const tone: StatusTone = hasActive ? 'warning' : state.tasks.length > 0 ? 'success' : 'info';
+  return { tone, countLabel: `${state.tasks.length} tasks` };
+}
+
+function summarizeSos(state: SosState): HubTileSummary {
+  if (state.status === 'loading') return { tone: 'info', countLabel: '…' };
+  if (state.status === 'error') return { tone: 'conflict', countLabel: 'Error' };
+  const hasOpen = state.response.sosAlerts.some((alert) => alert.status === 'open');
+  const tone: StatusTone = hasOpen ? 'sos' : 'success';
+  return { tone, countLabel: `${state.response.sosAlerts.length} alerts` };
+}
+
+function HubGrid({
+  workCenterState,
+  resourceState,
+  dispatchState,
+  sosState,
+  onNavigate,
+}: {
+  workCenterState: WorkCenterState;
+  resourceState: ResourceState;
+  dispatchState: DispatchState;
+  sosState: SosState;
+  onNavigate: (route: HubRoute) => void;
+}) {
+  const { t } = useI18n();
+  const workCenters = summarizeWorkCenters(workCenterState);
+  const resources = summarizeResources(resourceState);
+  const dispatch = summarizeDispatch(dispatchState);
+  const sos = summarizeSos(sosState);
+  const openLabel = t('web.hub.tile.open');
+
+  return (
+    <section className="hub-grid" aria-label="Operational areas overview">
+      <HubTileButton
+        title="Work centers"
+        description={t('web.hub.tile.work_centers.description')}
+        tone={workCenters.tone}
+        countLabel={workCenters.countLabel}
+        openLabel={openLabel}
+        onOpen={() => onNavigate('work-centers')}
+      />
+      <HubTileButton
+        title="Resources"
+        description={t('web.hub.tile.resources.description')}
+        tone={resources.tone}
+        countLabel={resources.countLabel}
+        openLabel={openLabel}
+        onOpen={() => onNavigate('resources')}
+      />
+      <HubTileButton
+        title="Dispatch tasks"
+        description={t('web.hub.tile.dispatch.description')}
+        tone={dispatch.tone}
+        countLabel={dispatch.countLabel}
+        openLabel={openLabel}
+        onOpen={() => onNavigate('dispatch')}
+      />
+      <HubTileButton
+        title="SOS"
+        description={t('web.hub.tile.sos.description')}
+        tone={sos.tone}
+        countLabel={sos.countLabel}
+        openLabel={openLabel}
+        onOpen={() => onNavigate('sos')}
+      />
+    </section>
+  );
+}
+
+function HubTileButton({
+  title,
+  description,
+  tone,
+  countLabel,
+  openLabel,
+  onOpen,
+}: {
+  title: string;
+  description: string;
+  tone: StatusTone;
+  countLabel: string;
+  openLabel: string;
+  onOpen: () => void;
+}) {
+  return (
+    <button type="button" className="hub-tile-button" aria-label={`Open ${title}`} onClick={onOpen}>
+      <Card tone={tone}>
+        <div className="card-title-row">
+          <h2>{title}</h2>
+          <StatusBadge tone={tone} label={countLabel} />
+        </div>
+        <p className="summary">{description}</p>
+        <span className="hub-tile__cta">{openLabel} →</span>
+      </Card>
+    </button>
   );
 }
 
@@ -549,13 +782,12 @@ function FamilyReunificationPrivateView({
 
       {state.status === 'ready' ? (
         <section className="status-card" aria-labelledby="private-search-title" aria-live="polite">
-          <div className="section-header">
-            <div>
-              <p className="eyebrow">{t('web.family.search.incident', { incidentId: state.validation.incidentId })}</p>
-              <h2 id="private-search-title">{t('web.family.search.title')}</h2>
-            </div>
-            <strong>{t('web.family.search.verification_required')}</strong>
-          </div>
+          <SectionHeader
+            eyebrow={t('web.family.search.incident', { incidentId: state.validation.incidentId })}
+            title={t('web.family.search.title')}
+            titleId="private-search-title"
+            trailing={<strong>{t('web.family.search.verification_required')}</strong>}
+          />
 
           {state.message ? <p role="status">{state.message}</p> : null}
 
@@ -637,13 +869,13 @@ function FamilyReunificationResults({ response }: { response: FamilyReunificatio
       <ul className="work-center-list">
         {response.matches.map((match) => (
           <li key={match.matchId}>
-            <article className="work-center-card">
+            <Card tone={match.verificationRequired ? 'warning' : 'success'}>
               <h4>{match.status === 'possible_match' ? t('web.family.results.possible_match') : t('web.family.results.none')}</h4>
               <p>{t('web.family.results.age', { value: formatFamilyAgeBand(match.ageBand, t) })}</p>
               <p>{t('web.family.results.relation', { value: formatFamilyMatchRelation(match.status, t) })}</p>
               <p>{t('web.family.results.area', { value: match.lastKnownAreaLabel ?? t('web.family.results.not_provided') })}</p>
               <p>{t('web.family.results.verification', { value: match.verificationRequired ? t('web.family.results.yes') : t('web.family.results.no') })}</p>
-            </article>
+            </Card>
           </li>
         ))}
       </ul>
@@ -691,13 +923,16 @@ function SosPanel({
 
 function FanoutStrip({ fanout }: { fanout: SosFanoutStatus }) {
   return (
-    <dl className="status-strip" aria-label="SOS backend fan-out status">
-      <div><dt>Total</dt><dd>{fanout.total}</dd></div>
-      <div><dt>Queued</dt><dd>{fanout.queued}</dd></div>
-      <div><dt>Pending</dt><dd>{fanout.pending}</dd></div>
-      <div><dt>Failed</dt><dd>{fanout.failed}</dd></div>
-      <div><dt>Cancelled</dt><dd>{fanout.cancelled}</dd></div>
-    </dl>
+    <MetaRow
+      aria-label="SOS backend fan-out status"
+      items={[
+        { key: 'total', label: 'Total', value: fanout.total, tone: sosFanoutStatTone('total') },
+        { key: 'queued', label: 'Queued', value: fanout.queued, tone: sosFanoutStatTone('queued') },
+        { key: 'pending', label: 'Pending', value: fanout.pending, tone: sosFanoutStatTone('pending') },
+        { key: 'failed', label: 'Failed', value: fanout.failed, tone: sosFanoutStatTone('failed') },
+        { key: 'cancelled', label: 'Cancelled', value: fanout.cancelled, tone: sosFanoutStatTone('cancelled') },
+      ]}
+    />
   );
 }
 
@@ -708,12 +943,15 @@ function SosAlertList({ alerts }: { alerts: SosAlert[] }) {
     <ul className="work-center-list">
       {alerts.map((alert) => (
         <li key={alert.sosAlertId}>
-          <article className="work-center-card">
-            <h4>SOS ID: {alert.sosAlertId}</h4>
-            <p>Status: {alert.status} · Severity {alert.severity}</p>
+          <Card tone={sosAlertStatusTone(alert.status)}>
+            <div className="card-title-row">
+              <h4>SOS ID: {alert.sosAlertId}</h4>
+              <StatusBadge tone={sosAlertStatusTone(alert.status)} label={alert.status} />
+            </div>
+            <p>Severity {alert.severity}</p>
             <p>Source: {alert.sourceChannel ?? 'unknown'}</p>
             <p>{formatSosAlertLocation(alert)}</p>
-          </article>
+          </Card>
         </li>
       ))}
     </ul>
@@ -739,13 +977,11 @@ function ChannelFreshnessBanner({ state }: { state: ChannelFreshnessState }) {
 
   return (
     <section className="status-card channel-warning" role="status" aria-live="polite">
-      <div className="section-header">
-        <div>
-          <p className="eyebrow">{t('web.freshness.limitation')}</p>
-          <h2>{warning.title}</h2>
-        </div>
-        <strong>{state.freshness.status}</strong>
-      </div>
+      <SectionHeader
+        eyebrow={t('web.freshness.limitation')}
+        title={warning.title}
+        trailing={<StatusBadge tone={freshnessTone(state.freshness.status)} label={state.freshness.status} />}
+      />
       <p>{warning.body}</p>
       {state.freshness.cursorLag > 0 ? <p>{t('web.freshness.cursor_lag', { count: state.freshness.cursorLag })}</p> : null}
       {state.freshness.hasConflicts ? <p>{t('web.freshness.conflicts')}</p> : null}
@@ -789,11 +1025,14 @@ function WorkCenterOnlineView({ state }: { state: Extract<WorkCenterState, { sta
         <ul className="work-center-list">
           {state.workCenters.map((workCenter) => (
             <li key={workCenter.workCenterId}>
-              <article className="work-center-card">
-                <h4>{workCenter.name}</h4>
+              <Card tone={activationStateTone(workCenter.activationState)}>
+                <div className="card-title-row">
+                  <h4>{workCenter.name}</h4>
+                  <StatusBadge tone={activationStateTone(workCenter.activationState)} label={workCenter.activationState} />
+                </div>
                 <StatusStrip workCenter={workCenter} />
                 <p>{workCenter.centerType ?? 'Uncategorized'} · Priority {workCenter.priority}</p>
-              </article>
+              </Card>
             </li>
           ))}
         </ul>
@@ -841,12 +1080,15 @@ function ResourceColumn({ title, reports }: { title: string; reports: ResourceRe
       <ul className="work-center-list">
         {reports.map((report) => (
           <li key={report.resourceReportId}>
-            <article className="work-center-card">
-              <h4>{report.category}</h4>
-              <p>{report.quantityApprox} · Urgency {report.urgency}</p>
+            <Card tone={urgencyTone(report.urgency)}>
+              <div className="card-title-row">
+                <h4>{report.category}</h4>
+                <StatusBadge tone={urgencyTone(report.urgency)} label={`Urgency: ${report.urgency}`} />
+              </div>
+              <p>{report.quantityApprox}</p>
               <p>Work center: {report.workCenterId ?? 'not linked'}</p>
               <p>Restrictions: {report.constraints.length ? report.constraints.join(', ') : 'none'}</p>
-            </article>
+            </Card>
           </li>
         ))}
       </ul>
@@ -869,10 +1111,13 @@ function DispatchTaskView({
       <ul className="work-center-list">
         {state.tasks.map((task) => (
           <li key={task.dispatchTaskId}>
-            <article className="work-center-card dispatch-card">
+            <Card as="article" className="dispatch-card" tone={dispatchStatusTone(task.status)}>
               <div>
-                <h4>{task.category}</h4>
-                <p>{task.quantityApprox} · Status {task.status}</p>
+                <div className="card-title-row">
+                  <h4>{task.category}</h4>
+                  <StatusBadge tone={dispatchStatusTone(task.status)} label={task.status} />
+                </div>
+                <p>{task.quantityApprox}</p>
                 <p>Target: {task.targetWorkCenterId ?? 'not linked'}</p>
               </div>
               <div className="action-row">
@@ -882,7 +1127,7 @@ function DispatchTaskView({
                   </button>
                 ))}
               </div>
-            </article>
+            </Card>
           </li>
         ))}
       </ul>
@@ -892,8 +1137,11 @@ function DispatchTaskView({
 
 function WorkCenterDetailCard({ workCenter }: { workCenter: WorkCenterDetail }) {
   return (
-    <article className="work-center-card detail-card">
-      <h4>{workCenter.name}</h4>
+    <Card as="article" className="detail-card" tone={activationStateTone(workCenter.activationState)}>
+      <div className="card-title-row">
+        <h4>{workCenter.name}</h4>
+        <StatusBadge tone={activationStateTone(workCenter.activationState)} label={workCenter.activationState} />
+      </div>
       <StatusStrip workCenter={workCenter} />
       <dl>
         <dt>Description</dt>
@@ -910,19 +1158,22 @@ function WorkCenterDetailCard({ workCenter }: { workCenter: WorkCenterDetail }) 
           <li key={signal.signalId}>{signal.signalType} from {signal.sourceChannel}</li>
         ))}
       </ul>
-    </article>
+    </Card>
   );
 }
 
 function StatusStrip({ workCenter }: { workCenter: WorkCenterSummary | WorkCenterDetail }) {
   return (
-    <dl className="status-strip" aria-label={`${workCenter.name} backend status`}>
-      <div><dt>Status</dt><dd>{workCenter.status}</dd></div>
-      <div><dt>Activation</dt><dd>{workCenter.activationState}</dd></div>
-      <div><dt>Freshness</dt><dd>{workCenter.freshness}</dd></div>
-      <div><dt>Confidence</dt><dd>{workCenter.confidence}</dd></div>
-      <div><dt>Risk</dt><dd>{workCenter.risk}</dd></div>
-    </dl>
+    <MetaRow
+      aria-label={`${workCenter.name} backend status`}
+      items={[
+        { key: 'status', label: 'Status', value: workCenter.status, tone: workCenterStatusTone(workCenter.status) },
+        { key: 'activation', label: 'Activation', value: workCenter.activationState, tone: activationStateTone(workCenter.activationState) },
+        { key: 'freshness', label: 'Freshness', value: workCenter.freshness, tone: freshnessTone(workCenter.freshness) },
+        { key: 'confidence', label: 'Confidence', value: workCenter.confidence, tone: confidenceTone(workCenter.confidence) },
+        { key: 'risk', label: 'Risk', value: workCenter.risk, tone: riskTone(workCenter.risk) },
+      ]}
+    />
   );
 }
 

@@ -179,23 +179,22 @@ describe('web ui work center shell', () => {
     render(<App />);
 
     expect(screen.getByRole('heading', { name: /work centers live operations panel/i })).toBeInTheDocument();
-    expect(screen.getByText('Loading work centers…')).toBeInTheDocument();
 
     await waitFor(() => expect(screen.getByTestId('api-health')).toHaveTextContent('zona-cero-api is online'));
+
+    // Hub landing renders tone-coded overview tiles with live counts once data is ready.
+    await waitFor(() => expect(screen.getByText('1 online')).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Open Work centers' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open Resources' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open Dispatch tasks' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open SOS' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Work centers' }));
     await waitFor(() => expect(screen.getAllByText('North triage point').length).toBeGreaterThan(0));
 
     expect(screen.getByText('41.3800, 2.1700')).toBeInTheDocument();
     expect(screen.getByText(/Triage and water distribution/)).toBeInTheDocument();
     expect(screen.getByText('creator_report from telegram')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Needs and surplus' })).toBeInTheDocument();
-    expect(screen.getByText('20 bottles · Urgency high')).toBeInTheDocument();
-    expect(screen.getByText('10 boxes · Urgency medium')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Dispatch tasks' })).toBeInTheDocument();
-    expect(screen.getByText('20 bottles · Status pending')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Connected SOS' })).toBeInTheDocument();
-    expect(screen.getByText('SOS ID: sos-mobile-critical-1')).toBeInTheDocument();
-    expect(screen.getByText('Status: open · Severity critical')).toBeInTheDocument();
-    expect(screen.getByLabelText('SOS backend fan-out status')).toBeInTheDocument();
 
     const status = screen.getAllByLabelText('North triage point backend status')[0];
     expect(within(status).getByText('reported')).toBeInTheDocument();
@@ -203,6 +202,31 @@ describe('web ui work center shell', () => {
     expect(within(status).getByText('fresh')).toBeInTheDocument();
     expect(within(status).getByText('low')).toBeInTheDocument();
     expect(within(status).getByText('medium')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Resources' }));
+    expect(screen.getByRole('heading', { name: 'Needs and surplus' })).toBeInTheDocument();
+    const resourcesSection = screen.getByRole('heading', { name: 'Needs and surplus' }).closest('section')!;
+    expect(within(resourcesSection).getByText('20 bottles')).toBeInTheDocument();
+    expect(within(resourcesSection).getByText('Urgency: high')).toBeInTheDocument();
+    expect(within(resourcesSection).getByText('10 boxes')).toBeInTheDocument();
+    expect(within(resourcesSection).getByText('Urgency: medium')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dispatch tasks' }));
+    expect(screen.getByRole('heading', { name: 'Dispatch tasks' })).toBeInTheDocument();
+    const dispatchSection = screen.getByRole('heading', { name: 'Dispatch tasks' }).closest('section')!;
+    expect(within(dispatchSection).getByText('20 bottles')).toBeInTheDocument();
+    expect(within(dispatchSection).getByText('pending')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'SOS' }));
+    expect(screen.getByRole('heading', { name: 'Connected SOS' })).toBeInTheDocument();
+    expect(screen.getByText('SOS ID: sos-mobile-critical-1')).toBeInTheDocument();
+    const sosCard = screen.getByText('SOS ID: sos-mobile-critical-1').closest('article')!;
+    expect(within(sosCard).getByText('open')).toBeInTheDocument();
+    expect(within(sosCard).getByText('Severity critical')).toBeInTheDocument();
+    expect(screen.getByLabelText('SOS backend fan-out status')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hub' }));
+    expect(screen.getByRole('button', { name: 'Open Work centers' })).toBeInTheDocument();
   });
 
 
@@ -312,6 +336,7 @@ describe('web ui work center shell', () => {
 
     render(<App />);
 
+    fireEvent.click(screen.getByRole('button', { name: 'Work centers' }));
     await waitFor(() => expect(screen.getAllByRole('alert')[0]).toHaveTextContent('Work center list failed with status 403'));
   });
 
@@ -360,6 +385,7 @@ describe('web ui work center shell', () => {
 
     render(<App />);
 
+    fireEvent.click(screen.getByRole('button', { name: 'Work centers' }));
     await waitFor(() => expect(screen.getAllByText('needs_review').length).toBeGreaterThan(0));
     expect(screen.getAllByText('expired').length).toBeGreaterThan(0);
     expect(screen.getAllByText('high').length).toBeGreaterThan(0);
@@ -382,6 +408,7 @@ describe('web ui work center shell', () => {
 
     render(<App />);
 
+    fireEvent.click(screen.getByRole('button', { name: 'SOS' }));
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Connected SOS' })).toBeInTheDocument());
     fireEvent.change(screen.getByLabelText('Type CONFIRM SOS to submit'), { target: { value: 'confirm' } });
     fireEvent.click(screen.getByRole('button', { name: 'Submit SOS' }));
@@ -409,6 +436,7 @@ describe('web ui work center shell', () => {
 
     render(<App />);
 
+    fireEvent.click(screen.getByRole('button', { name: 'SOS' }));
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Connected SOS' })).toBeInTheDocument());
     fireEvent.change(screen.getByLabelText('Type CONFIRM SOS to submit'), { target: { value: 'CONFIRM SOS' } });
     fireEvent.click(screen.getByRole('button', { name: 'Submit SOS' }));
@@ -449,6 +477,7 @@ describe('web ui work center shell', () => {
 
     render(<App />);
 
+    fireEvent.click(screen.getByRole('button', { name: 'SOS' }));
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Connected SOS' })).toBeInTheDocument());
     fireEvent.change(screen.getByLabelText('Type CONFIRM SOS to submit'), { target: { value: 'CONFIRM SOS' } });
     fireEvent.click(screen.getByRole('button', { name: 'Submit SOS' }));
@@ -479,6 +508,7 @@ describe('web ui work center shell', () => {
 
     render(<App />);
 
+    fireEvent.click(screen.getByRole('button', { name: 'SOS' }));
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Connected SOS' })).toBeInTheDocument());
     fireEvent.change(screen.getByLabelText('Type CONFIRM SOS to submit'), { target: { value: 'CONFIRM SOS' } });
     fireEvent.click(screen.getByRole('button', { name: 'Submit SOS' }));

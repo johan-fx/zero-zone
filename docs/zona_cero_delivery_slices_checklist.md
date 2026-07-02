@@ -38,6 +38,7 @@ Usar este reparto como contrato de trabajo para todas las slices. La clave es qu
 | 8 | Observabilidad + seguridad | 🟢 | 🟢 | 🟢 | Hecho |
 | 9 | Localización multi-idioma | 🟢 | 🟢 | 🟢 | Hecho |
 | 10 | Telegram intent routing con Workers AI | 🟢 | 🟢 | 🟢 | Hecho |
+| 11 | Telegram intent extraction v2 + prefill seguro | 🟡 | 🟡 | 🟡 | En progreso |
 
 Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloqueado.
 
@@ -543,6 +544,56 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 - El webhook de Telegram enruta lenguaje natural hacia flujos existentes respetando prioridad: comando explícito, flujo activo, clasificación LLM y clarificación/fallback.
 - La telemetría del router queda minimizada y sin texto libre del usuario.
 - Fresh review final independiente: 0 defectos confirmados.
+
+## Slice 11 - Telegram intent extraction v2 + prefill seguro
+
+**Objetivo:** mejorar el routing de lenguaje natural para que el bot no solo detecte la intención, sino que extraiga datos operativos útiles y los use como prefill seguro dentro del flujo correspondiente.
+
+**Decisión técnica:** evolucionar `extractedFacts` desde un objeto genérico hacia facts tipados por intención. La primera implementación se limita a recursos porque es el caso de menor riesgo para aprender: frases como “tengo agua potable, dónde la necesitan?” deben enrutar a `/resource` y conservar que el recurso es `agua potable`.
+
+**Principio de seguridad:** el LLM puede proponer datos iniciales, pero no crea operaciones de dominio. Todo prefill debe mostrarse o confirmarse dentro del flujo determinista antes de persistir.
+
+### Reparto de ownership
+
+| Equipo | Owns | Consume de | No debe hacer | Handoff esperado |
+|---|---|---|---|---|
+| A | Contratos tipados de extracted facts por intención, empezando por `resource`. | Necesidades de prefill de B/C. | Convertir facts en acciones ejecutables o aceptar campos libres sin schema. | Schema estricto para facts de recurso, compatible con JSON y testeado. |
+| B | Prompt/schema Workers AI v2, ejemplos reales, thresholds por intención y tests del clasificador. | Contratos de A y escenarios UX de C. | Bajar umbrales globalmente sin criterio o depender solo de prompt wording. | Clasificador que devuelve `resource` con facts para ofertas/necesidades de agua, comida, medicina, transporte, refugio, combustible o equipamiento. |
+| C | Integración de prefill seguro en Telegram, empezando por flujo `/resource`. | Facts tipados de A y clasificación de B. | Crear reportes automáticamente o saltarse preguntas obligatorias del flujo. | El flujo resource arranca con contexto útil y pide confirmación/datos faltantes sin duplicar lógica de dominio. |
+
+| Equipo | Checklist |
+|---|---|
+| A | 🟡 Definir facts de recurso: `resourceDirection`, `resourceType`, `resourceLabel`, cantidad/unidad opcional, ubicación opcional y pregunta implícita opcional. |
+| A | 🟡 Añadir tests de contrato para facts válidos e inválidos. |
+| B | 🟡 Mejorar prompt con ejemplos: “tengo agua potable, dónde la necesitan?”, “puedo llevar comida”, “me sobra medicina”, “necesitamos mantas”. |
+| B | 🟡 Añadir tests del clasificador con respuestas mockeadas y parsing de facts. |
+| C | 🟡 Pasar facts aceptados al inicio del flujo resource como prefill seguro. |
+| C | 🟡 Responder en español con confirmación contextual cuando el intent venga de lenguaje natural. |
+| Todos | 🟡 Fresh review independiente antes de cerrar. |
+
+**Definition of Done**
+
+- “tengo agua potable, dónde la necesitan?” clasifica como `resource` con `resourceDirection = offer` y `resourceLabel = agua potable`.
+- El router conserva facts de recurso y los entrega al flujo sin registrar texto libre ni PII.
+- El flujo `/resource` no crea un reporte final por clasificación; solicita confirmación o datos faltantes.
+- `unknown`, `ambiguous`, baja confianza o fallo de Workers AI siguen degradando a clarificación segura; facts de recurso inválidos se ignoran y el flujo determinista continúa sin prefill.
+- Las pruebas cubren clasificación, validación de facts, routing y prefill de recurso.
+
+**Riesgos y límites**
+
+- Esta slice no resuelve prefill completo para reunificación familiar ni SOS; esos flujos son más sensibles y requieren una slice dedicada.
+- El modelo puede clasificar bien en tests mockeados y fallar en runtime; se necesita una matriz de evaluación con frases reales antes de piloto amplio.
+- No se debe usar extracted facts como fuente de verdad; son hipótesis del usuario/modelo hasta que el flujo las confirme.
+
+**Evidencia esperada de verificación**
+
+- `pnpm contracts:test:strict`
+- `pnpm --filter @zona-cero/api test -- src/telegram-intent-classifier.test.ts`
+- `pnpm --filter @zona-cero/api test -- src/index.test.ts`
+- `pnpm --filter @zona-cero/api typecheck`
+- `pnpm --filter @zona-cero/api build`
+- `git diff --check`
+- Fresh review independiente sin defectos confirmados
 
 ## Gates antes de implementar cada slice
 

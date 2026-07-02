@@ -1,6 +1,10 @@
+/* Colors, radii, and spacing come from the --zc-* custom properties
+   injected by main.tsx (see @zona-cero/ui/generateOperationalCss). This
+   file should only hold layout rules, per docs/design-system-visual-acceptance.md. */
+
 :root {
-  color: #e2e8f0;
-  background: #020617;
+  color: var(--zc-color-text);
+  background: var(--zc-color-background);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -21,16 +25,16 @@ body {
 .status-card {
   width: min(1120px, 100%);
   margin: 0 auto;
-  padding: 1.5rem;
-  border: 1px solid rgba(148, 163, 184, 0.28);
-  border-radius: 24px;
-  background: rgba(15, 23, 42, 0.8);
+  padding: var(--zc-space-panel);
+  border: var(--zc-border-width) solid var(--zc-color-border);
+  border-radius: var(--zc-radius-panel);
+  background: var(--zc-color-surface);
   box-sizing: border-box;
 }
 
 .eyebrow {
   margin: 0 0 0.75rem;
-  color: #38bdf8;
+  color: var(--zc-color-info);
   font-size: 0.8rem;
   font-weight: 800;
   letter-spacing: 0.12em;
@@ -47,7 +51,7 @@ dl {
 }
 
 .summary {
-  color: #cbd5e1;
+  color: var(--zc-color-text-muted);
   line-height: 1.6;
 }
 
@@ -56,6 +60,19 @@ dl {
   align-items: start;
   justify-content: space-between;
   gap: 1rem;
+}
+
+.card-title-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.card-title-row :is(h2, h3, h4) {
+  margin: 0;
 }
 
 .work-center-grid {
@@ -77,12 +94,11 @@ dl {
   gap: 0.75rem;
 }
 
-.work-center-card,
 .map-lite li {
   padding: 1rem;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 18px;
-  background: rgba(2, 6, 23, 0.42);
+  border: var(--zc-border-width) solid var(--zc-color-border);
+  border-radius: var(--zc-radius-card);
+  background: var(--zc-color-surface-muted);
 }
 
 .detail-card dl {
@@ -91,20 +107,8 @@ dl {
   gap: 0.35rem 0.75rem;
 }
 
-.status-strip {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.5rem;
-}
-
-.status-strip div {
-  padding: 0.5rem;
-  border-radius: 12px;
-  background: rgba(14, 165, 233, 0.1);
-}
-
 dt {
-  color: #93c5fd;
+  color: var(--zc-color-info);
   font-size: 0.78rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -112,7 +116,7 @@ dt {
 
 dd {
   margin: 0;
-  color: #f8fafc;
+  color: var(--zc-color-text);
 }
 
 .map-lite {
@@ -152,22 +156,23 @@ dd {
 }
 
 .action-row button {
-  border: 1px solid rgba(56, 189, 248, 0.45);
-  border-radius: 999px;
+  border: var(--zc-border-width) solid var(--zc-color-info);
+  border-radius: var(--zc-radius-pill);
   padding: 0.5rem 0.75rem;
-  color: #e0f2fe;
-  background: rgba(14, 165, 233, 0.12);
+  color: var(--zc-color-info-surface);
+  background: var(--zc-color-info);
   cursor: pointer;
 }
 
 .action-row button:disabled {
-  color: #94a3b8;
-  border-color: rgba(148, 163, 184, 0.2);
+  color: var(--zc-color-text-muted);
+  border-color: var(--zc-color-border);
+  background: transparent;
   cursor: not-allowed;
 }
 
 .sos-card {
-  border-color: rgba(248, 113, 113, 0.45);
+  border-color: var(--zc-color-sos);
 }
 
 .sos-form {
@@ -178,20 +183,20 @@ dd {
 
 .sos-form input {
   max-width: 22rem;
-  border: 1px solid rgba(248, 113, 113, 0.45);
-  border-radius: 12px;
+  border: var(--zc-border-width) solid var(--zc-color-sos);
+  border-radius: var(--zc-radius-control);
   padding: 0.65rem 0.75rem;
-  color: #f8fafc;
-  background: rgba(2, 6, 23, 0.8);
+  color: var(--zc-color-text);
+  background: var(--zc-color-surface-muted);
 }
 
 .sos-form button {
   width: fit-content;
-  border: 1px solid rgba(248, 113, 113, 0.65);
-  border-radius: 999px;
+  border: var(--zc-border-width) solid var(--zc-color-sos);
+  border-radius: var(--zc-radius-pill);
   padding: 0.65rem 0.9rem;
-  color: #fee2e2;
-  background: rgba(185, 28, 28, 0.28);
+  color: var(--zc-color-sos-surface);
+  background: var(--zc-color-sos);
   cursor: pointer;
 }
 
@@ -201,7 +206,7 @@ dd {
 
 .private-hero,
 .safety-card {
-  border-color: rgba(45, 212, 191, 0.45);
+  border-color: var(--zc-color-success);
 }
 
 .safety-list {
@@ -209,7 +214,7 @@ dd {
   gap: 0.5rem;
   margin: 0;
   padding-left: 1.25rem;
-  color: #dbeafe;
+  color: var(--zc-color-text-muted);
 }
 
 .family-form {
@@ -221,28 +226,29 @@ dd {
 
 .family-form input,
 .family-form select {
-  border: 1px solid rgba(45, 212, 191, 0.45);
-  border-radius: 12px;
+  border: var(--zc-border-width) solid var(--zc-color-success);
+  border-radius: var(--zc-radius-control);
   padding: 0.65rem 0.75rem;
-  color: #f8fafc;
-  background: rgba(2, 6, 23, 0.8);
+  color: var(--zc-color-text);
+  background: var(--zc-color-surface-muted);
 }
 
 .family-form button,
 .primary-action {
   width: fit-content;
-  border: 1px solid rgba(45, 212, 191, 0.65);
-  border-radius: 999px;
+  border: var(--zc-border-width) solid var(--zc-color-success);
+  border-radius: var(--zc-radius-pill);
   padding: 0.65rem 0.9rem;
-  color: #ccfbf1;
-  background: rgba(13, 148, 136, 0.28);
+  color: var(--zc-color-success-surface);
+  background: var(--zc-color-success);
   cursor: pointer;
 }
 
 .family-form button:disabled,
 .primary-action:disabled {
-  color: #94a3b8;
-  border-color: rgba(148, 163, 184, 0.2);
+  color: var(--zc-color-text-muted);
+  border-color: var(--zc-color-border);
+  background: transparent;
   cursor: not-allowed;
 }
 
@@ -261,12 +267,8 @@ dd {
 }
 
 .channel-warning {
-  border-color: rgba(251, 191, 36, 0.55);
-  background: rgba(113, 63, 18, 0.28);
-}
-
-.channel-warning strong {
-  color: #fde68a;
+  border-color: var(--zc-color-warning);
+  background: var(--zc-color-warning-surface);
 }
 
 .hero-topline {
@@ -285,7 +287,83 @@ dd {
 }
 
 .language-selector select {
-  border: 1px solid rgba(148, 163, 184, 0.55);
-  border-radius: 999px;
+  border: var(--zc-border-width) solid var(--zc-color-border-strong);
+  border-radius: var(--zc-radius-pill);
   padding: 0.35rem 0.75rem;
+}
+
+.hub-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  width: min(1120px, 100%);
+  margin: 0 auto;
+}
+
+.hub-nav__tab {
+  background: var(--zc-color-surface);
+  border: var(--zc-border-width) solid var(--zc-color-border);
+  border-radius: var(--zc-radius-pill);
+  color: var(--zc-color-text-muted);
+  cursor: pointer;
+  font-weight: 700;
+  padding: 0.5rem 1rem;
+}
+
+.hub-nav__tab--active {
+  background: var(--zc-color-info);
+  border-color: var(--zc-color-info);
+  color: var(--zc-color-info-surface);
+}
+
+.hub-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: min(1120px, 100%);
+  margin: 0 auto;
+}
+
+@media (max-width: 720px) {
+  .hub-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.hub-tile-button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  display: block;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+  width: 100%;
+}
+
+.hub-tile-button .zc-card {
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.hub-tile-button:hover .zc-card,
+.hub-tile-button:focus-visible .zc-card {
+  border-color: var(--zc-color-primary);
+}
+
+.hub-tile__cta {
+  color: var(--zc-color-info);
+  display: inline-block;
+  font-weight: 700;
+  margin-top: 0.5rem;
+}
+
+.hub-back {
+  background: transparent;
+  border: none;
+  color: var(--zc-color-info);
+  cursor: pointer;
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+  padding: 0;
 }

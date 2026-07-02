@@ -23,6 +23,38 @@ const TELEGRAM_INTENT_RESPONSE_SCHEMA = {
     extractedFacts: {
       type: 'object',
       additionalProperties: true,
+      properties: {
+        resourceDirection: {
+          type: 'string',
+          enum: ['offer', 'need', 'report', 'unknown'],
+          description: 'For resource intent only: whether the message offers a resource, needs it, reports availability/status, or is unclear.',
+        },
+        resourceType: {
+          type: 'string',
+          enum: ['water', 'food', 'medicine', 'shelter', 'equipment', 'transport', 'fuel', 'other', 'unknown'],
+          description: 'For resource intent only: normalized resource category.',
+        },
+        resourceLabel: {
+          type: 'string',
+          maxLength: 120,
+          description: 'For resource intent only: short human label preserving the user wording, such as "agua potable".',
+        },
+        quantityApprox: {
+          type: 'string',
+          maxLength: 120,
+          description: 'For resource intent only: approximate quantity or capacity if stated.',
+        },
+        locationHint: {
+          type: 'string',
+          maxLength: 160,
+          description: 'For resource intent only: place, destination, pickup point, or delivery hint if stated.',
+        },
+        implicitQuestion: {
+          type: 'string',
+          enum: ['where_needed', 'where_available', 'how_to_deliver', 'none'],
+          description: 'For resource intent only: implicit question asked by the user, or none.',
+        },
+      },
     },
   },
   required: ['intent', 'confidence', 'extractedFacts'],
@@ -135,8 +167,14 @@ function buildTelegramIntentSystemPrompt(): string {
     'Map task assignment, task status, logistics dispatch, or mission updates to dispatch.',
     'Map joining/selecting an incident or onboarding into an incident to incident_join.',
     'Use ambiguous when more than one operational intent is plausible. Use unknown when no operational route is clear.',
-    'Examples: "tenemos agua potable para entregar" => resource; "busco a mi hijo desaparecido" => family_reunification.',
-    'Keep extractedFacts small and JSON-compatible. Do not include actions to execute.',
+    'For resource intent, extract typed facts when clear: resourceDirection, resourceType, resourceLabel, quantityApprox, locationHint, implicitQuestion.',
+    'Resource directions: "tengo", "puedo llevar", "me sobra", "tenemos para entregar" => offer; "necesito", "necesitamos", "hace falta" => need.',
+    'Resource examples: "tengo agua potable, dónde la necesitan?" => intent resource, resourceDirection offer, resourceType water, resourceLabel "agua potable", implicitQuestion where_needed.',
+    'Resource examples: "puedo llevar comida" => intent resource, resourceDirection offer, resourceType food.',
+    'Resource examples: "me sobra medicina" => intent resource, resourceDirection offer, resourceType medicine.',
+    'Resource examples: "necesitamos mantas" => intent resource, resourceDirection need, resourceType shelter or equipment or other as best supported by the text.',
+    'Other examples: "busco a mi hijo desaparecido" => family_reunification.',
+    'Keep extractedFacts small, precise, and JSON-compatible. Do not include actions to execute.',
   ].join('\n');
 }
 

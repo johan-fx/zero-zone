@@ -15,7 +15,7 @@ function createAi(response: unknown): TelegramIntentAiBinding & { run: ReturnTyp
 }
 
 describe('telegram intent classifier', () => {
-  it('uses deterministic Workers AI JSON classification defaults', async () => {
+  it('uses deterministic Workers AI JSON classification defaults and typed resource schema hints', async () => {
     const ai = createAi({
       choices: [
         {
@@ -24,7 +24,12 @@ describe('telegram intent classifier', () => {
               intent: 'resource',
               confidence: 0.92,
               reason: 'The user is offering potable water.',
-              extractedFacts: { resourceType: 'potable_water' },
+              extractedFacts: {
+                resourceDirection: 'offer',
+                resourceType: 'water',
+                resourceLabel: 'agua potable',
+                implicitQuestion: 'where_needed',
+              },
             }),
           },
         },
@@ -34,6 +39,12 @@ describe('telegram intent classifier', () => {
     const result = await classifyTelegramIntent({ ai, text: 'Tenemos agua potable para entregar', context: { locale: 'es' } });
 
     expect(result.intent).toBe('resource');
+    expect(result.extractedFacts).toMatchObject({
+      resourceDirection: 'offer',
+      resourceType: 'water',
+      resourceLabel: 'agua potable',
+      implicitQuestion: 'where_needed',
+    });
     expect(ai.run).toHaveBeenCalledWith(
       DEFAULT_TELEGRAM_INTENT_MODEL,
       expect.objectContaining({
@@ -42,6 +53,62 @@ describe('telegram intent classifier', () => {
         response_format: expect.objectContaining({ type: 'json_schema' }),
       }),
     );
+
+    const firstCall = ai.run.mock.calls[0] as [string, Record<string, unknown>];
+    const request = firstCall[1];
+    const messages = request.messages as Array<{ role: string; content: string }>;
+    expect(messages[0]?.content).toContain('"tengo agua potable, dónde la necesitan?" => intent resource');
+    expect(messages[0]?.content).toContain('"puedo llevar comida" => intent resource');
+    expect(messages[0]?.content).toContain('"me sobra medicina" => intent resource');
+    expect(messages[0]?.content).toContain('"necesitamos mantas" => intent resource');
+    expect(request.response_format).toMatchObject({
+      json_schema: {
+        properties: {
+          extractedFacts: {
+            properties: {
+              resourceDirection: expect.objectContaining({ enum: ['offer', 'need', 'report', 'unknown'] }),
+              resourceType: expect.objectContaining({
+                enum: ['water', 'food', 'medicine', 'shelter', 'equipment', 'transport', 'fuel', 'other', 'unknown'],
+              }),
+              resourceLabel: expect.objectContaining({ type: 'string' }),
+              quantityApprox: expect.objectContaining({ type: 'string' }),
+              locationHint: expect.objectContaining({ type: 'string' }),
+              implicitQuestion: expect.objectContaining({ enum: ['where_needed', 'where_available', 'how_to_deliver', 'none'] }),
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it.each([
+    [
+      'tengo agua potable, dónde la necesitan?',
+      {
+        resourceDirection: 'offer',
+        resourceType: 'water',
+        resourceLabel: 'agua potable',
+        implicitQuestion: 'where_needed',
+      },
+    ],
+    ['puedo llevar comida', { resourceDirection: 'offer', resourceType: 'food', resourceLabel: 'comida' }],
+    ['me sobra medicina', { resourceDirection: 'offer', resourceType: 'medicine', resourceLabel: 'medicina' }],
+    ['necesitamos mantas', { resourceDirection: 'need', resourceType: 'shelter', resourceLabel: 'mantas' }],
+  ])('preserves typed resource facts for "%s"', async (text, extractedFacts) => {
+    const ai = createAi({
+      response: {
+        intent: 'resource',
+        confidence: 0.91,
+        reason: 'The user is describing resources.',
+        extractedFacts,
+      },
+    });
+
+    await expect(classifyTelegramIntent({ ai, text })).resolves.toMatchObject({
+      intent: 'resource',
+      confidence: 0.91,
+      extractedFacts,
+    });
   });
 
   it('returns family_reunification for valid missing-person output', async () => {
@@ -77,11 +144,46 @@ describe('telegram intent classifier', () => {
     });
   });
 
+  it('keeps low-confidence resource classifications ambiguous instead of overriding the global threshold', async () => {
+    const ai = createAi({
+      response: {
+        intent: 'resource',
+        confidence: 0.62,
+        reason: 'The text mentions water but asks an unclear follow-up.',
+        extractedFacts: {
+          resourceDirection: 'offer',
+          resourceType: 'water',
+          resourceLabel: 'agua potable',
+          implicitQuestion: 'where_needed',
+        },
+      },
+    });
+
+    await expect(classifyTelegramIntent({ ai, text: 'Agua?', confidenceThreshold: 0.75 })).resolves.toMatchObject({
+      intent: 'ambiguous',
+      confidence: 0.62,
+      extractedFacts: { proposedIntent: 'resource' },
+    });
+  });
+
   it('returns unknown instead of throwing on AI, JSON, or schema failures', async () => {
     await expect(classifyTelegramIntent({ ai: createAi('not-json'), text: 'hola' })).resolves.toMatchObject({ intent: 'unknown', confidence: 0 });
     await expect(
       classifyTelegramIntent({
         ai: createAi({ response: { intent: 'resource', confidence: 2, extractedFacts: {} } }),
+        text: 'agua',
+      }),
+    ).resolves.toMatchObject({ intent: 'unknown', confidence: 0 });
+    await expect(
+      classifyTelegramIntent({
+        ai: createAi({
+          response: {
+            intent: 'resource',
+            confidence: 0.9,
+            reason: 'The user is offering water.',
+            extractedFacts: { resourceType: undefined },
+          },
+        }),
         text: 'agua',
       }),
     ).resolves.toMatchObject({ intent: 'unknown', confidence: 0 });

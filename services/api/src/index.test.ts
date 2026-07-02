@@ -762,23 +762,58 @@ describe('api worker', () => {
     expect(classifier).not.toHaveBeenCalled();
   });
 
-  it('routes natural potable water messages to the resource conversation when classified as resource', async () => {
+  it('routes natural potable water messages to the resource conversation with safe extracted-fact context', async () => {
     const classifier = enableTelegramIntentClassifier(
-      vi.fn().mockResolvedValue({ intent: 'resource', confidence: 0.92, extractedFacts: { category: 'water' } }),
+      vi.fn().mockResolvedValue({
+        intent: 'resource',
+        confidence: 0.92,
+        extractedFacts: {
+          resourceDirection: 'offer',
+          resourceType: 'water',
+          resourceLabel: 'agua potable',
+          implicitQuestion: 'where_needed',
+        },
+      }),
     );
     const telegramUserId = 25203;
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
-    await expect(postTelegramMessage(telegramUserId, 'Tenemos agua potable para entregar', 'Water')).resolves.toMatchObject({
-      accepted: true,
-      command: null,
-      responseText: expect.stringContaining('Choose an incident before reporting resources'),
-    });
+    try {
+      const result = await postTelegramMessage(telegramUserId, 'tengo agua potable, dónde la necesitan?', 'Water');
+      expect(result).toMatchObject({ accepted: true, command: null });
+      expect(result.responseText).toContain('agua potable');
+      expect(result.responseText).toContain('Te guiaré');
+      expect(result.responseText).toContain('Choose an incident before reporting resources');
+      expect(classifier).toHaveBeenCalledTimes(1);
+      expect(logSpy.mock.calls.map((call) => call.join(' ')).join('\n')).not.toMatch(/tengo agua potable|agua potable|resourceDirection|where_needed/i);
+
+      const state = await (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?')
+        .bind(`flow:resource:chat:${telegramUserId}:from:${telegramUserId}`)
+        .first<{ step: string }>();
+      expect(state).toMatchObject({ step: 'awaitingIncident' });
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('ignores invalid resource extracted facts without creating a resource report', async () => {
+    const classifier = enableTelegramIntentClassifier(
+      vi.fn().mockResolvedValue({
+        intent: 'resource',
+        confidence: 0.93,
+        extractedFacts: { resourceDirection: 'offer', resourceType: 'water', resourceLabel: 42, implicitQuestion: 'where_needed' },
+      }),
+    );
+    const telegramUserId = 25207;
+
+    const result = await postTelegramMessage(telegramUserId, 'tengo agua potable, dónde la necesitan?', 'InvalidFacts');
+    expect(result).toMatchObject({ accepted: true, command: null });
+    expect(result.responseText).toContain('Choose an incident before reporting resources');
+    expect(result.responseText).not.toContain('Te guiaré');
     expect(classifier).toHaveBeenCalledTimes(1);
 
-    const state = await (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?')
-      .bind(`flow:resource:chat:${telegramUserId}:from:${telegramUserId}`)
-      .first<{ step: string }>();
-    expect(state).toMatchObject({ step: 'awaitingIncident' });
+    const reports = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM resource_reports').first<{ count: number }>();
+    expect(reports?.count).toBe(0);
   });
 
   it('routes natural missing child/person messages to family reunification', async () => {

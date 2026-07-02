@@ -80,6 +80,7 @@ import {
   type SyncPullResponse,
   type SyncPushResponse,
   SyncPushResponseSchema,
+  TelegramResourceIntentFactsSchema,
   TelegramWebhookResultSchema,
   WorkCenterConnectedCreateRequestSchema,
   type WorkCenterConnectedCreateRequest,
@@ -93,6 +94,7 @@ import {
   type WorkCenterPriority,
   type WorkCenterSignalType,
   type TelegramIntentClassification,
+  type TelegramResourceIntentFacts,
   type WorkCenterSummary,
 } from '@zona-cero/contracts';
 import { deriveResourceReportState, deriveWorkCenterState, matchResourceReports, type WorkCenterSignalInput } from '@zona-cero/domain';
@@ -3648,20 +3650,23 @@ async function routeClassifiedTelegramIntent(
   }
 
   emitTelegramIntentRouterTelemetry('accepted', `classification:${classification.intent}`);
-  return routeAcceptedTelegramIntent(db, update, classification.intent, stateKeys, telemetry);
+  return routeAcceptedTelegramIntent(db, update, classification, stateKeys, telemetry);
 }
 
 async function routeAcceptedTelegramIntent(
   db: D1Database,
   update: TelegramUpdateLike,
-  intent: Exclude<TelegramIntentClassification['intent'], 'unknown' | 'ambiguous'>,
+  classification: TelegramIntentClassification & { intent: Exclude<TelegramIntentClassification['intent'], 'unknown' | 'ambiguous'> },
   stateKeys: TelegramConversationStateKeys,
   telemetry?: ChannelTelemetryPort,
 ): Promise<string> {
-  switch (intent) {
-    case 'resource':
+  switch (classification.intent) {
+    case 'resource': {
       await deleteTelegramConversationStates(db, [stateKeys.workCenterStateKey, stateKeys.dispatchStateKey, stateKeys.sosStateKey, stateKeys.familyStateKey]);
-      return handleTelegramResourceConversation(db, update, stateKeys.resourceStateKey, undefined, telemetry);
+      const responseText = await handleTelegramResourceConversation(db, update, stateKeys.resourceStateKey, undefined, telemetry);
+      const context = buildTelegramResourceIntentContext(parseTelegramResourceIntentFacts(classification));
+      return context ? `${context}\n\n${responseText}` : responseText;
+    }
     case 'workcenter':
       await deleteTelegramConversationStates(db, [stateKeys.resourceStateKey, stateKeys.dispatchStateKey, stateKeys.sosStateKey, stateKeys.familyStateKey]);
       return handleTelegramWorkCenterConversation(db, update, stateKeys.workCenterStateKey, undefined, telemetry);
@@ -3697,6 +3702,55 @@ function isActionableTelegramIntentClassification(
   confidenceThreshold: number,
 ): classification is TelegramIntentClassification & { intent: Exclude<TelegramIntentClassification['intent'], 'unknown' | 'ambiguous'> } {
   return classification.intent !== 'unknown' && classification.intent !== 'ambiguous' && classification.confidence >= confidenceThreshold;
+}
+
+function parseTelegramResourceIntentFacts(classification: TelegramIntentClassification): TelegramResourceIntentFacts | null {
+  if (classification.intent !== 'resource') {
+    return null;
+  }
+
+  const parsed = TelegramResourceIntentFactsSchema.safeParse(classification.extractedFacts);
+  return parsed.success ? parsed.data : null;
+}
+
+function buildTelegramResourceIntentContext(facts: TelegramResourceIntentFacts | null): string | null {
+  if (!facts) {
+    return null;
+  }
+
+  const resourceLabel = resolveTelegramResourceIntentLabel(facts);
+  if (!resourceLabel) {
+    return null;
+  }
+
+  if (facts.resourceDirection === 'offer' || facts.implicitQuestion === 'where_needed') {
+    return `Entiendo que tienes ${resourceLabel} disponible. Te guiaré para registrarlo de forma segura; el reporte no se creará hasta que confirmes los datos.`;
+  }
+
+  if (facts.resourceDirection === 'need' || facts.implicitQuestion === 'where_available') {
+    return `Entiendo que necesitas ${resourceLabel}. Te guiaré para registrarlo de forma segura; el reporte no se creará hasta que confirmes los datos.`;
+  }
+
+  return `Entiendo que quieres reportar información sobre ${resourceLabel}. Te guiaré con las preguntas obligatorias antes de crear cualquier reporte.`;
+}
+
+function resolveTelegramResourceIntentLabel(facts: TelegramResourceIntentFacts): string | null {
+  const explicitLabel = facts.resourceLabel?.trim();
+  if (explicitLabel) {
+    return explicitLabel;
+  }
+
+  const fallbackLabels: Partial<Record<TelegramResourceIntentFacts['resourceType'], string>> = {
+    water: 'agua',
+    food: 'comida',
+    medicine: 'medicinas',
+    shelter: 'refugio',
+    equipment: 'equipamiento',
+    transport: 'transporte',
+    fuel: 'combustible',
+  };
+
+  return fallbackLabels[facts.resourceType] ?? null;
 }
 
 function getTelegramIntentAiBinding(env: Env): TelegramIntentAiBinding | null {

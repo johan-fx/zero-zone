@@ -1,0 +1,152 @@
+/* Primitive styles consume only --zc-* custom properties generated from
+   packages/ui/src/tokens.ts — never hardcode colors/radii here, per
+   docs/design-system-visual-acceptance.md. Host apps must inject the
+   stylesheet from generateOperationalCss() before these rules apply. */
+
+.zc-status-badge {
+  align-items: center;
+  border: var(--zc-border-width) solid transparent;
+  border-radius: var(--zc-radius-pill);
+  display: inline-flex;
+  font-size: var(--zc-font-xs);
+  font-weight: 700;
+  gap: 0.35em;
+  letter-spacing: 0.02em;
+  line-height: var(--zc-line-xs);
+  padding: 0.3em 0.75em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.zc-status-badge__marker {
+  font-size: 0.85em;
+}
+
+.zc-status-badge--info {
+  background: var(--zc-color-info-surface);
+  border-color: var(--zc-color-info);
+  color: var(--zc-color-info);
+}
+
+.zc-status-badge--success {
+  background: var(--zc-color-success-surface);
+  border-color: var(--zc-color-success);
+  color: var(--zc-color-success);
+}
+
+.zc-status-badge--warning {
+  background: var(--zc-color-warning-surface);
+  border-color: var(--zc-color-warning);
+  color: var(--zc-color-warning);
+}
+
+.zc-status-badge--risk {
+  background: var(--zc-color-risk-surface);
+  border-color: var(--zc-color-risk);
+  color: var(--zc-color-risk);
+}
+
+.zc-status-badge--sos {
+  background: var(--zc-color-sos-surface);
+  border-color: var(--zc-color-sos);
+  color: var(--zc-color-sos);
+}
+
+.zc-status-badge--stale {
+  background: var(--zc-color-stale-surface);
+  border-color: var(--zc-color-stale);
+  color: var(--zc-color-stale);
+}
+
+.zc-status-badge--pending {
+  background: var(--zc-color-pending-surface);
+  border-color: var(--zc-color-pending);
+  color: var(--zc-color-pending);
+}
+
+.zc-status-badge--conflict {
+  background: var(--zc-color-conflict-surface);
+  border-color: var(--zc-color-conflict);
+  color: var(--zc-color-conflict);
+}
+
+.zc-card {
+  background: var(--zc-color-surface);
+  border: var(--zc-border-width) solid var(--zc-color-border);
+  border-left-width: 4px;
+  border-left-color: var(--zc-color-border-strong);
+  border-radius: var(--zc-radius-card);
+  box-sizing: border-box;
+  color: var(--zc-color-text);
+  padding: var(--zc-space-panel);
+}
+
+.zc-card--info { border-left-color: var(--zc-color-info); }
+.zc-card--success { border-left-color: var(--zc-color-success); }
+.zc-card--warning { border-left-color: var(--zc-color-warning); }
+.zc-card--risk { border-left-color: var(--zc-color-risk); }
+.zc-card--sos { border-left-color: var(--zc-color-sos); }
+.zc-card--stale { border-left-color: var(--zc-color-stale); }
+.zc-card--pending { border-left-color: var(--zc-color-pending); }
+.zc-card--conflict { border-left-color: var(--zc-color-conflict); }
+
+.zc-section-header {
+  align-items: start;
+  display: flex;
+  gap: var(--zc-space-section);
+  justify-content: space-between;
+}
+
+.zc-section-header__title {
+  margin: 0;
+}
+
+.zc-section-header__trailing {
+  color: var(--zc-color-text);
+  font-weight: 700;
+}
+
+.zc-eyebrow {
+  color: var(--zc-color-info);
+  font-size: var(--zc-font-xs);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  margin: 0 0 0.4em;
+  text-transform: uppercase;
+}
+
+.zc-meta-row {
+  display: grid;
+  gap: var(--zc-space-section);
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  margin: 0;
+}
+
+.zc-meta-row__item {
+  background: var(--zc-color-surface-muted);
+  border-radius: var(--zc-radius-control);
+  padding: 0.5em 0.65em;
+}
+
+.zc-meta-row__item dt {
+  color: var(--zc-color-text-muted);
+  font-size: var(--zc-font-xs);
+  font-weight: 700;
+  margin: 0 0 0.15em;
+  text-transform: uppercase;
+}
+
+.zc-meta-row__item dd {
+  color: var(--zc-color-text);
+  font-weight: 600;
+  margin: 0;
+}
+
+.zc-meta-row__item--info { background: var(--zc-color-info-surface); }
+.zc-meta-row__item--success { background: var(--zc-color-success-surface); }
+.zc-meta-row__item--warning { background: var(--zc-color-warning-surface); }
+.zc-meta-row__item--risk { background: var(--zc-color-risk-surface); }
+.zc-meta-row__item--sos { background: var(--zc-color-sos-surface); }
+.zc-meta-row__item--stale { background: var(--zc-color-stale-surface); }
+.zc-meta-row__item--pending { background: var(--zc-color-pending-surface); }
+.zc-meta-row__item--conflict { background: var(--zc-color-conflict-surface); }
