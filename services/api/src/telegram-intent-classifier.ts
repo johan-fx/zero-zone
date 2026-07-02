@@ -38,7 +38,7 @@ const TELEGRAM_INTENT_RESPONSE_SCHEMA = {
     },
     extractedFacts: {
       type: 'object',
-      additionalProperties: true,
+      additionalProperties: false,
       properties: {
         resourceDirection: {
           type: 'string',
@@ -115,10 +115,21 @@ const TELEGRAM_INTENT_RESPONSE_SCHEMA = {
           enum: sosSeverities,
           description: 'For sos only: normalized emergency severity/category.',
         },
-        peopleCountApprox: {
+        medicalNeed: {
           type: 'string',
-          maxLength: 60,
-          description: 'For sos only: approximate affected people count if stated.',
+          maxLength: 160,
+          description: 'For sos only: short medical need candidate when explicitly stated; do not include names, phone numbers, or raw message text.',
+        },
+        peopleCount: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 10000,
+          description: 'For sos only: numeric affected people count candidate if explicitly stated.',
+        },
+        hazardHint: {
+          type: 'string',
+          maxLength: 160,
+          description: 'For sos only: short non-identifying hazard candidate such as smoke, fire, flooding, or collapse.',
         },
         destinationHint: {
           type: 'string',
@@ -248,14 +259,16 @@ function buildTelegramIntentSystemPrompt(): string {
     'Map task assignment, task status, logistics dispatch, or mission updates to dispatch.',
     'Map joining/selecting an incident or onboarding into an incident to incident_join.',
     'Use ambiguous when more than one operational intent is plausible. Use unknown when no operational route is clear.',
-    'Extract facts only when clear. Facts are candidates for backend validation, not commands.',
+    'Extract facts only when clear. Facts are candidates for backend validation and user confirmation, not commands.',
     'For resource: resourceDirection, resourceType, resourceLabel, quantityApprox, locationHint, implicitQuestion.',
     'For workcenter: signal, status, name, locationHint, priority, initialNeed, surplus, implicitQuestion. Never geocode locationHint or output coordinates.',
     'Workcenter examples ES: "hay un puesto médico en la escuela con prioridad alta y necesitan medicamentos" => intent workcenter, signal availability, name "puesto médico", locationHint "escuela", priority high, initialNeed "medicamentos".',
     'Workcenter examples EN: "north shelter is active and needs blankets" => intent workcenter, status active, name "north shelter", initialNeed "blankets".',
     'Workcenter examples ES: "el centro norte está lleno" => intent workcenter, signal capacity, name "centro norte". Example EN: "north shelter has spare cots" => intent workcenter, signal availability, name "north shelter", surplus "cots".',
     'For family_reunification: caseType, subjectType, locationHint. Example ES: "busco a mi hijo desaparecido" => intent family_reunification, caseType missing_person, subjectType child. Example EN: "found a separated child near gate 2" => intent family_reunification, caseType found_person, subjectType child, locationHint "gate 2".',
-    'For sos: severity, peopleCountApprox, locationHint. Example ES: "hay dos personas atrapadas en la escalera este" => intent sos, severity trapped, peopleCountApprox "2", locationHint "escalera este". Example EN: "urgent medical help at east stairs" => intent sos, severity medical, locationHint "east stairs".',
+    'For sos: severity, locationHint, medicalNeed, peopleCount, hazardHint. These are candidate facts only; never create an SOS, geocode, output coordinates, copy raw user text, or include PII.',
+    'SOS examples ES: "necesito ayuda médica urgente en el refugio norte, somos 3 y hay humo" => intent sos, severity medical, locationHint "refugio norte", medicalNeed "ayuda médica urgente", peopleCount 3, hazardHint "humo".',
+    'SOS examples ES: "hay dos personas atrapadas en la escalera este" => intent sos, severity trapped, peopleCount 2, locationHint "escalera este". Example EN: "urgent medical help at east stairs" => intent sos, severity medical, medicalNeed "urgent medical help", locationHint "east stairs".',
     'For dispatch: signal, status, destinationHint. Example ES: "equipo en camino al almacén" => intent dispatch, signal status_update, status en_route, destinationHint "almacén". Example EN: "deliver supplies to north gate" => intent dispatch, signal logistics_request, destinationHint "north gate".',
     'For incident_join: signal, incidentHint, roleHint. Example ES: "quiero unirme al incidente demo como voluntario" => intent incident_join, signal request_join, incidentHint "demo", roleHint volunteer. Example EN: "switch me to incident north" => intent incident_join, signal change_incident, incidentHint "north".',
     'Resource directions: "tengo", "puedo llevar", "me sobra", "tenemos para entregar" => offer; "necesito", "necesitamos", "hace falta" => need.',
@@ -263,7 +276,7 @@ function buildTelegramIntentSystemPrompt(): string {
     'Resource examples: "puedo llevar comida" => intent resource, resourceDirection offer, resourceType food.',
     'Resource examples: "me sobra medicina" => intent resource, resourceDirection offer, resourceType medicine.',
     'Resource examples: "necesitamos mantas" => intent resource, resourceDirection need, resourceType shelter or equipment or other as best supported by the text.',
-    'Keep extractedFacts small, precise, and JSON-compatible. Do not include actions to execute, raw user text, phone numbers, names, or other PII.',
+    'Keep extractedFacts small, precise, and JSON-compatible. Do not include actions to execute, raw user text, phone numbers, exact coordinates, names, or other PII.',
   ].join('\n');
 }
 

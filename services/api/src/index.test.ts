@@ -1110,6 +1110,88 @@ describe('api worker', () => {
     expect(classifier).toHaveBeenCalledTimes(1);
   });
 
+  it('routes natural SOS messages to SOS context without creating alerts or persisting sensitive facts', async () => {
+    const classifier = enableTelegramIntentClassifier(
+      vi.fn().mockResolvedValue({
+        intent: 'sos',
+        confidence: 0.96,
+        extractedFacts: {
+          severity: 'medical',
+          locationHint: 'refugio norte',
+          medicalNeed: 'ayuda médica urgente',
+          peopleCount: 3,
+          hazardHint: 'humo',
+        },
+      }),
+    );
+    const telegramUserId = 25214;
+    const rawMessage = 'necesito ayuda médica urgente en el refugio norte, somos 3 y hay humo';
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    try {
+      const beforeAlerts = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM sos_alerts').first<{ count: number }>();
+      const result = await postTelegramMessage(telegramUserId, rawMessage, 'SosNatural', 'es');
+
+      expect(result).toMatchObject({
+        accepted: true,
+        command: null,
+        responseText: expect.stringContaining('Elige un incidente antes de iniciar SOS'),
+      });
+      expect(result.responseText).toContain('Resumen seguro detectado');
+      expect(result.responseText).toContain('Ubicación aproximada: refugio norte');
+      expect(result.responseText).toContain('Necesidad médica: ayuda médica urgente');
+      expect(result.responseText).toContain('Personas afectadas: 3');
+      expect(result.responseText).toContain('Riesgo: humo');
+      expect(classifier).toHaveBeenCalledTimes(1);
+
+      const afterAlerts = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM sos_alerts').first<{ count: number }>();
+      expect(afterAlerts?.count).toBe(beforeAlerts?.count);
+
+      const state = await (env as Env).DB.prepare('SELECT step, state_json AS stateJson FROM telegram_conversation_states WHERE state_key = ?')
+        .bind(`flow:sos:chat:${telegramUserId}:from:${telegramUserId}`)
+        .first<{ step: string; stateJson: string }>();
+      expect(state).toMatchObject({ step: 'awaitingIncident' });
+      expect(state?.stateJson).not.toMatch(/ayuda médica urgente|refugio norte|humo|medicalNeed|hazardHint|locationHint|peopleCount/i);
+
+      const logs = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+      expect(logs).toContain('classification:sos:confidence_high');
+      expect(logs).not.toMatch(/ayuda médica urgente|refugio norte|humo|medicalNeed|hazardHint|locationHint|peopleCount/i);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('routes SOS safely when extracted facts are invalid without sensitive prefill', async () => {
+    const classifier = enableTelegramIntentClassifier(
+      vi.fn().mockResolvedValue({
+        intent: 'sos',
+        confidence: 0.96,
+        extractedFacts: {
+          severity: 'medical',
+          locationHint: 'refugio norte',
+          rawText: 'necesito ayuda médica urgente en el refugio norte',
+        },
+      }),
+    );
+    const telegramUserId = 25215;
+
+    await expect(postTelegramMessage(telegramUserId, 'necesito ayuda médica urgente en el refugio norte', 'InvalidSosFacts', 'es')).resolves.toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining('Elige un incidente antes de iniciar SOS'),
+    });
+    expect(classifier).toHaveBeenCalledTimes(1);
+
+    const state = await (env as Env).DB.prepare('SELECT step, state_json AS stateJson FROM telegram_conversation_states WHERE state_key = ?')
+      .bind(`flow:sos:chat:${telegramUserId}:from:${telegramUserId}`)
+      .first<{ step: string; stateJson: string }>();
+    expect(state).toMatchObject({ step: 'awaitingIncident' });
+    expect(state?.stateJson).not.toMatch(/ayuda médica urgente|refugio norte|rawText|locationHint/i);
+
+    const alerts = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM sos_alerts').first<{ count: number }>();
+    expect(alerts?.count).toBe(0);
+  });
+
   it('asks for clarification instead of falling back to incident join on ambiguous or low-confidence intent', async () => {
     const classifier = enableTelegramIntentClassifier(
       vi.fn().mockResolvedValue({ intent: 'resource', confidence: 0.42, extractedFacts: {} }),

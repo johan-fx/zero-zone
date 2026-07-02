@@ -61,10 +61,12 @@ describe('telegram intent classifier', () => {
     expect(messages[0]?.content).toContain('"hay un puesto médico en la escuela con prioridad alta y necesitan medicamentos" => intent workcenter');
     expect(messages[0]?.content).toContain('Never geocode locationHint or output coordinates');
     expect(messages[0]?.content).toContain('"found a separated child near gate 2" => intent family_reunification');
+    expect(messages[0]?.content).toContain('"necesito ayuda médica urgente en el refugio norte, somos 3 y hay humo" => intent sos');
+    expect(messages[0]?.content).toContain('facts only; never create an SOS, geocode, output coordinates, copy raw user text, or include PII');
     expect(messages[0]?.content).toContain('"hay dos personas atrapadas en la escalera este" => intent sos');
     expect(messages[0]?.content).toContain('"equipo en camino al almacén" => intent dispatch');
     expect(messages[0]?.content).toContain('"quiero unirme al incidente demo como voluntario" => intent incident_join');
-    expect(messages[0]?.content).toContain('Do not include actions to execute, raw user text, phone numbers, names, or other PII');
+    expect(messages[0]?.content).toContain('Do not include actions to execute, raw user text, phone numbers, exact coordinates, names, or other PII');
     expect(messages[0]?.content).toContain('"puedo llevar comida" => intent resource');
     expect(messages[0]?.content).toContain('"me sobra medicina" => intent resource');
     expect(messages[0]?.content).toContain('"necesitamos mantas" => intent resource');
@@ -92,7 +94,9 @@ describe('telegram intent classifier', () => {
               caseType: expect.objectContaining({ enum: ['missing_person', 'found_person', 'separated_group', 'reunification_info', 'unknown'] }),
               subjectType: expect.objectContaining({ enum: ['child', 'adult', 'elderly', 'group', 'unknown'] }),
               severity: expect.objectContaining({ enum: ['critical', 'medical', 'security', 'trapped', 'other'] }),
-              peopleCountApprox: expect.objectContaining({ type: 'string' }),
+              medicalNeed: expect.objectContaining({ type: 'string' }),
+              peopleCount: expect.objectContaining({ type: 'integer' }),
+              hazardHint: expect.objectContaining({ type: 'string' }),
               destinationHint: expect.objectContaining({ type: 'string' }),
               incidentHint: expect.objectContaining({ type: 'string' }),
               roleHint: expect.objectContaining({ enum: ['volunteer', 'coordinator', 'logistics', 'medical'] }),
@@ -169,6 +173,35 @@ describe('telegram intent classifier', () => {
       intent: 'workcenter',
       confidence: 0.93,
       extractedFacts,
+    });
+  });
+
+  it('preserves typed SOS candidate facts without treating them as commands', async () => {
+    const ai = createAi({
+      response: {
+        intent: 'sos',
+        confidence: 0.97,
+        reason: 'The user needs urgent medical help.',
+        extractedFacts: {
+          severity: 'medical',
+          locationHint: 'refugio norte',
+          medicalNeed: 'ayuda médica urgente',
+          peopleCount: 3,
+          hazardHint: 'humo',
+        },
+      },
+    });
+
+    await expect(classifyTelegramIntent({ ai, text: 'necesito ayuda médica urgente en el refugio norte, somos 3 y hay humo' })).resolves.toMatchObject({
+      intent: 'sos',
+      confidence: 0.97,
+      extractedFacts: {
+        severity: 'medical',
+        locationHint: 'refugio norte',
+        medicalNeed: 'ayuda médica urgente',
+        peopleCount: 3,
+        hazardHint: 'humo',
+      },
     });
   });
 

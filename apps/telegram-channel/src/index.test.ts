@@ -53,6 +53,7 @@ import {
   type TelegramDispatchTaskState,
   type TelegramFamilyReunificationPorts,
   type TelegramFamilyReunificationState,
+  type TelegramFlowContext,
   type TelegramIncidentJoinPorts,
   type TelegramResourceNeedRecommendation,
   type TelegramResourceReportPorts,
@@ -329,6 +330,23 @@ async function advanceSos(
 
   for (const input of inputs) {
     const result = await handleTelegramSosFlow(state, telegramUserUpdate(input), ports);
+    state = result.state;
+    responseText = result.responseText;
+  }
+
+  return { state, responseText, ports };
+}
+
+async function advanceNaturalSos(
+  inputs: string[],
+  flowContext: Extract<TelegramFlowContext, { sourceIntent: 'sos' }>,
+  ports = createSosPorts(),
+): Promise<{ state: TelegramSosState; responseText: string; ports: TelegramSosPorts }> {
+  let state: TelegramSosState = { step: 'idle' };
+  let responseText = '';
+
+  for (const [index, input] of inputs.entries()) {
+    const result = await handleTelegramSosFlow(state, telegramUserUpdate(input, 'ca'), ports, index === 0 ? flowContext : undefined);
     state = result.state;
     responseText = result.responseText;
   }
@@ -951,6 +969,117 @@ describe('telegram channel flows', () => {
     expect(sosRequest.payload.severity).toBe('critical');
     expect(sosRequest.payload.reportedAt).toEqual(expect.any(String));
     expect(isTerminalTelegramSosState(state)).toBe(true);
+  });
+
+  it('shows natural-language SOS facts only in the initial response and keeps persisted state sanitized', async () => {
+    const ports = createSosPorts();
+    const flowContext = {
+      sourceIntent: 'sos',
+      preferredLocale: 'es',
+      confidence: 0.94,
+      facts: {
+        severity: 'medical',
+        locationHint: 'refugio norte',
+        medicalNeed: 'ayuda médica urgente',
+        peopleCount: 3,
+        hazardHint: 'humo',
+      },
+      prefill: {
+        severity: 'medical',
+        locationHint: 'refugio norte',
+        medicalNeed: 'ayuda médica urgente',
+        peopleCount: 3,
+        hazardHint: 'humo',
+      },
+    } satisfies Extract<TelegramFlowContext, { sourceIntent: 'sos' }>;
+
+    const initial = await handleTelegramSosFlow({ step: 'idle' }, telegramUserUpdate('necesito ayuda médica urgente en el refugio norte', 'ca'), ports, flowContext);
+
+    expect(initial.state.step).toBe('awaitingIncident');
+    expect(initial.responseText).toContain('Resumen seguro detectado');
+    expect(initial.responseText).toContain('Gravedad: medical');
+    expect(initial.responseText).toContain('Ubicación aproximada: refugio norte');
+    expect(initial.responseText).toContain('Necesidad médica: ayuda médica urgente');
+    expect(initial.responseText).toContain('Personas afectadas: 3');
+    expect(initial.responseText).toContain('Riesgo: humo');
+    expect(initial.responseText).toContain('Elige un incidente antes de iniciar SOS');
+    expect(ports.createSosAlert).not.toHaveBeenCalled();
+
+    const initialStateJson = JSON.stringify(TelegramSosStateSchema.parse(JSON.parse(JSON.stringify(initial.state))));
+    expect(initialStateJson).not.toMatch(/refugio norte|ayuda médica urgente|humo|locationHint|medicalNeed|peopleCount|hazardHint|prefill/i);
+
+    const selected = await handleTelegramSosFlow(initial.state, telegramUserUpdate('1', 'es'), ports);
+    expect(selected.state.step).toBe('awaitingConfirmation');
+    expect(selected.responseText).toContain('CONFIRM SOS');
+    expect(selected.responseText).not.toContain('Resumen seguro detectado');
+    expect(selected.responseText).not.toMatch(/refugio norte|ayuda médica urgente|humo|Personas afectadas/i);
+
+    const selectedState = TelegramSosStateSchema.parse(JSON.parse(JSON.stringify(selected.state)));
+    const selectedStateJson = JSON.stringify(selectedState);
+    expect(selectedStateJson).not.toMatch(/refugio norte|ayuda médica urgente|humo|locationHint|medicalNeed|peopleCount|hazardHint|prefill/i);
+    expect(selectedState.step === 'awaitingConfirmation' ? selectedState.request.payload : {}).toMatchObject({ severity: 'critical' });
+    expect(selectedState.step === 'awaitingConfirmation' ? selectedState.request.payload : {}).not.toHaveProperty('location');
+    expect(selectedState.step === 'awaitingConfirmation' ? selectedState.request.payload : {}).not.toHaveProperty('message');
+  });
+
+  it('requires strong confirmation after natural-language SOS context before creating the alert', async () => {
+    const ports = createSosPorts();
+    const flowContext = {
+      sourceIntent: 'sos',
+      preferredLocale: 'en',
+      confidence: 0.91,
+      facts: { severity: 'medical', locationHint: 'north shelter', medicalNeed: 'urgent medical help' },
+      prefill: { severity: 'medical', locationHint: 'north shelter', medicalNeed: 'urgent medical help' },
+    } satisfies Extract<TelegramFlowContext, { sourceIntent: 'sos' }>;
+
+    const weak = await advanceNaturalSos(['I need urgent medical help at the north shelter', '1', 'confirm'], flowContext, ports);
+    expect(weak.state.step).toBe('awaitingConfirmation');
+    expect(weak.responseText).toContain('reply exactly CONFIRM SOS');
+    expect(JSON.stringify(weak.state)).not.toMatch(/north shelter|urgent medical help|locationHint|medicalNeed|prefill/i);
+    expect(ports.createSosAlert).not.toHaveBeenCalled();
+
+    const confirmed = await handleTelegramSosFlow(weak.state, telegramUserUpdate('CONFIRM SOS'), ports);
+    expect(confirmed.state.step).toBe('submitted');
+    expect(ports.createSosAlert).toHaveBeenCalledWith('incident-zc-demo', {
+      channel: 'telegram',
+      externalId: '1001',
+      displayName: 'Field',
+      payload: { severity: 'critical', reportedAt: expect.any(String) },
+    });
+  });
+
+  it('cancels natural-language SOS before confirmation without creating an alert', async () => {
+    const ports = createSosPorts();
+    const flowContext = {
+      sourceIntent: 'sos',
+      preferredLocale: 'en',
+      confidence: 0.9,
+      facts: { severity: 'security', locationHint: 'north gate', hazardHint: 'smoke' },
+      prefill: { severity: 'security', locationHint: 'north gate', hazardHint: 'smoke' },
+    } satisfies Extract<TelegramFlowContext, { sourceIntent: 'sos' }>;
+
+    const { state, responseText } = await advanceNaturalSos(['there is smoke at the north gate and I need help', '1', '/cancel'], flowContext, ports);
+
+    expect(state).toEqual({ step: 'cancelled' });
+    expect(responseText).toContain('SOS cancelled before backend submission');
+    expect(ports.createSosAlert).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the current safe SOS flow when natural-language facts are absent', async () => {
+    const flowContext = {
+      sourceIntent: 'sos',
+      preferredLocale: 'en',
+      confidence: 0.86,
+      facts: null,
+      prefill: {},
+    } satisfies Extract<TelegramFlowContext, { sourceIntent: 'sos' }>;
+
+    const { state, responseText } = await advanceNaturalSos(['help', '1'], flowContext);
+
+    expect(state.step).toBe('awaitingConfirmation');
+    expect(responseText).toContain('Reply exactly CONFIRM SOS');
+    expect(responseText).not.toContain('Safe detected summary');
+    expect(state.step === 'awaitingConfirmation' ? state.request.payload : {}).toMatchObject({ severity: 'critical' });
   });
 
   it('localizes /sos empty incident selection in Spanish/default locale', async () => {

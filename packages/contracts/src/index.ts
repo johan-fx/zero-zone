@@ -884,7 +884,9 @@ export type TelegramFamilyReunificationIntentFacts = z.infer<typeof TelegramFami
 export const TelegramSosIntentFactsSchema = z.object({
   severity: SosSeveritySchema.default('other'),
   locationHint: z.string().min(1).max(120).optional(),
-  peopleCountApprox: z.string().min(1).max(60).optional(),
+  medicalNeed: z.string().min(1).max(160).optional(),
+  peopleCount: z.number().int().positive().max(10_000).optional(),
+  hazardHint: z.string().min(1).max(160).optional(),
 }).strict();
 export type TelegramSosIntentFacts = z.infer<typeof TelegramSosIntentFactsSchema>;
 

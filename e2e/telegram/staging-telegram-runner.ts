@@ -22,8 +22,11 @@ type RunnerOptions = {
   dryRun?: boolean;
   includeSensitiveFlows?: boolean;
   marker?: string;
+  scenario?: RunnerScenario;
   waitMs?: number;
 };
+
+type RunnerScenario = 'full' | 'natural-sos';
 
 type SentStep = {
   label: string;
@@ -36,6 +39,7 @@ type RunnerResult = {
   marker: string;
   commandWorkCenterMarker: string;
   naturalWorkCenterMarker: string;
+  naturalSosMarker: string;
   preConfirmationMarkerVisible?: boolean;
   botUsername: string;
   incidentId: string;
@@ -57,7 +61,7 @@ const requiredEnvKeys = [
 ] as const;
 
 export async function authenticateTelegramSession(): Promise<void> {
-  const env = readRequiredEnv();
+  const env = readRunnerEnv();
   const client = await createTelegramClient(env, { requireInteractiveAuth: true });
   await persistSession(env, client);
   await client.disconnect();
@@ -65,19 +69,25 @@ export async function authenticateTelegramSession(): Promise<void> {
 }
 
 export async function runTelegramStagingFlow(options: RunnerOptions = {}): Promise<RunnerResult> {
-  const env = readRequiredEnv();
+  const env = readRunnerEnv({ allowPlaceholders: options.dryRun === true });
   const marker = options.marker ?? `e2e-${Date.now()}`;
   const commandWorkCenterMarker = `${marker}-command-wc`;
   const naturalWorkCenterMarker = `${marker}-natural-wc`;
-  const safeSteps = buildSafeTelegramSequence(env, { marker, commandWorkCenterMarker, naturalWorkCenterMarker });
-  const sensitiveSteps = buildSensitiveTelegramHelpers(marker).map((step) => ({ ...step, skipped: !options.includeSensitiveFlows }));
+  const naturalSosMarker = `${marker}-natural-sos`;
+  const scenario = options.scenario ?? 'full';
+  const resultMarker = scenario === 'natural-sos' ? naturalSosMarker : naturalWorkCenterMarker;
+  const safeSteps = scenario === 'natural-sos'
+    ? buildNaturalSosTelegramSequence(env, { marker })
+    : buildSafeTelegramSequence(env, { marker, commandWorkCenterMarker, naturalWorkCenterMarker });
+  const sensitiveSteps = scenario === 'full' ? buildSensitiveTelegramHelpers(marker).map((step) => ({ ...step, skipped: !options.includeSensitiveFlows })) : [];
   const steps = [...safeSteps, ...sensitiveSteps];
 
   if (options.dryRun) {
     return {
-      marker: naturalWorkCenterMarker,
+      marker: resultMarker,
       commandWorkCenterMarker,
       naturalWorkCenterMarker,
+      naturalSosMarker,
       botUsername: env.TELEGRAM_E2E_BOT_USERNAME,
       incidentId: env.E2E_INCIDENT_ID,
       cellId: env.E2E_CELL_ID,
@@ -112,9 +122,10 @@ export async function runTelegramStagingFlow(options: RunnerOptions = {}): Promi
   }
 
   return {
-    marker: naturalWorkCenterMarker,
+    marker: resultMarker,
     commandWorkCenterMarker,
     naturalWorkCenterMarker,
+    naturalSosMarker,
     preConfirmationMarkerVisible,
     botUsername: env.TELEGRAM_E2E_BOT_USERNAME,
     incidentId: env.E2E_INCIDENT_ID,
@@ -124,7 +135,7 @@ export async function runTelegramStagingFlow(options: RunnerOptions = {}): Promi
   };
 }
 
-export async function findMarkerInStagingApi(marker: string, env: Pick<RequiredEnv, 'E2E_API_BASE_URL' | 'E2E_INCIDENT_ID'> = readRequiredEnv()): Promise<boolean> {
+export async function findMarkerInStagingApi(marker: string, env: Pick<RequiredEnv, 'E2E_API_BASE_URL' | 'E2E_INCIDENT_ID'> = readRunnerEnv()): Promise<boolean> {
   const baseUrl = env.E2E_API_BASE_URL.replace(/\/$/, '');
   const paths = [
     `/incidents/${encodeURIComponent(env.E2E_INCIDENT_ID)}/work-centers`,
@@ -141,19 +152,32 @@ export async function findMarkerInStagingApi(marker: string, env: Pick<RequiredE
   return false;
 }
 
-function readRequiredEnv(): RequiredEnv {
+function readRunnerEnv(options: { allowPlaceholders?: boolean } = {}): RequiredEnv {
   const missing = requiredEnvKeys.filter((key) => !process.env[key]);
-  if (missing.length > 0) {
+  if (missing.length > 0 && !options.allowPlaceholders) {
     throw new Error(`Missing required E2E environment variables: ${missing.join(', ')}. Source e2e/telegram-e2e.local before running this command.`);
   }
 
-  const apiId = process.env.TELEGRAM_E2E_API_ID ?? '';
+  const env = Object.fromEntries(requiredEnvKeys.map((key) => [key, process.env[key] ?? dryRunEnvDefaults[key]])) as RequiredEnv;
+  const apiId = env.TELEGRAM_E2E_API_ID;
   if (!/^\d+$/.test(apiId)) {
     throw new Error('TELEGRAM_E2E_API_ID must be a numeric Telegram API id.');
   }
 
-  return Object.fromEntries(requiredEnvKeys.map((key) => [key, process.env[key] ?? ''])) as RequiredEnv;
+  return env;
 }
+
+const dryRunEnvDefaults: RequiredEnv = {
+  TELEGRAM_E2E_API_ID: '0',
+  TELEGRAM_E2E_API_HASH: 'dry-run-api-hash',
+  TELEGRAM_E2E_PHONE: '+10000000000',
+  TELEGRAM_E2E_BOT_USERNAME: 'Zona_Cero_Bot_DRY_RUN',
+  TELEGRAM_E2E_SESSION_FILE: 'e2e/.telegram-e2e.session.dry-run',
+  E2E_API_BASE_URL: 'https://api.example.invalid',
+  E2E_WEB_UI_URL: 'https://web.example.invalid',
+  E2E_INCIDENT_ID: 'incident-zc-demo',
+  E2E_CELL_ID: 'cell-zc-demo',
+};
 
 async function createTelegramClient(env: RequiredEnv, options: { requireInteractiveAuth: boolean }): Promise<TelegramClient> {
   const sessionText = await readSessionText(env.TELEGRAM_E2E_SESSION_FILE);
@@ -241,7 +265,30 @@ function buildSafeTelegramSequence(env: RequiredEnv, markers: { marker: string; 
 function buildSensitiveTelegramHelpers(marker: string): SentStep[] {
   return [
     { label: 'sos-helper-opt-in', message: `/sos drill ${marker}` },
+    { label: 'natural-sos-helper-opt-in', message: 'Necesito ayuda médica urgente en el refugio norte. Hay humo y 3 personas afectadas.' },
     { label: 'family-reunification-helper-opt-in', message: `/reunificacion dry-run ${marker}` },
+  ];
+}
+
+function buildNaturalSosTelegramSequence(env: RequiredEnv, markers: { marker: string }): SentStep[] {
+  const { marker } = markers;
+  return [
+    { label: 'start', message: '/start' },
+    { label: 'join-incident', message: env.E2E_INCIDENT_ID },
+    { label: 'join-pseudonym', message: `${marker} telegram sos e2e` },
+    { label: 'join-role', message: 'medical' },
+    { label: 'language-command', message: '/idioma' },
+    { label: 'language-selection', message: 'es' },
+    { label: 'sos-command', message: '/sos' },
+    { label: 'sos-command-incident', message: env.E2E_INCIDENT_ID },
+    { label: 'sos-command-cancel', message: '/cancel' },
+    {
+      label: 'natural-sos-phrase',
+      message: 'Necesito ayuda médica urgente en el refugio norte. Hay humo y 3 personas afectadas.',
+    },
+    { label: 'natural-sos-incident', message: env.E2E_INCIDENT_ID },
+    { label: 'natural-sos-weak-confirmation', message: 'confirm' },
+    { label: 'natural-sos-confirmation', message: 'CONFIRM SOS' },
   ];
 }
 
@@ -283,6 +330,7 @@ function preview(value: string): string {
 
 async function main(): Promise<void> {
   const command = process.argv[2] ?? 'dry-run';
+  const scenario = readScenarioArg(process.argv);
 
   if (command === 'auth') {
     await authenticateTelegramSession();
@@ -293,6 +341,7 @@ async function main(): Promise<void> {
     const result = await runTelegramStagingFlow({
       dryRun: command === 'dry-run',
       includeSensitiveFlows: process.argv.includes('--include-sensitive-flows'),
+      scenario,
     });
     if (process.argv.includes('--json')) {
       console.log(`TELEGRAM_E2E_RESULT_JSON=${JSON.stringify(result)}`);
@@ -303,11 +352,19 @@ async function main(): Promise<void> {
   }
 
   if (command === 'help' || command === '--help' || command === '-h') {
-    console.log('Usage: tsx e2e/telegram/staging-telegram-runner.ts <auth|dry-run|run> [--include-sensitive-flows] [--json]');
+    console.log('Usage: tsx e2e/telegram/staging-telegram-runner.ts <auth|dry-run|run> [--scenario full|natural-sos] [--include-sensitive-flows] [--json]');
     return;
   }
 
   throw new Error(`Unknown command: ${command}`);
+}
+
+function readScenarioArg(argv: string[]): RunnerScenario {
+  const index = argv.indexOf('--scenario');
+  const value = index >= 0 ? argv[index + 1] : undefined;
+  if (value === undefined) return 'full';
+  if (value === 'full' || value === 'natural-sos') return value;
+  throw new Error(`Unknown Telegram E2E scenario: ${value}`);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

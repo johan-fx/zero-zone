@@ -3,7 +3,6 @@ import { type SupportedLocale, formatMessage } from '@zona-cero/i18n';
 import type { IncidentSummary, SosAlertCreateResponse } from '@zona-cero/contracts';
 
 import { readErrorCode } from './parsing';
-
 export function formatSosConfirmation(locale: SupportedLocale, incident: IncidentSummary): string {
   return formatMessage(locale, 'telegram.sos.confirmation', { incidentName: incident.name });
 }

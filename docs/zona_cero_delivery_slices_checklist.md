@@ -43,7 +43,7 @@ Usar este reparto como contrato de trabajo para todas las slices. La clave es qu
 | 13 | Telegram channel modularization | 🟢 | 🟢 | ⬜ | Implementado |
 | 14 | Telegram intent facts v3 contract + router context | 🟡 | 🟡 | 🟡 | Planificado |
 | 15 | Telegram `/workcenter` natural-language prefill | 🟡 | 🟡 | ⬜ | Planificado |
-| 16 | Telegram `/sos` natural-language prefill | 🟡 | 🟡 | 🟡 | Planificado |
+| 16 | Telegram `/sos` natural-language prefill | 🟢 | 🟢 | 🟢 | Hecho |
 | 17 | Telegram `/reunificacion` natural-language assistant | 🟡 | 🟡 | 🟡 | Planificado |
 | 18 | Telegram `/dispatch` natural-language assistant | 🟡 | 🟡 | 🟡 | Planificado |
 | 19 | Telegram `/start` + incident join natural-language onboarding | 🟡 | 🟡 | ⬜ | Planificado |
@@ -869,12 +869,12 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 
 | Equipo | Checklist |
 |---|---|
-| A | ⬜ Aceptar contexto prefill en `handleTelegramSosFlow`. |
-| A | ⬜ Mostrar resumen localizado y exigir confirmación fuerte. |
-| A | ⬜ Fallback seguro si el usuario cancela o la intención es ambigua. |
-| B | ⬜ Extraer severidad, ubicación textual, número aproximado de personas y tipo de ayuda. |
-| B | ⬜ No persistir facts sensibles hasta confirmación. |
-| C | ⬜ Comparar semántica con SOS mobile/offline para evitar divergencias. |
+| A | 🟢 Aceptar contexto SOS natural en `handleTelegramSosFlow` sin persistir prefill en estado. |
+| A | 🟢 Mostrar resumen localizado solo en la respuesta inicial y exigir confirmación fuerte `CONFIRM SOS`. |
+| A | 🟢 Fallback seguro si el usuario cancela, responde confirmación débil o la intención/facts no son utilizables. |
+| B | 🟢 Extraer severidad, ubicación textual, necesidad médica, personas afectadas y riesgo como facts tipados. |
+| B | 🟢 No persistir facts sensibles, texto crudo ni `prefill` en estados SOS previos a confirmación. |
+| C | 🟢 Comparar semántica con SOS mobile/offline para evitar divergencias. |
 
 **Definition of Done**
 
@@ -893,6 +893,23 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 - `pnpm --filter @zona-cero/telegram-channel test:strict`
 - `pnpm --filter @zona-cero/api exec vitest run src/index.test.ts src/telegram-intent-classifier.test.ts`
 - Fresh review de seguridad SOS.
+
+**Cierre Slice 16**
+
+- `/sos` acepta contexto natural y muestra un resumen seguro solo en el primer mensaje del flow.
+- `TelegramSosState` no conserva `prefill`, `locationHint`, `medicalNeed`, `peopleCount`, `hazardHint` ni texto crudo antes de `CONFIRM SOS`.
+- La selección de incidente construye el request con `payload: { severity: 'critical', reportedAt }`; `locationHint` no se transforma en `payload.location` ni en coordenadas.
+- La creación de alerta sigue bloqueada por confirmación exacta `CONFIRM SOS`; respuestas débiles como `confirm` no envían el SOS.
+- Mobile/offline no cambia su contrato ni comportamiento crítico: `pnpm mobile:test:strict` sigue verde.
+
+**Evidencia ejecutada**
+
+- `pnpm --filter @zona-cero/contracts test:strict` — ✅ 26 tests.
+- `pnpm --filter @zona-cero/api exec vitest run src/index.test.ts src/telegram-intent-classifier.test.ts` — ✅ 95 tests; Vitest reportó close-timeout después del éxito, sin fallo de suite.
+- `pnpm --filter @zona-cero/telegram-channel test:strict` — ✅ 59 tests.
+- `pnpm e2e:telegram:typecheck` — ✅.
+- `pnpm e2e:telegram:dry-run:natural-sos` — ✅; cubre ruta `/sos`, cancelación previa, frase natural, confirmación débil y `CONFIRM SOS`.
+- `pnpm mobile:test:strict` — ✅ 20 suites / 112 tests.
 
 ## Slice 17 - Telegram `/reunificacion` natural-language assistant
 

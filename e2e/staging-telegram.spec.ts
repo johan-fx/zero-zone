@@ -10,6 +10,17 @@ const realStagingEnabled = process.env.E2E_STAGING_TELEGRAM_REAL === '1';
 
 test.skip(!realStagingEnabled, 'Set E2E_STAGING_TELEGRAM_REAL=1 and source e2e/telegram-e2e.local to run the real staging Telegram E2E flow.');
 
+type RunnerStep = {
+  label?: unknown;
+  botReplyPreview?: unknown;
+};
+
+type RunnerResult = {
+  marker?: unknown;
+  preConfirmationMarkerVisible?: unknown;
+  sentSteps?: unknown;
+};
+
 test('staging Telegram -> API/D1 -> Web UI exposes the E2E marker', async ({ request }) => {
   const webUrl = requiredEnv('E2E_WEB_UI_URL');
   const apiBaseUrl = requiredEnv('E2E_API_BASE_URL').replace(/\/$/, '');
@@ -38,6 +49,29 @@ test('staging Telegram -> API/D1 -> Web UI exposes the E2E marker', async ({ req
     .toBe(true);
 });
 
+test('natural sos staging Telegram requires strong confirmation before backend submission', async ({ request }) => {
+  const apiBaseUrl = requiredEnv('E2E_API_BASE_URL').replace(/\/$/, '');
+
+  await ensureTelegramSessionExists();
+
+  const health = await request.get(`${apiBaseUrl}/health`);
+  await expect(health).toBeOK();
+
+  const result = await runTelegramRunner('natural-sos');
+  const steps = getRunnerSteps(result);
+  const commandCancel = findStep(steps, 'sos-command-cancel');
+  const naturalPhrase = findStep(steps, 'natural-sos-phrase');
+  const incidentSelection = findStep(steps, 'natural-sos-incident');
+  const weakConfirmation = findStep(steps, 'natural-sos-weak-confirmation');
+  const strongConfirmation = findStep(steps, 'natural-sos-confirmation');
+
+  expect(String(commandCancel.botReplyPreview ?? '')).toMatch(/cancel/i);
+  expect(String(naturalPhrase.botReplyPreview ?? '')).toContain('Resumen seguro detectado');
+  expect(String(incidentSelection.botReplyPreview ?? '')).not.toMatch(/refugio norte|ayuda médica urgente|humo/i);
+  expect(String(weakConfirmation.botReplyPreview ?? '')).toContain('CONFIRM SOS');
+  expect(String(strongConfirmation.botReplyPreview ?? '')).toMatch(/SOS ID|SOS/);
+});
+
 async function ensureTelegramSessionExists(): Promise<void> {
   const sessionFile = requiredEnv('TELEGRAM_E2E_SESSION_FILE');
   try {
@@ -47,8 +81,11 @@ async function ensureTelegramSessionExists(): Promise<void> {
   }
 }
 
-async function runTelegramRunner(): Promise<{ marker: string; preConfirmationMarkerVisible?: boolean }> {
-  const { stdout } = await execFileAsync('pnpm', ['tsx', 'e2e/telegram/staging-telegram-runner.ts', 'run', '--json'], {
+async function runTelegramRunner(scenario: 'full' | 'natural-sos' = 'full'): Promise<RunnerResult & { marker: string; preConfirmationMarkerVisible?: boolean }> {
+  const args = ['tsx', 'e2e/telegram/staging-telegram-runner.ts', 'run', '--json'];
+  if (scenario !== 'full') args.push('--scenario', scenario);
+
+  const { stdout } = await execFileAsync('pnpm', args, {
     cwd: process.cwd().endsWith('/e2e') ? '..' : process.cwd(),
     env: process.env,
     maxBuffer: 1024 * 1024,
@@ -57,10 +94,10 @@ async function runTelegramRunner(): Promise<{ marker: string; preConfirmationMar
   if (typeof parsed.marker !== 'string' || !parsed.marker.startsWith('e2e-')) {
     throw new Error('Telegram runner did not return a valid E2E marker.');
   }
-  return { marker: parsed.marker, preConfirmationMarkerVisible: typeof parsed.preConfirmationMarkerVisible === 'boolean' ? parsed.preConfirmationMarkerVisible : undefined };
+  return { ...parsed, marker: parsed.marker, preConfirmationMarkerVisible: typeof parsed.preConfirmationMarkerVisible === 'boolean' ? parsed.preConfirmationMarkerVisible : undefined };
 }
 
-function parseRunnerResult(stdout: string): { marker?: unknown; preConfirmationMarkerVisible?: unknown } {
+function parseRunnerResult(stdout: string): RunnerResult {
   const resultLine = stdout
     .split(/\r?\n/)
     .reverse()
@@ -70,7 +107,20 @@ function parseRunnerResult(stdout: string): { marker?: unknown; preConfirmationM
     throw new Error(`Telegram runner did not emit TELEGRAM_E2E_RESULT_JSON. Last stdout lines:\n${stdout.split(/\r?\n/).slice(-8).join('\n')}`);
   }
 
-  return JSON.parse(resultLine.slice('TELEGRAM_E2E_RESULT_JSON='.length)) as { marker?: unknown };
+  return JSON.parse(resultLine.slice('TELEGRAM_E2E_RESULT_JSON='.length)) as RunnerResult;
+}
+
+function getRunnerSteps(result: RunnerResult): RunnerStep[] {
+  if (!Array.isArray(result.sentSteps)) {
+    throw new Error('Telegram runner did not return sent steps.');
+  }
+  return result.sentSteps as RunnerStep[];
+}
+
+function findStep(steps: RunnerStep[], label: string): RunnerStep {
+  const step = steps.find((candidate) => candidate.label === label);
+  if (!step) throw new Error(`Telegram runner did not include step ${label}.`);
+  return step;
 }
 
 async function findMarkerInUiWhenBrowserIsAvailable(webUrl: string, marker: string): Promise<boolean> {

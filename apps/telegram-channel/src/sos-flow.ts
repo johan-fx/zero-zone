@@ -1,6 +1,6 @@
 import { formatMessage } from '@zona-cero/i18n';
 
-import { SosConnectedCreateRequestSchema } from '@zona-cero/contracts';
+import { SosConnectedCreateRequestSchema, TelegramSosIntentFactsSchema, type TelegramSosIntentFacts, type SupportedLocale } from '@zona-cero/contracts';
 
 import { formatIncidentList, selectIncident } from './incident-selection';
 import { getPreferredLocaleFromState, handleTelegramLanguageCommand, resolveTelegramLocale, withPreferredLocale } from './locale';
@@ -10,17 +10,18 @@ import { getTelegramDisplayName, getTelegramExternalUserId, resolveTelegramComma
 import { withTelegramFlowTelemetry } from './telemetry';
 import type { TelegramFlowContext, TelegramSosFlowResult, TelegramSosPorts, TelegramSosState, TelegramUpdateLike } from './types';
 
+type TelegramSosFlowContext = Extract<TelegramFlowContext, { sourceIntent: 'sos' }>;
+
 export async function handleTelegramSosFlow(
   state: TelegramSosState,
   update: TelegramUpdateLike,
   ports: TelegramSosPorts,
-  flowContext?: Extract<TelegramFlowContext, { sourceIntent: 'sos' }>,
+  flowContext?: TelegramSosFlowContext,
 ): Promise<TelegramSosFlowResult> {
-  void flowContext;
   const startedAt = Date.now();
   const previousStep = state.step;
 
-  return withTelegramFlowTelemetry(
+  const result: TelegramSosFlowResult = await withTelegramFlowTelemetry(
     ports,
     'telegram.sos',
     previousStep,
@@ -28,7 +29,7 @@ export async function handleTelegramSosFlow(
     async () => {
       const text = update.message?.text?.trim() ?? '';
       const command = resolveTelegramCommand(update);
-      const locale = resolveTelegramLocale(update, getPreferredLocaleFromState(state));
+      const locale = resolveTelegramLocale(update, getPreferredLocaleFromState(state) ?? flowContext?.preferredLocale);
       const languageResult = handleTelegramLanguageCommand(update, locale);
       if (languageResult) return { state: withPreferredLocale(state, languageResult.locale), responseText: languageResult.responseText };
 
@@ -37,7 +38,7 @@ export async function handleTelegramSosFlow(
       }
 
       if (command === '/sos' || state.step === 'idle' || state.step === 'cancelled' || state.step === 'submitted') {
-        return startSosIncidentSelection(update, ports);
+        return startSosIncidentSelection(update, ports, locale);
       }
 
       if (state.step === 'awaitingIncident') {
@@ -92,10 +93,15 @@ export async function handleTelegramSosFlow(
       return { state, responseText: formatMessage(locale, 'telegram.sos.command') };
     },
   );
+
+  return withTelegramSosFlowContextPreface(result, flowContext);
 }
 
-async function startSosIncidentSelection(update: TelegramUpdateLike, ports: TelegramSosPorts): Promise<TelegramSosFlowResult> {
-  const locale = resolveTelegramLocale(update);
+async function startSosIncidentSelection(
+  update: TelegramUpdateLike,
+  ports: TelegramSosPorts,
+  locale: ReturnType<typeof resolveTelegramLocale>,
+): Promise<TelegramSosFlowResult> {
   const externalUserId = getTelegramExternalUserId(update);
   if (!externalUserId) return { state: { step: 'idle', preferredLocale: locale }, responseText: formatMessage(locale, 'telegram.sos.user.required') };
 
@@ -109,4 +115,41 @@ async function startSosIncidentSelection(update: TelegramUpdateLike, ports: Tele
   } catch {
     return { state: { step: 'idle', preferredLocale: locale }, responseText: formatMessage(locale, 'telegram.sos.incidents_load_failed') };
   }
+}
+
+function withTelegramSosFlowContextPreface(
+  result: TelegramSosFlowResult,
+  flowContext?: TelegramSosFlowContext,
+): TelegramSosFlowResult {
+  const locale = getPreferredLocaleFromState(result.state) ?? flowContext?.preferredLocale ?? 'es';
+  const contextText = buildTelegramSosIntentContext(flowContext?.facts ?? null, locale);
+  return contextText ? { ...result, responseText: `${contextText}\n\n${result.responseText}` } : result;
+}
+
+function buildTelegramSosIntentContext(facts: TelegramSosFlowContext['facts'], locale: SupportedLocale): string | null {
+  const parsed = TelegramSosIntentFactsSchema.safeParse(facts ?? {});
+  if (!parsed.success) return null;
+
+  const summary = formatSosFactsSummary(locale, parsed.data);
+  if (!summary) return null;
+
+  return locale === 'es'
+    ? `Resumen seguro detectado:\n${summary}\nEstos datos se muestran solo en este mensaje inicial y no se guardan hasta que completes la confirmación SOS.`
+    : `Safe detected summary:\n${summary}\nThese details are shown only in this initial message and are not stored until you complete SOS confirmation.`;
+}
+
+function formatSosFactsSummary(locale: SupportedLocale, facts: TelegramSosIntentFacts): string | null {
+  const labels = locale === 'es'
+    ? { severity: 'Gravedad', locationHint: 'Ubicación aproximada', medicalNeed: 'Necesidad médica', peopleCount: 'Personas afectadas', hazardHint: 'Riesgo' }
+    : { severity: 'Severity', locationHint: 'Location hint', medicalNeed: 'Medical need', peopleCount: 'People affected', hazardHint: 'Hazard hint' };
+
+  const lines = [
+    facts.severity && facts.severity !== 'other' ? `${labels.severity}: ${facts.severity}` : null,
+    facts.locationHint ? `${labels.locationHint}: ${facts.locationHint.trim()}` : null,
+    facts.medicalNeed ? `${labels.medicalNeed}: ${facts.medicalNeed.trim()}` : null,
+    facts.peopleCount ? `${labels.peopleCount}: ${facts.peopleCount}` : null,
+    facts.hazardHint ? `${labels.hazardHint}: ${facts.hazardHint.trim()}` : null,
+  ].filter(Boolean);
+
+  return lines.length > 0 ? lines.join('\n') : null;
 }

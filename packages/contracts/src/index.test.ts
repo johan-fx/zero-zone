@@ -787,12 +787,24 @@ describe('contracts package', () => {
     expect(TelegramFamilyReunificationIntentFactsSchema.parse({})).toEqual({ caseType: 'unknown', subjectType: 'unknown' });
     expect(TelegramFamilyReunificationIntentFactsSchema.safeParse({ caseType: 'missing_person', fullName: 'private name' }).success).toBe(false);
 
-    expect(TelegramSosIntentFactsSchema.parse({ severity: 'medical', locationHint: 'east stairs', peopleCountApprox: '2' })).toEqual({
+    expect(
+      TelegramSosIntentFactsSchema.parse({
+        severity: 'medical',
+        locationHint: 'refugio norte',
+        medicalNeed: 'ayuda médica urgente',
+        peopleCount: 3,
+        hazardHint: 'humo',
+      }),
+    ).toEqual({
       severity: 'medical',
-      locationHint: 'east stairs',
-      peopleCountApprox: '2',
+      locationHint: 'refugio norte',
+      medicalNeed: 'ayuda médica urgente',
+      peopleCount: 3,
+      hazardHint: 'humo',
     });
     expect(TelegramSosIntentFactsSchema.parse({})).toEqual({ severity: 'other' });
+    expect(TelegramSosIntentFactsSchema.safeParse({ severity: 'medical', rawText: 'necesito ayuda médica urgente' }).success).toBe(false);
+    expect(TelegramSosIntentFactsSchema.safeParse({ severity: 'medical', location: 'refugio norte' }).success).toBe(false);
     expect(TelegramSosIntentFactsSchema.safeParse({ severity: 'medical', phone: '+34000000000' }).success).toBe(false);
 
     expect(TelegramDispatchIntentFactsSchema.parse({ signal: 'status_update', status: 'en_route', destinationHint: 'warehouse' })).toEqual({
