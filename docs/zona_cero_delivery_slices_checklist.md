@@ -40,6 +40,13 @@ Usar este reparto como contrato de trabajo para todas las slices. La clave es qu
 | 10 | Telegram intent routing con Workers AI | 🟢 | 🟢 | 🟢 | Hecho |
 | 11 | Telegram intent extraction v2 + prefill seguro | 🟡 | 🟡 | 🟡 | En progreso |
 | 12 | Telegram resource need matching + recomendaciones | 🟢 | 🟢 | ⬜ | Implementado |
+| 13 | Telegram channel modularization | ⬜ | 🟡 | ⬜ | Planificado |
+| 14 | Telegram intent facts v3 contract + router context | 🟡 | 🟡 | 🟡 | Planificado |
+| 15 | Telegram `/workcenter` natural-language prefill | 🟡 | 🟡 | ⬜ | Planificado |
+| 16 | Telegram `/sos` natural-language prefill | 🟡 | 🟡 | 🟡 | Planificado |
+| 17 | Telegram `/reunificacion` natural-language assistant | 🟡 | 🟡 | 🟡 | Planificado |
+| 18 | Telegram `/dispatch` natural-language assistant | 🟡 | 🟡 | 🟡 | Planificado |
+| 19 | Telegram `/start` + incident join natural-language onboarding | 🟡 | 🟡 | ⬜ | Planificado |
 
 Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloqueado.
 
@@ -650,6 +657,312 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 - ✅ Smoke local de webhook con Workers AI remoto para “tengo medicamentos, dónde la necesitan?” con necesidades seeded desde `resource_reports` y centros activos.
 - ✅ `git diff --check`
 - ✅ Fresh review independiente final sin defectos confirmados.
+
+
+## Slice 13 - Telegram channel modularization
+
+**Objetivo:** reducir el tamaño y acoplamiento de `apps/telegram-channel/src/index.ts` sin cambiar comportamiento funcional, preparando el terreno para extender intents/facts en todos los comandos.
+
+**Decisión técnica:** hacer primero una extracción mecánica y testeada. No mezclar refactor estructural con nuevos intents. El contrato público del paquete debe seguir exportando los mismos handlers, tipos y helpers que consumen `services/api`.
+
+**Principio de seguridad:** refactor sin cambio funcional: las respuestas, estados persistidos, comandos, locale y telemetría deben permanecer byte-equivalentes salvo cambios inevitables documentados.
+
+### Reparto de ownership
+
+| Equipo | Owns | Consume de | No debe hacer | Handoff esperado |
+|---|---|---|---|---|
+| A | Separar flows Telegram por dominio: `resource`, `workcenter`, `sos`, `family`, `dispatch`, `incident-join`, `locale`, `telemetry`, `formatting`, `state`. | Exports actuales usados por B. | Cambiar UX, copy o contratos de estado durante el refactor. | Módulos pequeños con barrel público estable y tests verdes. |
+| B | Validar que `services/api` sigue importando el paquete sin cambios de comportamiento. | Barrel/export map de A. | Mover reglas API o puertos D1 al paquete Telegram. | Confirmación de compatibilidad webhook/API. |
+| C | No aplica directamente en esta slice. | N/A | N/A | N/A |
+
+| Equipo | Checklist |
+|---|---|
+| A | ⬜ Crear estructura modular interna sin romper exports existentes. |
+| A | ⬜ Extraer tipos de actualización, estados y ports compartidos. |
+| A | ⬜ Extraer helpers transversales: locale, command parsing, incident selection, confirmation/cancel parsing, formatting. |
+| A | ⬜ Extraer cada flow a su módulo propio con tests existentes apuntando al barrel público. |
+| B | ⬜ Ejecutar tests API que cubren webhook y persistencia de conversación. |
+| Todos | ⬜ Fresh review de diff mecánico antes de implementar intents nuevos. |
+
+**Definition of Done**
+
+- `apps/telegram-channel/src/index.ts` queda como barrel/entrypoint pequeño, no como implementación monolítica.
+- Ningún texto de usuario ni estado persistido cambia por el refactor.
+- `services/api` no necesita conocer la estructura interna de los flows.
+- Tests existentes de Telegram/API pasan antes de iniciar Slice 14.
+
+**Riesgos y límites**
+
+- Alto riesgo de refactor ruidoso; debe hacerse con commits/slices pequeños.
+- No añadir facts ni lógica nueva aquí. Si se cambia producto durante el refactor, se pierde la capacidad de revisar correctamente.
+
+**Evidencia esperada de verificación**
+
+- `pnpm --filter @zona-cero/telegram-channel test:strict`
+- `pnpm --filter @zona-cero/api exec vitest run src/index.test.ts`
+- `pnpm --filter @zona-cero/api typecheck`
+- `git diff --check`
+- Fresh review confirmando equivalencia funcional.
+
+## Slice 14 - Telegram intent facts v3 contract + router context
+
+**Objetivo:** generalizar lo aprendido en `/resource`: cada intent aceptado debe poder transportar facts tipados y seguros hacia su flow correspondiente, sin que el LLM ejecute decisiones de negocio.
+
+**Decisión técnica:** ampliar contratos compartidos con schemas específicos por intent. `extractedFacts` no debe quedarse como JSON libre para los flows; el router API debe validar y convertir facts a un `TelegramFlowContext` tipado antes de llamar al flow.
+
+**Principio de seguridad:** el LLM clasifica y extrae datos candidatos; backend/flow valida, normaliza, pide confirmación y aplica permisos. No se crean operaciones automáticamente por facts extraídos.
+
+### Reparto de ownership
+
+| Equipo | Owns | Consume de | No debe hacer | Handoff esperado |
+|---|---|---|---|---|
+| A | Definir cómo los flows reciben contexto prefill/facts sin acoplarse al prompt del LLM. | Schemas de B. | Leer JSON libre del LLM directamente en los flows. | Tipos de contexto por flow y fallback seguro si faltan facts. |
+| B | Contratos `Telegram*IntentFactsSchema`, prompt/schema del classifier, parser API y telemetría sin PII. | Necesidades UX de A y límites de C. | Persistir texto libre o facts sensibles en logs. | Router que valida facts y solo pasa datos seguros a flows. |
+| C | Revisar compatibilidad de contratos si los facts se reutilizan para native/offline más adelante. | Schemas compartidos de B. | Implementar UX nativa en esta slice. | Confirmación de que los contratos no bloquean materialización futura. |
+
+| Equipo | Checklist |
+|---|---|
+| A | ⬜ Diseñar `TelegramFlowContext` común con `preferredLocale`, `sourceIntent`, `facts`, `prefill` y `confidence`. |
+| A | ⬜ Adaptar handlers para aceptar contexto opcional sin romper llamadas por comando explícito. |
+| B | ⬜ Añadir schemas tipados para `workcenter`, `sos`, `family_reunification`, `dispatch`, `incident_join` y mantener `resource`. |
+| B | ⬜ Actualizar prompt del classifier para extraer facts por intent con ejemplos ES/EN. |
+| B | ⬜ Añadir parsers seguros por intent y descartar facts inválidos sin caer a `unknown` si el intent es claro. |
+| B | ⬜ Telemetría solo con intent/action/scope/confidence bucket; sin texto libre ni PII. |
+| C | ⬜ Revisar que los schemas compartidos no introducen campos imposibles de materializar offline. |
+
+**Definition of Done**
+
+- Cada intent aceptado tiene schema de facts o declara explícitamente que no usa facts.
+- `routeAcceptedTelegramIntent` no concatena contexto textual ad hoc; pasa contexto tipado al flow.
+- Facts inválidos se ignoran de forma segura y el flow continúa con preguntas normales.
+- Tests cubren intent claro con facts válidos, facts inválidos y fallback sin facts.
+
+**Riesgos y límites**
+
+- No intentar mejorar todos los flows en esta slice; esta slice crea la plataforma.
+- Evitar que `extractedFacts` se convierta en un segundo modelo de dominio paralelo.
+
+**Evidencia esperada de verificación**
+
+- `pnpm --filter @zona-cero/contracts test:strict`
+- `pnpm --filter @zona-cero/api exec vitest run src/telegram-intent-classifier.test.ts src/index.test.ts`
+- `pnpm --filter @zona-cero/telegram-channel test:strict`
+- Fresh review de privacidad/telemetría.
+
+## Slice 15 - Telegram `/workcenter` natural-language prefill
+
+**Objetivo:** permitir que mensajes como “hay un puesto médico en la escuela con prioridad alta y necesitan medicamentos” entren al flujo `/workcenter` con nombre, ubicación aproximada, prioridad y necesidad inicial pre-rellenables.
+
+**Decisión técnica:** usar facts para acelerar el flujo, no para crear el centro automáticamente. El flow debe mostrar resumen y pedir confirmación/corrección antes de llamar a `createWorkCenter`.
+
+**Principio de seguridad:** un work center reportado por Telegram mantiene el estado actual de corroboración; los facts no activan centros ni elevan confianza por sí solos.
+
+### Reparto de ownership
+
+| Equipo | Owns | Consume de | No debe hacer | Handoff esperado |
+|---|---|---|---|---|
+| A | UX conversacional de prefill, corrección de campos faltantes y confirmación localizada. | Facts validados de B. | Crear work centers sin confirmación del usuario. | Flow que salta preguntas ya contestadas y pide solo lo que falte. |
+| B | Schema `TelegramWorkCenterIntentFacts`, parser API y mapping a `WorkCenterConnectedCreateRequest`. | Necesidades de A. | Resolver geocoding/rutas en esta slice. | Facts normalizados: name/locationHint/priority/initialNeed/surplus. |
+| C | No aplica directamente. | N/A | N/A | N/A |
+
+| Equipo | Checklist |
+|---|---|
+| A | ⬜ Aceptar contexto prefill en `handleTelegramWorkCenterReportFlow`. |
+| A | ⬜ Saltar `awaitingName` si hay nombre suficiente y pedir confirmación de resumen. |
+| A | ⬜ Pedir campos faltantes con copy ES/EN y permitir corrección. |
+| B | ⬜ Extraer `name`, `locationHint`, `priority`, `initialNeed`, `surplus` y `implicitQuestion`. |
+| B | ⬜ Mantener permisos/auditoría existentes en `createConnectedWorkCenter`. |
+| Todos | ⬜ Añadir tests de mensaje natural ES/EN y fallback cuando facts incompletos. |
+
+**Definition of Done**
+
+- Mensajes naturales de work center enrutan a `/workcenter` y pre-rellenan campos seguros.
+- El usuario ve un resumen antes de persistir.
+- Si faltan datos, el flow pregunta solo lo necesario.
+- No se activa ni corrobora un centro por decisión del LLM.
+
+**Riesgos y límites**
+
+- `locationHint` textual no equivale a coordenadas verificadas.
+- Un catálogo de tipos de centros puede ser una slice posterior.
+
+**Evidencia esperada de verificación**
+
+- `pnpm --filter @zona-cero/telegram-channel test:strict`
+- `pnpm --filter @zona-cero/api exec vitest run src/index.test.ts src/telegram-intent-classifier.test.ts`
+- Smoke local webhook con mensaje natural de work center.
+
+## Slice 16 - Telegram `/sos` natural-language prefill
+
+**Objetivo:** permitir que mensajes urgentes como “necesito ayuda médica urgente en el refugio norte” entren al flujo `/sos` con severidad, ubicación textual y contexto pre-rellenados, manteniendo confirmación fuerte.
+
+**Decisión técnica:** el SOS puede acelerarse, pero no debilitarse. Facts ayudan a construir el resumen; la creación de alerta sigue requiriendo confirmación explícita según el flujo crítico actual.
+
+**Principio de seguridad:** ningún SOS se crea solo por clasificación LLM. Si la intención es SOS pero faltan datos o confianza, el bot debe guiar con el flujo seguro y localizado.
+
+### Reparto de ownership
+
+| Equipo | Owns | Consume de | No debe hacer | Handoff esperado |
+|---|---|---|---|---|
+| A | UX de resumen, confirmación fuerte y copy para emergencia en ES/EN. | Facts validados de B. | Rebajar confirmación crítica por comodidad. | Flow SOS más rápido pero igual de seguro. |
+| B | Schema `TelegramSosIntentFacts`, parser y mapping a `SosConnectedCreateRequest` cuando sea seguro. | Reglas críticas de A/C. | Registrar texto libre sensible en logs. | Facts: severity/locationHint/medicalNeed/peopleCount/hazardHint. |
+| C | Revisar consistencia con SOS nativo crítico/offline. | Contratos de B. | Cambiar UX nativa aquí. | Confirmación de que semántica SOS sigue alineada. |
+
+| Equipo | Checklist |
+|---|---|
+| A | ⬜ Aceptar contexto prefill en `handleTelegramSosFlow`. |
+| A | ⬜ Mostrar resumen localizado y exigir confirmación fuerte. |
+| A | ⬜ Fallback seguro si el usuario cancela o la intención es ambigua. |
+| B | ⬜ Extraer severidad, ubicación textual, número aproximado de personas y tipo de ayuda. |
+| B | ⬜ No persistir facts sensibles hasta confirmación. |
+| C | ⬜ Comparar semántica con SOS mobile/offline para evitar divergencias. |
+
+**Definition of Done**
+
+- Un mensaje natural de emergencia abre SOS con resumen pre-rellenado.
+- Confirmación fuerte sigue siendo obligatoria.
+- Logs/telemetría no contienen texto libre ni detalles sensibles.
+- Tests cubren confirmación, cancelación y facts inválidos.
+
+**Riesgos y límites**
+
+- Alto riesgo de seguridad/producto: no optimizar clicks sacrificando confirmación.
+- Ubicación textual no debe tratarse como geolocalización fiable.
+
+**Evidencia esperada de verificación**
+
+- `pnpm --filter @zona-cero/telegram-channel test:strict`
+- `pnpm --filter @zona-cero/api exec vitest run src/index.test.ts src/telegram-intent-classifier.test.ts`
+- Fresh review de seguridad SOS.
+
+## Slice 17 - Telegram `/reunificacion` natural-language assistant
+
+**Objetivo:** mejorar la detección de mensajes de reunificación familiar como “estoy buscando a un niño con estas características” y llevar al usuario al flujo correcto sin exponer PII en Telegram ni logs.
+
+**Decisión técnica:** Telegram no debe recolectar ni persistir datos sensibles de búsqueda directamente si el flujo seguro es web privado. El assistant debe clasificar intención, explicar el proceso y emitir un enlace privado cuando corresponda; los facts sensibles solo pueden usarse como contexto efímero/redactado o descartarse.
+
+**Principio de seguridad:** PII de menores/personas desaparecidas no se registra en logs ni estados Telegram. La búsqueda detallada debe ocurrir en el canal privado diseñado para ello.
+
+### Reparto de ownership
+
+| Equipo | Owns | Consume de | No debe hacer | Handoff esperado |
+|---|---|---|---|---|
+| A | UX conversacional: explicación, enlace privado, lenguaje sensible y localizado. | Política de privacidad/facts de B. | Pedir datos sensibles completos dentro del chat Telegram. | Flow que deriva a canal privado seguro. |
+| B | Schema `TelegramFamilyReunificationIntentFacts` con redacción estricta, classifier y link issuance. | Necesidades UX de A y seguridad de C. | Guardar características personales en conversación Telegram. | Facts mínimos: action/search_or_report, relationshipHint opcional, urgencyHint; PII descartada/redactada. |
+| C | Validar consistencia con flujos nativos/offline de reunificación. | Contratos/políticas de B. | Implementar pantalla nativa nueva aquí. | Confirmación de límites de PII y handoff. |
+
+| Equipo | Checklist |
+|---|---|
+| A | ⬜ Aceptar contexto de intención en `handleTelegramFamilyReunificationFlow`. |
+| A | ⬜ Responder con explicación localizada y enlace privado cuando haya permisos/contexto. |
+| A | ⬜ Evitar eco de datos sensibles que el usuario haya escrito. |
+| B | ⬜ Clasificar search/report/info sin persistir descripciones personales. |
+| B | ⬜ Redactar/descartar facts sensibles antes de estado/telemetría. |
+| C | ⬜ Revisar política de datos con mobile/offline y web privado. |
+
+**Definition of Done**
+
+- Mensajes naturales de búsqueda/reunificación enrutan a `/reunificacion`.
+- El bot no repite ni guarda características personales sensibles en Telegram.
+- El usuario recibe el siguiente paso seguro, preferiblemente enlace privado de corto TTL.
+- Tests cubren PII redaction, idioma, permisos y fallback.
+
+**Riesgos y límites**
+
+- Este flujo tiene riesgo alto de privacidad; mejor pedir menos datos en Telegram, NO más.
+- No construir búsqueda completa en Telegram si el producto ya tiene canal privado.
+
+**Evidencia esperada de verificación**
+
+- `pnpm --filter @zona-cero/telegram-channel test:strict`
+- `pnpm --filter @zona-cero/api exec vitest run src/index.test.ts src/telegram-intent-classifier.test.ts`
+- Fresh review de privacidad/PII.
+
+## Slice 18 - Telegram `/dispatch` natural-language assistant
+
+**Objetivo:** permitir que mensajes como “llevar 10 cajas de medicamentos al centro médico” o “marcar entrega como completada” entren al flujo `/dispatch` con intención, tarea/categoría/cantidad/destino/estado pre-rellenables.
+
+**Decisión técnica:** separar dos sub-intenciones: crear/coordinar despacho y actualizar estado de una tarea existente. El LLM puede extraer candidatos; el backend debe resolver tareas/destinos reales y pedir selección/confirmación.
+
+**Principio de seguridad:** no se actualiza el estado de una dispatch task por inferencia LLM. Toda actualización requiere que el usuario seleccione una tarea real y confirme la acción.
+
+### Reparto de ownership
+
+| Equipo | Owns | Consume de | No debe hacer | Handoff esperado |
+|---|---|---|---|---|
+| A | UX de selección de tarea/destino, resumen y confirmación localizada. | Matching/resolución de B. | Actualizar tareas sin confirmación. | Flow que reduce pasos pero mantiene control humano. |
+| B | Schema `TelegramDispatchIntentFacts`, resolución contra `dispatch_tasks`, resource reports y work centers. | UX de A y contratos de C. | Crear un motor de rutas/logística en esta slice. | Facts: action/create_or_update, category, quantityApprox, destinationHint, statusCandidate, taskHint. |
+| C | Revisar compatibilidad con dispatch/offline materializado. | Contratos de B. | Cambiar UX nativa aquí. | Confirmación de que estados siguen alineados. |
+
+| Equipo | Checklist |
+|---|---|
+| A | ⬜ Aceptar contexto en `handleTelegramDispatchTaskFlow`. |
+| A | ⬜ Mostrar tareas candidatas ordenadas cuando haya `taskHint` o `statusCandidate`. |
+| A | ⬜ Confirmar antes de actualizar estado. |
+| B | ⬜ Extraer acción, categoría, cantidad, destino y estado candidato. |
+| B | ⬜ Resolver candidatos con datos persistidos, no con texto libre. |
+| C | ⬜ Validar estados contra mobile/offline. |
+
+**Definition of Done**
+
+- Mensajes naturales de despacho enrutan a `/dispatch`.
+- El usuario selecciona una tarea/destino real antes de mutar estado.
+- No hay actualizaciones automáticas por LLM.
+- Tests cubren creación/selección, actualización confirmada, cancelación y ambigüedad.
+
+**Riesgos y límites**
+
+- No resolver optimización de rutas ni asignación automática de conductores aquí.
+- Ambigüedad alta: debe preferirse pedir selección antes que adivinar.
+
+**Evidencia esperada de verificación**
+
+- `pnpm --filter @zona-cero/telegram-channel test:strict`
+- `pnpm --filter @zona-cero/api exec vitest run src/index.test.ts src/telegram-intent-classifier.test.ts`
+- Smoke local webhook con creación/actualización de dispatch.
+
+## Slice 19 - Telegram `/start` + incident join natural-language onboarding
+
+**Objetivo:** permitir que usuarios expresen en lenguaje natural que quieren empezar o unirse a un incidente, por ejemplo “quiero ayudar como voluntario” o “soy logística, quiero entrar al operativo”, y guiarlos al flujo de `/start`/incident join adecuado.
+
+**Decisión técnica:** tratar onboarding/join como intención propia con facts mínimos: rol deseado, incidente mencionado y preferencia de idioma. La asignación de rol sigue pasando por permisos y validación del backend.
+
+**Principio de seguridad:** el usuario no obtiene permisos elevados por decir “soy coordinador”. El rol solicitado es candidato, no autorización.
+
+### Reparto de ownership
+
+| Equipo | Owns | Consume de | No debe hacer | Handoff esperado |
+|---|---|---|---|---|
+| A | UX de bienvenida, selección de incidente/rol y corrección de idioma. | Roles/permisos de B. | Conceder roles por texto libre. | Onboarding natural, corto y localizado. |
+| B | Schema `TelegramIncidentJoinIntentFacts`, parser, role candidate validation y persistencia segura. | UX de A. | Saltarse `joinIncident` ni auditoría. | Facts: desiredRole, incidentHint, displayNameHint, localeHint. |
+| C | No aplica directamente. | N/A | N/A | N/A |
+
+| Equipo | Checklist |
+|---|---|
+| A | ⬜ Aceptar contexto en incident join/start flow. |
+| A | ⬜ Preseleccionar rol candidato si es válido, pero pedir confirmación. |
+| A | ⬜ Mantener detección/persistencia de idioma. |
+| B | ⬜ Extraer rol/incidente/idioma sin conceder permisos. |
+| B | ⬜ Reutilizar `joinIncident` y auditoría existentes. |
+| Todos | ⬜ Tests de “quiero ayudar”, “soy logística” y rol inválido/privilegiado. |
+
+**Definition of Done**
+
+- Mensajes naturales de onboarding enrutan a start/join.
+- Roles válidos pueden preseleccionarse, pero se confirman.
+- Roles no permitidos o ambiguos caen a selección segura.
+- No hay bypass de permisos ni auditoría.
+
+**Riesgos y límites**
+
+- El texto del usuario puede expresar autoridad que el sistema no puede verificar.
+- No resolver invitaciones privadas ni aprobación de coordinadores en esta slice.
+
+**Evidencia esperada de verificación**
+
+- `pnpm --filter @zona-cero/telegram-channel test:strict`
+- `pnpm --filter @zona-cero/api exec vitest run src/index.test.ts src/telegram-intent-classifier.test.ts`
+- Smoke local webhook con onboarding natural ES/EN.
 
 ## Gates antes de implementar cada slice
 
