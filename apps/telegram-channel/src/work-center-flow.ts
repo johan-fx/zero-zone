@@ -7,14 +7,16 @@ import { isCancellation, isConfirmation } from './parsing';
 import { resolveTelegramLocale } from './locale';
 import { getTelegramDisplayName, getTelegramExternalUserId, resolveTelegramCommand } from './telegram-update';
 import { withTelegramFlowTelemetry } from './telemetry';
-import type { TelegramUpdateLike, TelegramWorkCenterReportFlowResult, TelegramWorkCenterReportPorts, TelegramWorkCenterReportState } from './types';
+import type { TelegramFlowContext, TelegramUpdateLike, TelegramWorkCenterReportFlowResult, TelegramWorkCenterReportPorts, TelegramWorkCenterReportState } from './types';
 import { formatWorkCenterReportError, formatWorkCenterReportSuccess, getTelegramChannelLimitation } from './work-center-helpers';
 
 export async function handleTelegramWorkCenterReportFlow(
   state: TelegramWorkCenterReportState,
   update: TelegramUpdateLike,
   ports: TelegramWorkCenterReportPorts,
+  flowContext?: Extract<TelegramFlowContext, { sourceIntent: 'workcenter' }>,
 ): Promise<TelegramWorkCenterReportFlowResult> {
+  void flowContext;
   const startedAt = Date.now();
   const previousStep = state.step;
 

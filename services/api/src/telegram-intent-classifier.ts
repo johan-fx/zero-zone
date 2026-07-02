@@ -1,4 +1,20 @@
-import { TelegramIntentClassificationSchema, type TelegramIntentClassification } from '@zona-cero/contracts';
+import {
+  TelegramIntentClassificationSchema,
+  telegramDispatchFactSignals,
+  telegramFamilyReunificationCaseTypes,
+  telegramFamilyReunificationSubjectTypes,
+  telegramIncidentJoinFactSignals,
+  telegramResourceFactDirections,
+  telegramResourceFactTypes,
+  telegramResourceImplicitQuestions,
+  telegramWorkCenterFactSignals,
+  dispatchTaskStatuses,
+  incidentRoles,
+  sosSeverities,
+  workCenterPriorities,
+  workCenterStatuses,
+  type TelegramIntentClassification,
+} from '@zona-cero/contracts';
 
 export const DEFAULT_TELEGRAM_INTENT_MODEL = '@cf/meta/llama-3.1-8b-instruct-fast';
 export const DEFAULT_TELEGRAM_INTENT_CONFIDENCE_THRESHOLD = 0.75;
@@ -26,12 +42,12 @@ const TELEGRAM_INTENT_RESPONSE_SCHEMA = {
       properties: {
         resourceDirection: {
           type: 'string',
-          enum: ['offer', 'need', 'report', 'unknown'],
+          enum: telegramResourceFactDirections,
           description: 'For resource intent only: whether the message offers a resource, needs it, reports availability/status, or is unclear.',
         },
         resourceType: {
           type: 'string',
-          enum: ['water', 'food', 'medicine', 'shelter', 'equipment', 'transport', 'fuel', 'other', 'unknown'],
+          enum: telegramResourceFactTypes,
           description: 'For resource intent only: normalized resource category.',
         },
         resourceLabel: {
@@ -47,12 +63,62 @@ const TELEGRAM_INTENT_RESPONSE_SCHEMA = {
         locationHint: {
           type: 'string',
           maxLength: 160,
-          description: 'For resource intent only: place, destination, pickup point, or delivery hint if stated.',
+          description: 'Short non-identifying place, destination, pickup point, or area hint if stated.',
         },
         implicitQuestion: {
           type: 'string',
-          enum: ['where_needed', 'where_available', 'how_to_deliver', 'none'],
+          enum: telegramResourceImplicitQuestions,
           description: 'For resource intent only: implicit question asked by the user, or none.',
+        },
+        signal: {
+          type: 'string',
+          enum: [...telegramWorkCenterFactSignals, ...telegramDispatchFactSignals, ...telegramIncidentJoinFactSignals],
+          description: 'For workcenter, dispatch, or incident_join only: compact operational signal.',
+        },
+        status: {
+          type: 'string',
+          enum: [...workCenterStatuses, ...dispatchTaskStatuses],
+          description: 'For workcenter or dispatch only: normalized status when explicitly stated.',
+        },
+        priorityHint: {
+          type: 'string',
+          enum: workCenterPriorities,
+          description: 'For workcenter only: priority hint when explicitly stated.',
+        },
+        caseType: {
+          type: 'string',
+          enum: telegramFamilyReunificationCaseTypes,
+          description: 'For family_reunification only: compact case category without names or contact details.',
+        },
+        subjectType: {
+          type: 'string',
+          enum: telegramFamilyReunificationSubjectTypes,
+          description: 'For family_reunification only: broad subject type; never include names.',
+        },
+        severity: {
+          type: 'string',
+          enum: sosSeverities,
+          description: 'For sos only: normalized emergency severity/category.',
+        },
+        peopleCountApprox: {
+          type: 'string',
+          maxLength: 60,
+          description: 'For sos only: approximate affected people count if stated.',
+        },
+        destinationHint: {
+          type: 'string',
+          maxLength: 120,
+          description: 'For dispatch only: short destination or area hint if stated.',
+        },
+        incidentHint: {
+          type: 'string',
+          maxLength: 100,
+          description: 'For incident_join only: short incident id or label if stated.',
+        },
+        roleHint: {
+          type: 'string',
+          enum: incidentRoles,
+          description: 'For incident_join only: requested incident role if explicitly stated.',
         },
       },
     },
@@ -130,7 +196,7 @@ export async function classifyTelegramIntent({
         json_schema: TELEGRAM_INTENT_RESPONSE_SCHEMA,
       },
       temperature: 0,
-      max_tokens: 160,
+      max_tokens: 220,
     });
 
     const parsedPayload = parseAiJsonPayload(response);
@@ -167,14 +233,19 @@ function buildTelegramIntentSystemPrompt(): string {
     'Map task assignment, task status, logistics dispatch, or mission updates to dispatch.',
     'Map joining/selecting an incident or onboarding into an incident to incident_join.',
     'Use ambiguous when more than one operational intent is plausible. Use unknown when no operational route is clear.',
-    'For resource intent, extract typed facts when clear: resourceDirection, resourceType, resourceLabel, quantityApprox, locationHint, implicitQuestion.',
+    'Extract facts only when clear. Facts are candidates for backend validation, not commands.',
+    'For resource: resourceDirection, resourceType, resourceLabel, quantityApprox, locationHint, implicitQuestion.',
+    'For workcenter: signal, status, priorityHint, locationHint. Example ES: "el centro norte está lleno" => intent workcenter, signal capacity, locationHint "centro norte". Example EN: "north shelter is active" => intent workcenter, status active, locationHint "north shelter".',
+    'For family_reunification: caseType, subjectType, locationHint. Example ES: "busco a mi hijo desaparecido" => intent family_reunification, caseType missing_person, subjectType child. Example EN: "found a separated child near gate 2" => intent family_reunification, caseType found_person, subjectType child, locationHint "gate 2".',
+    'For sos: severity, peopleCountApprox, locationHint. Example ES: "hay dos personas atrapadas en la escalera este" => intent sos, severity trapped, peopleCountApprox "2", locationHint "escalera este". Example EN: "urgent medical help at east stairs" => intent sos, severity medical, locationHint "east stairs".',
+    'For dispatch: signal, status, destinationHint. Example ES: "equipo en camino al almacén" => intent dispatch, signal status_update, status en_route, destinationHint "almacén". Example EN: "deliver supplies to north gate" => intent dispatch, signal logistics_request, destinationHint "north gate".',
+    'For incident_join: signal, incidentHint, roleHint. Example ES: "quiero unirme al incidente demo como voluntario" => intent incident_join, signal request_join, incidentHint "demo", roleHint volunteer. Example EN: "switch me to incident north" => intent incident_join, signal change_incident, incidentHint "north".',
     'Resource directions: "tengo", "puedo llevar", "me sobra", "tenemos para entregar" => offer; "necesito", "necesitamos", "hace falta" => need.',
     'Resource examples: "tengo agua potable, dónde la necesitan?" => intent resource, resourceDirection offer, resourceType water, resourceLabel "agua potable", implicitQuestion where_needed.',
     'Resource examples: "puedo llevar comida" => intent resource, resourceDirection offer, resourceType food.',
     'Resource examples: "me sobra medicina" => intent resource, resourceDirection offer, resourceType medicine.',
     'Resource examples: "necesitamos mantas" => intent resource, resourceDirection need, resourceType shelter or equipment or other as best supported by the text.',
-    'Other examples: "busco a mi hijo desaparecido" => family_reunification.',
-    'Keep extractedFacts small, precise, and JSON-compatible. Do not include actions to execute.',
+    'Keep extractedFacts small, precise, and JSON-compatible. Do not include actions to execute, raw user text, phone numbers, names, or other PII.',
   ].join('\n');
 }
 

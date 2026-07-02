@@ -11,13 +11,15 @@ import { formatIncidentList, selectIncident } from './incident-selection';
 import { getPreferredLocaleFromState, handleTelegramLanguageCommand, resolveTelegramLocale, withPreferredLocale } from './locale';
 import { getTelegramDisplayName, getTelegramExternalUserId, resolveTelegramCommand } from './telegram-update';
 import { withTelegramFlowTelemetry } from './telemetry';
-import type { TelegramFamilyReunificationFlowResult, TelegramFamilyReunificationPorts, TelegramFamilyReunificationState, TelegramUpdateLike } from './types';
+import type { TelegramFamilyReunificationFlowResult, TelegramFamilyReunificationPorts, TelegramFamilyReunificationState, TelegramFlowContext, TelegramUpdateLike } from './types';
 
 export async function handleTelegramFamilyReunificationFlow(
   state: TelegramFamilyReunificationState,
   update: TelegramUpdateLike,
   ports: TelegramFamilyReunificationPorts,
+  flowContext?: Extract<TelegramFlowContext, { sourceIntent: 'family_reunification' }>,
 ): Promise<TelegramFamilyReunificationFlowResult> {
+  void flowContext;
   const startedAt = Date.now();
   const previousStep = state.step;
 

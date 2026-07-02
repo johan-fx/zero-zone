@@ -49,7 +49,13 @@ import {
   SyncPushRequestSchema,
   SyncPushResponseSchema,
   TelegramIntentClassificationSchema,
+  TelegramAcceptedIntentFactsSchemas,
+  TelegramDispatchIntentFactsSchema,
+  TelegramFamilyReunificationIntentFactsSchema,
+  TelegramIncidentJoinIntentFactsSchema,
   TelegramResourceIntentFactsSchema,
+  TelegramSosIntentFactsSchema,
+  TelegramWorkCenterIntentFactsSchema,
   TelegramIntentSchema,
   WebLinkRequestSchema,
   WebLinkSessionSchema,
@@ -85,9 +91,14 @@ import {
   sosFanoutJobStatuses,
   sosSeverities,
   telegramIntents,
+  telegramAcceptedIntents,
+  telegramDispatchFactSignals,
+  telegramFamilyReunificationCaseTypes,
+  telegramIncidentJoinFactSignals,
   telegramResourceFactDirections,
   telegramResourceFactTypes,
   telegramResourceImplicitQuestions,
+  telegramWorkCenterFactSignals,
   workCenterStatuses,
 } from './index';
 
@@ -676,6 +687,7 @@ describe('contracts package', () => {
       'unknown',
       'ambiguous',
     ]);
+    expect(telegramAcceptedIntents).toEqual(['resource', 'workcenter', 'family_reunification', 'sos', 'dispatch', 'incident_join']);
     expect(TelegramIntentSchema.parse('family_reunification')).toBe('family_reunification');
 
     const classification = TelegramIntentClassificationSchema.parse({
@@ -726,6 +738,68 @@ describe('contracts package', () => {
     });
     expect(TelegramResourceIntentFactsSchema.safeParse({ ...facts, resourceType: 'cash' }).success).toBe(false);
     expect(TelegramResourceIntentFactsSchema.safeParse({ ...facts, executeCommand: '/resource' }).success).toBe(false);
+  });
+
+  it('validates typed Telegram facts for every accepted non-resource intent', () => {
+    expect(Object.keys(TelegramAcceptedIntentFactsSchemas)).toEqual(telegramAcceptedIntents);
+    expect(telegramWorkCenterFactSignals).toContain('capacity');
+    expect(telegramFamilyReunificationCaseTypes).toContain('missing_person');
+    expect(telegramDispatchFactSignals).toContain('status_update');
+    expect(telegramIncidentJoinFactSignals).toContain('request_join');
+
+    expect(
+      TelegramWorkCenterIntentFactsSchema.parse({
+        signal: 'capacity',
+        status: 'active',
+        priorityHint: 'high',
+        locationHint: 'north gate',
+      }),
+    ).toEqual({
+      signal: 'capacity',
+      status: 'active',
+      priorityHint: 'high',
+      locationHint: 'north gate',
+    });
+    expect(TelegramWorkCenterIntentFactsSchema.parse({})).toEqual({ signal: 'unknown' });
+    expect(TelegramWorkCenterIntentFactsSchema.safeParse({ signal: 'capacity', freeText: 'long note' }).success).toBe(false);
+
+    expect(
+      TelegramFamilyReunificationIntentFactsSchema.parse({
+        caseType: 'missing_person',
+        subjectType: 'child',
+        locationHint: 'reunification desk',
+      }),
+    ).toEqual({
+      caseType: 'missing_person',
+      subjectType: 'child',
+      locationHint: 'reunification desk',
+    });
+    expect(TelegramFamilyReunificationIntentFactsSchema.parse({})).toEqual({ caseType: 'unknown', subjectType: 'unknown' });
+    expect(TelegramFamilyReunificationIntentFactsSchema.safeParse({ caseType: 'missing_person', fullName: 'private name' }).success).toBe(false);
+
+    expect(TelegramSosIntentFactsSchema.parse({ severity: 'medical', locationHint: 'east stairs', peopleCountApprox: '2' })).toEqual({
+      severity: 'medical',
+      locationHint: 'east stairs',
+      peopleCountApprox: '2',
+    });
+    expect(TelegramSosIntentFactsSchema.parse({})).toEqual({ severity: 'other' });
+    expect(TelegramSosIntentFactsSchema.safeParse({ severity: 'medical', phone: '+34000000000' }).success).toBe(false);
+
+    expect(TelegramDispatchIntentFactsSchema.parse({ signal: 'status_update', status: 'en_route', destinationHint: 'warehouse' })).toEqual({
+      signal: 'status_update',
+      status: 'en_route',
+      destinationHint: 'warehouse',
+    });
+    expect(TelegramDispatchIntentFactsSchema.parse({})).toEqual({ signal: 'unknown' });
+    expect(TelegramDispatchIntentFactsSchema.safeParse({ signal: 'status_update', status: 'done' }).success).toBe(false);
+
+    expect(TelegramIncidentJoinIntentFactsSchema.parse({ signal: 'request_join', incidentHint: 'incident-zc-demo', roleHint: 'volunteer' })).toEqual({
+      signal: 'request_join',
+      incidentHint: 'incident-zc-demo',
+      roleHint: 'volunteer',
+    });
+    expect(TelegramIncidentJoinIntentFactsSchema.parse({})).toEqual({ signal: 'unknown' });
+    expect(TelegramIncidentJoinIntentFactsSchema.safeParse({ signal: 'request_join', password: 'secret' }).success).toBe(false);
   });
 
   it('validates canonical resource report contracts', () => {

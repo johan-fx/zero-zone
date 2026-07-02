@@ -17,22 +17,25 @@ import {
 } from './resource-helpers';
 import { getTelegramDisplayName, getTelegramExternalUserId, resolveTelegramCommand } from './telegram-update';
 import { withTelegramFlowTelemetry } from './telemetry';
-import type { TelegramResourceReportFlowResult, TelegramResourceReportPorts, TelegramResourceReportState, TelegramUpdateLike } from './types';
+import type { TelegramFlowContext, TelegramResourceReportFlowResult, TelegramResourceReportPorts, TelegramResourceReportState, TelegramUpdateLike } from './types';
+
+type TelegramResourceFlowContext = Extract<TelegramFlowContext, { sourceIntent: 'resource' }>;
 
 export async function handleTelegramResourceReportFlow(
   state: TelegramResourceReportState,
   update: TelegramUpdateLike,
   ports: TelegramResourceReportPorts,
+  flowContext?: TelegramResourceFlowContext,
 ): Promise<TelegramResourceReportFlowResult> {
   const startedAt = Date.now();
   const previousStep = state.step;
 
-  return withTelegramFlowTelemetry(
+  const result: TelegramResourceReportFlowResult = await withTelegramFlowTelemetry(
     ports,
     'telegram.resource_report',
     previousStep,
     startedAt,
-    async () => {
+    async (): Promise<TelegramResourceReportFlowResult> => {
       const text = update.message?.text?.trim() ?? '';
       const command = resolveTelegramCommand(update);
       const locale = resolveTelegramLocale(update, getPreferredLocaleFromState(state));
@@ -133,6 +136,82 @@ export async function handleTelegramResourceReportFlow(
       return { state, responseText: formatMessage(locale, 'telegram.resource.prompt') };
     },
   );
+
+  return withTelegramResourceFlowContextPreface(result, flowContext);
+}
+
+function withTelegramResourceFlowContextPreface(
+  result: TelegramResourceReportFlowResult,
+  flowContext?: TelegramResourceFlowContext,
+): TelegramResourceReportFlowResult {
+  const contextText = buildTelegramResourceIntentContext(flowContext?.facts ?? null, getPreferredLocaleFromState(result.state) ?? flowContext?.preferredLocale ?? 'es');
+  return contextText ? { ...result, responseText: `${contextText}\n\n${result.responseText}` } : result;
+}
+
+function buildTelegramResourceIntentContext(facts: TelegramResourceFlowContext['facts'], locale: SupportedLocale): string | null {
+  if (!facts) {
+    return null;
+  }
+
+  const resourceLabel = resolveTelegramResourceIntentLabel(facts, locale);
+  if (!resourceLabel) {
+    return null;
+  }
+
+  if (facts.resourceDirection === 'offer' || facts.implicitQuestion === 'where_needed') {
+    if (locale === 'es') {
+      const agreement = resolveSpanishResourceAgreement(resourceLabel);
+      return `Entiendo que tienes ${resourceLabel} ${agreement.available}. Te guiaré para ${agreement.registerPronoun} de forma segura; el reporte no se creará hasta que confirmes los datos.`;
+    }
+
+    return `I understand you have ${resourceLabel} available. I’ll guide you to register it safely; the report will not be created until you confirm the details.`;
+  }
+
+  if (facts.resourceDirection === 'need' || facts.implicitQuestion === 'where_available') {
+    return locale === 'es'
+      ? `Entiendo que necesitas ${resourceLabel}. Te guiaré para registrarlo de forma segura; el reporte no se creará hasta que confirmes los datos.`
+      : `I understand you need ${resourceLabel}. I’ll guide you to register it safely; the report will not be created until you confirm the details.`;
+  }
+
+  return locale === 'es'
+    ? `Entiendo que quieres reportar información sobre ${resourceLabel}. Te guiaré con las preguntas obligatorias antes de crear cualquier reporte.`
+    : `I understand you want to report information about ${resourceLabel}. I’ll guide you through the required questions before creating any report.`;
+}
+
+function resolveSpanishResourceAgreement(resourceLabel: string): { available: 'disponible' | 'disponibles'; registerPronoun: 'registrarlo' | 'registrarlos' } {
+  const normalizedLabel = resourceLabel.trim().toLowerCase();
+  const plural = /(?:s|es)$/.test(normalizedLabel) && !/(?:gas|víveres)$/.test(normalizedLabel);
+  return plural ? { available: 'disponibles', registerPronoun: 'registrarlos' } : { available: 'disponible', registerPronoun: 'registrarlo' };
+}
+
+function resolveTelegramResourceIntentLabel(facts: NonNullable<TelegramResourceFlowContext['facts']>, locale: SupportedLocale): string | null {
+  const explicitLabel = facts.resourceLabel?.trim();
+  if (explicitLabel) {
+    return explicitLabel;
+  }
+
+  const fallbackLabels: Record<SupportedLocale, Partial<Record<NonNullable<TelegramResourceFlowContext['facts']>['resourceType'], string>>> = {
+    es: {
+      water: 'agua',
+      food: 'comida',
+      medicine: 'medicamentos',
+      shelter: 'refugio',
+      equipment: 'equipamiento',
+      transport: 'transporte',
+      fuel: 'combustible',
+    },
+    en: {
+      water: 'water',
+      food: 'food',
+      medicine: 'medicine',
+      shelter: 'shelter',
+      equipment: 'equipment',
+      transport: 'transport',
+      fuel: 'fuel',
+    },
+  };
+
+  return fallbackLabels[locale][facts.resourceType] ?? null;
 }
 
 async function startResourceIncidentSelection(

@@ -58,3 +58,7 @@ docs/design-system-visual-regression.md
 
 # Cloudflare / Wrangler local state
 services/api/.wrangler/
+
+# Local E2E credentials and sessions
+/e2e/telegram-e2e.local
+/e2e/.telegram-e2e.session

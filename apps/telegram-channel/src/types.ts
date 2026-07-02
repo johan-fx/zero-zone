@@ -20,6 +20,12 @@ import type {
   SosAlertCreateResponse,
   SosConnectedCreateRequest,
   SyncFreshness,
+  TelegramDispatchIntentFacts,
+  TelegramFamilyReunificationIntentFacts,
+  TelegramIncidentJoinIntentFacts,
+  TelegramResourceIntentFacts,
+  TelegramSosIntentFacts,
+  TelegramWorkCenterIntentFacts,
   WorkCenterConnectedCreateRequest,
   WorkCenterCreateResponse,
 } from '@zona-cero/contracts';
@@ -48,6 +54,27 @@ export type TelegramUpdateLike = {
     from?: { id?: number | string; first_name?: string; language_code?: string };
   };
 };
+
+export type TelegramFlowContextSourceIntent = 'resource' | 'workcenter' | 'family_reunification' | 'sos' | 'dispatch' | 'incident_join';
+
+export type TelegramFlowContextFactsByIntent = {
+  resource: TelegramResourceIntentFacts;
+  workcenter: TelegramWorkCenterIntentFacts;
+  family_reunification: TelegramFamilyReunificationIntentFacts;
+  sos: TelegramSosIntentFacts;
+  dispatch: TelegramDispatchIntentFacts;
+  incident_join: TelegramIncidentJoinIntentFacts;
+};
+
+export type TelegramFlowContext<TIntent extends TelegramFlowContextSourceIntent = TelegramFlowContextSourceIntent> = {
+  [TSourceIntent in TIntent]: {
+    preferredLocale: SupportedLocale;
+    sourceIntent: TSourceIntent;
+    facts: TelegramFlowContextFactsByIntent[TSourceIntent] | null;
+    prefill: Partial<TelegramFlowContextFactsByIntent[TSourceIntent]>;
+    confidence: number;
+  };
+}[TIntent];
 
 export type TelegramIncidentJoinPorts = TelegramTelemetryOptions & {
   listIncidents(): Promise<IncidentListResponse>;

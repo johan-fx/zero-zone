@@ -6,13 +6,15 @@ import { formatIncidentList, formatJoinSuccess, formatRoles, selectIncident, sel
 import { getPreferredLocaleFromState, handleTelegramLanguageCommand, resolveTelegramLocale, withPreferredLocale } from './locale';
 import { getTelegramExternalUserId, resolveTelegramCommand } from './telegram-update';
 import { withTelegramFlowTelemetry } from './telemetry';
-import type { TelegramIncidentJoinFlowResult, TelegramIncidentJoinPorts, TelegramIncidentJoinState, TelegramUpdateLike } from './types';
+import type { TelegramFlowContext, TelegramIncidentJoinFlowResult, TelegramIncidentJoinPorts, TelegramIncidentJoinState, TelegramUpdateLike } from './types';
 
 export async function handleTelegramIncidentJoinFlow(
   state: TelegramIncidentJoinState,
   update: TelegramUpdateLike,
   ports: TelegramIncidentJoinPorts,
+  flowContext?: Extract<TelegramFlowContext, { sourceIntent: 'incident_join' }>,
 ): Promise<TelegramIncidentJoinFlowResult> {
+  void flowContext;
   const startedAt = Date.now();
   const previousStep = state.step;
 

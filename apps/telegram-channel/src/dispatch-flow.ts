@@ -5,13 +5,15 @@ import { formatDispatchTaskError, formatDispatchTaskList, formatDispatchTaskSucc
 import { isCancellation, isConfirmation, parseDispatchStatus } from './parsing';
 import { getTelegramExternalUserId, resolveTelegramCommand } from './telegram-update';
 import { withTelegramFlowTelemetry } from './telemetry';
-import type { TelegramDispatchTaskFlowResult, TelegramDispatchTaskPorts, TelegramDispatchTaskState, TelegramUpdateLike } from './types';
+import type { TelegramDispatchTaskFlowResult, TelegramDispatchTaskPorts, TelegramDispatchTaskState, TelegramFlowContext, TelegramUpdateLike } from './types';
 
 export async function handleTelegramDispatchTaskFlow(
   state: TelegramDispatchTaskState,
   update: TelegramUpdateLike,
   ports: TelegramDispatchTaskPorts,
+  flowContext?: Extract<TelegramFlowContext, { sourceIntent: 'dispatch' }>,
 ): Promise<TelegramDispatchTaskFlowResult> {
+  void flowContext;
   const startedAt = Date.now();
   const previousStep = state.step;
 

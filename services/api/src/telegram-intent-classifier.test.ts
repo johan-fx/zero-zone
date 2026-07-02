@@ -49,7 +49,7 @@ describe('telegram intent classifier', () => {
       DEFAULT_TELEGRAM_INTENT_MODEL,
       expect.objectContaining({
         temperature: 0,
-        max_tokens: 160,
+        max_tokens: 220,
         response_format: expect.objectContaining({ type: 'json_schema' }),
       }),
     );
@@ -58,6 +58,12 @@ describe('telegram intent classifier', () => {
     const request = firstCall[1];
     const messages = request.messages as Array<{ role: string; content: string }>;
     expect(messages[0]?.content).toContain('"tengo agua potable, dónde la necesitan?" => intent resource');
+    expect(messages[0]?.content).toContain('"el centro norte está lleno" => intent workcenter');
+    expect(messages[0]?.content).toContain('"found a separated child near gate 2" => intent family_reunification');
+    expect(messages[0]?.content).toContain('"hay dos personas atrapadas en la escalera este" => intent sos');
+    expect(messages[0]?.content).toContain('"equipo en camino al almacén" => intent dispatch');
+    expect(messages[0]?.content).toContain('"quiero unirme al incidente demo como voluntario" => intent incident_join');
+    expect(messages[0]?.content).toContain('Do not include actions to execute, raw user text, phone numbers, names, or other PII');
     expect(messages[0]?.content).toContain('"puedo llevar comida" => intent resource');
     expect(messages[0]?.content).toContain('"me sobra medicina" => intent resource');
     expect(messages[0]?.content).toContain('"necesitamos mantas" => intent resource');
@@ -74,6 +80,18 @@ describe('telegram intent classifier', () => {
               quantityApprox: expect.objectContaining({ type: 'string' }),
               locationHint: expect.objectContaining({ type: 'string' }),
               implicitQuestion: expect.objectContaining({ enum: ['where_needed', 'where_available', 'how_to_deliver', 'none'] }),
+              signal: expect.objectContaining({
+                enum: expect.arrayContaining(['capacity', 'status_update', 'request_join']),
+              }),
+              status: expect.objectContaining({ enum: expect.arrayContaining(['active', 'en_route']) }),
+              priorityHint: expect.objectContaining({ enum: ['low', 'medium', 'high', 'critical'] }),
+              caseType: expect.objectContaining({ enum: ['missing_person', 'found_person', 'separated_group', 'reunification_info', 'unknown'] }),
+              subjectType: expect.objectContaining({ enum: ['child', 'adult', 'elderly', 'group', 'unknown'] }),
+              severity: expect.objectContaining({ enum: ['critical', 'medical', 'security', 'trapped', 'other'] }),
+              peopleCountApprox: expect.objectContaining({ type: 'string' }),
+              destinationHint: expect.objectContaining({ type: 'string' }),
+              incidentHint: expect.objectContaining({ type: 'string' }),
+              roleHint: expect.objectContaining({ enum: ['volunteer', 'coordinator', 'logistics', 'medical'] }),
             },
           },
         },
@@ -117,7 +135,7 @@ describe('telegram intent classifier', () => {
         intent: 'family_reunification',
         confidence: 0.96,
         reason: 'The user is looking for a missing child.',
-        extractedFacts: { subject: 'child' },
+        extractedFacts: { caseType: 'missing_person', subjectType: 'child' },
       },
     });
 

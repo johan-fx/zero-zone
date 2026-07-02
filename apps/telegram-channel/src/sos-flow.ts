@@ -8,13 +8,15 @@ import { isCancellation, isStrongSosConfirmation } from './parsing';
 import { formatSosConfirmation, formatSosError, formatSosSuccess } from './sos-helpers';
 import { getTelegramDisplayName, getTelegramExternalUserId, resolveTelegramCommand } from './telegram-update';
 import { withTelegramFlowTelemetry } from './telemetry';
-import type { TelegramSosFlowResult, TelegramSosPorts, TelegramSosState, TelegramUpdateLike } from './types';
+import type { TelegramFlowContext, TelegramSosFlowResult, TelegramSosPorts, TelegramSosState, TelegramUpdateLike } from './types';
 
 export async function handleTelegramSosFlow(
   state: TelegramSosState,
   update: TelegramUpdateLike,
   ports: TelegramSosPorts,
+  flowContext?: Extract<TelegramFlowContext, { sourceIntent: 'sos' }>,
 ): Promise<TelegramSosFlowResult> {
+  void flowContext;
   const startedAt = Date.now();
   const previousStep = state.step;
 

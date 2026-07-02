@@ -80,8 +80,13 @@ import {
   type SyncPullResponse,
   type SyncPushResponse,
   SyncPushResponseSchema,
+  TelegramDispatchIntentFactsSchema,
+  TelegramFamilyReunificationIntentFactsSchema,
+  TelegramIncidentJoinIntentFactsSchema,
   TelegramResourceIntentFactsSchema,
+  TelegramSosIntentFactsSchema,
   TelegramWebhookResultSchema,
+  TelegramWorkCenterIntentFactsSchema,
   WorkCenterConnectedCreateRequestSchema,
   type WorkCenterConnectedCreateRequest,
   WorkCenterCreatePayloadSchema,
@@ -94,7 +99,12 @@ import {
   type WorkCenterPriority,
   type WorkCenterSignalType,
   type TelegramIntentClassification,
+  type TelegramDispatchIntentFacts,
+  type TelegramFamilyReunificationIntentFacts,
+  type TelegramIncidentJoinIntentFacts,
   type TelegramResourceIntentFacts,
+  type TelegramSosIntentFacts,
+  type TelegramWorkCenterIntentFacts,
   type WorkCenterSummary,
 } from '@zona-cero/contracts';
 import {
@@ -138,6 +148,7 @@ import {
   type TelegramResourceReportState,
   type TelegramSosPorts,
   type TelegramSosState,
+  type TelegramFlowContext,
   type TelegramUpdateLike,
   type TelegramWorkCenterReportPorts,
   type TelegramWorkCenterReportState,
@@ -3820,6 +3831,10 @@ type TelegramConversationStateKeys = {
   familyStateKey: string | null;
 };
 
+type AcceptedTelegramIntent = Exclude<TelegramIntentClassification['intent'], 'unknown' | 'ambiguous'>;
+
+type TelegramAcceptedIntentFlowContext = TelegramFlowContext<AcceptedTelegramIntent>;
+
 async function routeExplicitTelegramCommand(
   db: D1Database,
   update: TelegramUpdateLike,
@@ -3912,32 +3927,45 @@ async function routeClassifiedTelegramIntent(
   });
 
   if (!isActionableTelegramIntentClassification(classification, config.confidenceThreshold)) {
-    emitTelegramIntentRouterTelemetry('rejected', `classification:${classification.intent}`);
+    emitTelegramIntentRouterTelemetry('rejected', `classification:${classification.intent}`, classification.confidence);
     return buildTelegramIntentClarificationResponse(preferredLocale);
   }
 
-  emitTelegramIntentRouterTelemetry('accepted', `classification:${classification.intent}`);
+  emitTelegramIntentRouterTelemetry('accepted', `classification:${classification.intent}`, classification.confidence);
   return routeAcceptedTelegramIntent(db, update, classification, stateKeys, preferredLocale, telemetry);
 }
 
 async function routeAcceptedTelegramIntent(
   db: D1Database,
   update: TelegramUpdateLike,
-  classification: TelegramIntentClassification & { intent: Exclude<TelegramIntentClassification['intent'], 'unknown' | 'ambiguous'> },
+  classification: TelegramIntentClassification & { intent: AcceptedTelegramIntent },
   stateKeys: TelegramConversationStateKeys,
   preferredLocale: SupportedLocale,
   telemetry?: ChannelTelemetryPort,
 ): Promise<string> {
+  const flowContext = buildTelegramAcceptedIntentFlowContext(classification, preferredLocale);
+
   switch (classification.intent) {
-    case 'resource': {
+    case 'resource':
       await deleteTelegramConversationStates(db, [stateKeys.workCenterStateKey, stateKeys.dispatchStateKey, stateKeys.sosStateKey, stateKeys.familyStateKey]);
-      const responseText = await handleTelegramResourceConversation(db, update, stateKeys.resourceStateKey, undefined, telemetry);
-      const context = buildTelegramResourceIntentContext(parseTelegramResourceIntentFacts(classification), preferredLocale);
-      return context ? `${context}\n\n${responseText}` : responseText;
-    }
+      return handleTelegramResourceConversation(
+        db,
+        update,
+        stateKeys.resourceStateKey,
+        undefined,
+        telemetry,
+        flowContext.sourceIntent === 'resource' ? flowContext : undefined,
+      );
     case 'workcenter':
       await deleteTelegramConversationStates(db, [stateKeys.resourceStateKey, stateKeys.dispatchStateKey, stateKeys.sosStateKey, stateKeys.familyStateKey]);
-      return handleTelegramWorkCenterConversation(db, update, stateKeys.workCenterStateKey, undefined, telemetry);
+      return handleTelegramWorkCenterConversation(
+        db,
+        update,
+        stateKeys.workCenterStateKey,
+        undefined,
+        telemetry,
+        flowContext.sourceIntent === 'workcenter' ? flowContext : undefined,
+      );
     case 'family_reunification':
       await deleteTelegramConversationStates(db, [
         stateKeys.joinStateKey,
@@ -3946,13 +3974,27 @@ async function routeAcceptedTelegramIntent(
         stateKeys.dispatchStateKey,
         stateKeys.sosStateKey,
       ]);
-      return handleTelegramFamilyReunificationConversation(db, update, stateKeys.familyStateKey, undefined, telemetry);
+      return handleTelegramFamilyReunificationConversation(
+        db,
+        update,
+        stateKeys.familyStateKey,
+        undefined,
+        telemetry,
+        flowContext.sourceIntent === 'family_reunification' ? flowContext : undefined,
+      );
     case 'sos':
       await deleteTelegramConversationStates(db, [stateKeys.workCenterStateKey, stateKeys.resourceStateKey, stateKeys.dispatchStateKey, stateKeys.familyStateKey]);
-      return handleTelegramSosConversation(db, update, stateKeys.sosStateKey, undefined, telemetry);
+      return handleTelegramSosConversation(db, update, stateKeys.sosStateKey, undefined, telemetry, flowContext.sourceIntent === 'sos' ? flowContext : undefined);
     case 'dispatch':
       await deleteTelegramConversationStates(db, [stateKeys.workCenterStateKey, stateKeys.resourceStateKey, stateKeys.sosStateKey, stateKeys.familyStateKey]);
-      return handleTelegramDispatchConversation(db, update, stateKeys.dispatchStateKey, undefined, telemetry);
+      return handleTelegramDispatchConversation(
+        db,
+        update,
+        stateKeys.dispatchStateKey,
+        undefined,
+        telemetry,
+        flowContext.sourceIntent === 'dispatch' ? flowContext : undefined,
+      );
     case 'incident_join':
       await deleteTelegramConversationStates(db, [
         stateKeys.workCenterStateKey,
@@ -3961,93 +4003,99 @@ async function routeAcceptedTelegramIntent(
         stateKeys.sosStateKey,
         stateKeys.familyStateKey,
       ]);
-      return handleTelegramIncidentJoinConversation(db, update, stateKeys.joinStateKey, telemetry);
+      return handleTelegramIncidentJoinConversation(
+        db,
+        update,
+        stateKeys.joinStateKey,
+        telemetry,
+        flowContext.sourceIntent === 'incident_join' ? flowContext : undefined,
+      );
   }
 }
 
 function isActionableTelegramIntentClassification(
   classification: TelegramIntentClassification,
   confidenceThreshold: number,
-): classification is TelegramIntentClassification & { intent: Exclude<TelegramIntentClassification['intent'], 'unknown' | 'ambiguous'> } {
+): classification is TelegramIntentClassification & { intent: AcceptedTelegramIntent } {
   return classification.intent !== 'unknown' && classification.intent !== 'ambiguous' && classification.confidence >= confidenceThreshold;
 }
 
-function parseTelegramResourceIntentFacts(classification: TelegramIntentClassification): TelegramResourceIntentFacts | null {
-  if (classification.intent !== 'resource') {
-    return null;
+function buildTelegramAcceptedIntentFlowContext(
+  classification: TelegramIntentClassification & { intent: AcceptedTelegramIntent },
+  locale: SupportedLocale,
+): TelegramAcceptedIntentFlowContext {
+  switch (classification.intent) {
+    case 'resource': {
+      const facts = parseTelegramResourceIntentFacts(classification);
+      return { sourceIntent: 'resource', preferredLocale: locale, facts, prefill: facts ?? {}, confidence: classification.confidence };
+    }
+    case 'workcenter': {
+      const facts = parseTelegramWorkCenterIntentFacts(classification);
+      return { sourceIntent: 'workcenter', preferredLocale: locale, facts, prefill: facts ?? {}, confidence: classification.confidence };
+    }
+    case 'family_reunification': {
+      const facts = parseTelegramFamilyReunificationIntentFacts(classification);
+      return { sourceIntent: 'family_reunification', preferredLocale: locale, facts, prefill: facts ?? {}, confidence: classification.confidence };
+    }
+    case 'sos': {
+      const facts = parseTelegramSosIntentFacts(classification);
+      return { sourceIntent: 'sos', preferredLocale: locale, facts, prefill: facts ?? {}, confidence: classification.confidence };
+    }
+    case 'dispatch': {
+      const facts = parseTelegramDispatchIntentFacts(classification);
+      return { sourceIntent: 'dispatch', preferredLocale: locale, facts, prefill: facts ?? {}, confidence: classification.confidence };
+    }
+    case 'incident_join': {
+      const facts = parseTelegramIncidentJoinIntentFacts(classification);
+      return { sourceIntent: 'incident_join', preferredLocale: locale, facts, prefill: facts ?? {}, confidence: classification.confidence };
+    }
   }
+}
 
+function parseTelegramResourceIntentFacts(
+  classification: TelegramIntentClassification,
+): TelegramResourceIntentFacts | null {
+  if (classification.intent !== 'resource') return null;
   const parsed = TelegramResourceIntentFactsSchema.safeParse(classification.extractedFacts);
   return parsed.success ? parsed.data : null;
 }
 
-function buildTelegramResourceIntentContext(facts: TelegramResourceIntentFacts | null, locale: SupportedLocale): string | null {
-  if (!facts) {
-    return null;
-  }
-
-  const resourceLabel = resolveTelegramResourceIntentLabel(facts, locale);
-  if (!resourceLabel) {
-    return null;
-  }
-
-  if (facts.resourceDirection === 'offer' || facts.implicitQuestion === 'where_needed') {
-    if (locale === 'es') {
-      const agreement = resolveSpanishResourceAgreement(facts, resourceLabel);
-      return `Entiendo que tienes ${resourceLabel} ${agreement.available}. Te guiaré para ${agreement.registerPronoun} de forma segura; el reporte no se creará hasta que confirmes los datos.`;
-    }
-
-    return `I understand you have ${resourceLabel} available. I’ll guide you to register it safely; the report will not be created until you confirm the details.`;
-  }
-
-  if (facts.resourceDirection === 'need' || facts.implicitQuestion === 'where_available') {
-    return locale === 'es'
-      ? `Entiendo que necesitas ${resourceLabel}. Te guiaré para registrarlo de forma segura; el reporte no se creará hasta que confirmes los datos.`
-      : `I understand you need ${resourceLabel}. I’ll guide you to register it safely; the report will not be created until you confirm the details.`;
-  }
-
-  return locale === 'es'
-    ? `Entiendo que quieres reportar información sobre ${resourceLabel}. Te guiaré con las preguntas obligatorias antes de crear cualquier reporte.`
-    : `I understand you want to report information about ${resourceLabel}. I’ll guide you through the required questions before creating any report.`;
+function parseTelegramWorkCenterIntentFacts(
+  classification: TelegramIntentClassification,
+): TelegramWorkCenterIntentFacts | null {
+  if (classification.intent !== 'workcenter') return null;
+  const parsed = TelegramWorkCenterIntentFactsSchema.safeParse(classification.extractedFacts);
+  return parsed.success ? parsed.data : null;
 }
 
-function resolveSpanishResourceAgreement(
-  facts: TelegramResourceIntentFacts,
-  resourceLabel: string,
-): { available: 'disponible' | 'disponibles'; registerPronoun: 'registrarlo' | 'registrarlos' } {
-  const normalizedLabel = resourceLabel.trim().toLowerCase();
-  const plural = /(?:s|es)$/.test(normalizedLabel) && !/(?:gas|víveres)$/.test(normalizedLabel);
-  return plural ? { available: 'disponibles', registerPronoun: 'registrarlos' } : { available: 'disponible', registerPronoun: 'registrarlo' };
+function parseTelegramFamilyReunificationIntentFacts(
+  classification: TelegramIntentClassification,
+): TelegramFamilyReunificationIntentFacts | null {
+  if (classification.intent !== 'family_reunification') return null;
+  const parsed = TelegramFamilyReunificationIntentFactsSchema.safeParse(classification.extractedFacts);
+  return parsed.success ? parsed.data : null;
 }
 
-function resolveTelegramResourceIntentLabel(facts: TelegramResourceIntentFacts, locale: SupportedLocale): string | null {
-  const explicitLabel = facts.resourceLabel?.trim();
-  if (explicitLabel) {
-    return explicitLabel;
-  }
+function parseTelegramSosIntentFacts(classification: TelegramIntentClassification): TelegramSosIntentFacts | null {
+  if (classification.intent !== 'sos') return null;
+  const parsed = TelegramSosIntentFactsSchema.safeParse(classification.extractedFacts);
+  return parsed.success ? parsed.data : null;
+}
 
-  const fallbackLabels: Record<SupportedLocale, Partial<Record<TelegramResourceIntentFacts['resourceType'], string>>> = {
-    es: {
-      water: 'agua',
-      food: 'comida',
-      medicine: 'medicamentos',
-      shelter: 'refugio',
-      equipment: 'equipamiento',
-      transport: 'transporte',
-      fuel: 'combustible',
-    },
-    en: {
-      water: 'water',
-      food: 'food',
-      medicine: 'medicine',
-      shelter: 'shelter',
-      equipment: 'equipment',
-      transport: 'transport',
-      fuel: 'fuel',
-    },
-  };
+function parseTelegramDispatchIntentFacts(
+  classification: TelegramIntentClassification,
+): TelegramDispatchIntentFacts | null {
+  if (classification.intent !== 'dispatch') return null;
+  const parsed = TelegramDispatchIntentFactsSchema.safeParse(classification.extractedFacts);
+  return parsed.success ? parsed.data : null;
+}
 
-  return fallbackLabels[locale][facts.resourceType] ?? null;
+function parseTelegramIncidentJoinIntentFacts(
+  classification: TelegramIntentClassification,
+): TelegramIncidentJoinIntentFacts | null {
+  if (classification.intent !== 'incident_join') return null;
+  const parsed = TelegramIncidentJoinIntentFactsSchema.safeParse(classification.extractedFacts);
+  return parsed.success ? parsed.data : null;
 }
 
 function getTelegramIntentAiBinding(env: Env): TelegramIntentAiBinding | null {
@@ -4055,16 +4103,22 @@ function getTelegramIntentAiBinding(env: Env): TelegramIntentAiBinding | null {
   return ai && typeof ai.run === 'function' ? ai : null;
 }
 
-function emitTelegramIntentRouterTelemetry(result: 'accepted' | 'rejected' | 'bypassed', action: string): void {
+function emitTelegramIntentRouterTelemetry(result: 'accepted' | 'rejected' | 'bypassed', action: string, confidence?: number): void {
   logStructuredOperationalEvent({
     event: 'operation.processed',
     category: 'sync',
     result,
     channel: 'telegram',
     scope: 'telegram.intent_router',
-    action,
+    action: confidence === undefined ? action : `${action}:confidence_${bucketTelegramIntentConfidence(confidence)}`,
     errorCode: null,
   });
+}
+
+function bucketTelegramIntentConfidence(confidence: number): 'low' | 'medium' | 'high' {
+  if (confidence >= 0.9) return 'high';
+  if (confidence >= 0.75) return 'medium';
+  return 'low';
 }
 
 function buildTelegramIntentClarificationResponse(locale: SupportedLocale): string {
@@ -4080,12 +4134,13 @@ async function handleTelegramIncidentJoinConversation(
   update: TelegramUpdateLike,
   stateKey: string | null,
   telemetry?: ChannelTelemetryPort,
+  flowContext?: Extract<TelegramAcceptedIntentFlowContext, { sourceIntent: 'incident_join' }>,
 ): Promise<string> {
   const currentState = stateKey
     ? await loadTelegramConversationState(db, stateKey, safeParseTelegramIncidentJoinState, { step: 'idle' } satisfies TelegramIncidentJoinState)
     : ({ step: 'idle' } satisfies TelegramIncidentJoinState);
   const ports = createTelegramIncidentJoinPorts(db, telemetry);
-  const result = await handleTelegramIncidentJoinFlow(currentState, update, ports);
+  const result = await handleTelegramIncidentJoinFlow(currentState, update, ports, flowContext);
 
   if (stateKey) {
     if (isTerminalTelegramIncidentJoinState(result.state)) {
@@ -4104,6 +4159,7 @@ async function handleTelegramWorkCenterConversation(
   stateKey: string | null,
   loadedState?: TelegramWorkCenterReportState,
   telemetry?: ChannelTelemetryPort,
+  flowContext?: Extract<TelegramAcceptedIntentFlowContext, { sourceIntent: 'workcenter' }>,
 ): Promise<string> {
   const currentState =
     loadedState ??
@@ -4111,7 +4167,7 @@ async function handleTelegramWorkCenterConversation(
       ? await loadTelegramConversationState(db, stateKey, safeParseTelegramWorkCenterReportState, { step: 'idle' } satisfies TelegramWorkCenterReportState)
       : ({ step: 'idle' } satisfies TelegramWorkCenterReportState));
   const ports = createTelegramWorkCenterReportPorts(db, telemetry);
-  const result = await handleTelegramWorkCenterReportFlow(currentState, update, ports);
+  const result = await handleTelegramWorkCenterReportFlow(currentState, update, ports, flowContext);
 
   if (stateKey) {
     if (isTerminalTelegramWorkCenterReportState(result.state) || isPermissionDeniedTelegramWorkCenterResult(currentState, result.responseText)) {
@@ -4130,6 +4186,7 @@ async function handleTelegramResourceConversation(
   stateKey: string | null,
   loadedState?: TelegramResourceReportState,
   telemetry?: ChannelTelemetryPort,
+  flowContext?: Extract<TelegramAcceptedIntentFlowContext, { sourceIntent: 'resource' }>,
 ): Promise<string> {
   const currentState =
     loadedState ??
@@ -4137,7 +4194,7 @@ async function handleTelegramResourceConversation(
       ? await loadTelegramConversationState(db, stateKey, safeParseTelegramResourceReportState, { step: 'idle' } satisfies TelegramResourceReportState)
       : ({ step: 'idle' } satisfies TelegramResourceReportState));
   const ports = createTelegramResourceReportPorts(db, telemetry);
-  const result = await handleTelegramResourceReportFlow(currentState, update, ports);
+  const result = await handleTelegramResourceReportFlow(currentState, update, ports, flowContext);
 
   if (stateKey) {
     if (isTerminalTelegramResourceReportState(result.state) || isPermissionDeniedTelegramResourceResult(currentState, result.responseText)) {
@@ -4156,6 +4213,7 @@ async function handleTelegramDispatchConversation(
   stateKey: string | null,
   loadedState?: TelegramDispatchTaskState,
   telemetry?: ChannelTelemetryPort,
+  flowContext?: Extract<TelegramAcceptedIntentFlowContext, { sourceIntent: 'dispatch' }>,
 ): Promise<string> {
   const currentState =
     loadedState ??
@@ -4163,7 +4221,7 @@ async function handleTelegramDispatchConversation(
       ? await loadTelegramConversationState(db, stateKey, safeParseTelegramDispatchTaskState, { step: 'idle' } satisfies TelegramDispatchTaskState)
       : ({ step: 'idle' } satisfies TelegramDispatchTaskState));
   const ports = createTelegramDispatchTaskPorts(db, telemetry);
-  const result = await handleTelegramDispatchTaskFlow(currentState, update, ports);
+  const result = await handleTelegramDispatchTaskFlow(currentState, update, ports, flowContext);
 
   if (stateKey) {
     if (isTerminalLikeTelegramDispatchResult(result.state, result.responseText)) {
@@ -4182,6 +4240,7 @@ async function handleTelegramFamilyReunificationConversation(
   stateKey: string | null,
   loadedState?: TelegramFamilyReunificationState,
   telemetry?: ChannelTelemetryPort,
+  flowContext?: Extract<TelegramAcceptedIntentFlowContext, { sourceIntent: 'family_reunification' }>,
 ): Promise<string> {
   const currentState =
     loadedState ??
@@ -4191,7 +4250,7 @@ async function handleTelegramFamilyReunificationConversation(
         } satisfies TelegramFamilyReunificationState)
       : ({ step: 'idle' } satisfies TelegramFamilyReunificationState));
   const ports = createTelegramFamilyReunificationPorts(db, update, telemetry);
-  const result = await handleTelegramFamilyReunificationFlow(currentState, update, ports);
+  const result = await handleTelegramFamilyReunificationFlow(currentState, update, ports, flowContext);
 
   if (stateKey) {
     if (isTerminalTelegramFamilyReunificationState(result.state)) {
@@ -4210,6 +4269,7 @@ async function handleTelegramSosConversation(
   stateKey: string | null,
   loadedState?: TelegramSosState,
   telemetry?: ChannelTelemetryPort,
+  flowContext?: Extract<TelegramAcceptedIntentFlowContext, { sourceIntent: 'sos' }>,
 ): Promise<string> {
   const currentState =
     loadedState ??
@@ -4217,7 +4277,7 @@ async function handleTelegramSosConversation(
       ? await loadTelegramConversationState(db, stateKey, safeParseTelegramSosState, { step: 'idle' } satisfies TelegramSosState)
       : ({ step: 'idle' } satisfies TelegramSosState));
   const ports = createTelegramSosPorts(db, telemetry);
-  const result = await handleTelegramSosFlow(currentState, update, ports);
+  const result = await handleTelegramSosFlow(currentState, update, ports, flowContext);
 
   if (stateKey) {
     if (isTerminalLikeTelegramSosResult(result.state, result.responseText)) {

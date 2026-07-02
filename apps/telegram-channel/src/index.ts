@@ -35,6 +35,9 @@ export { createTelegramTelemetryEvent, emitChannelTelemetry } from './telemetry'
 export { resolveTelegramCommand } from './telegram-update';
 export type {
   ChannelTelemetryPort,
+  TelegramFlowContext,
+  TelegramFlowContextFactsByIntent,
+  TelegramFlowContextSourceIntent,
   TelegramDispatchTaskFlowResult,
   TelegramDispatchTaskPorts,
   TelegramDispatchTaskState,

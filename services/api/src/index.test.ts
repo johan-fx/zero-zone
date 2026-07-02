@@ -792,7 +792,9 @@ describe('api worker', () => {
       expect(result.responseText).toContain('Elige un incidente:');
       expect(result.responseText).not.toContain('Choose an incident before reporting resources');
       expect(classifier).toHaveBeenCalledTimes(1);
-      expect(logSpy.mock.calls.map((call) => call.join(' ')).join('\n')).not.toMatch(/tengo agua potable|agua potable|resourceDirection|where_needed/i);
+      const logs = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+      expect(logs).toContain('classification:resource:confidence_high');
+      expect(logs).not.toMatch(/tengo agua potable|agua potable|resourceDirection|where_needed/i);
 
       const state = await (env as Env).DB.prepare('SELECT step, state_json AS stateJson FROM telegram_conversation_states WHERE state_key = ?')
         .bind(`flow:resource:chat:${telegramUserId}:from:${telegramUserId}`)
@@ -1014,7 +1016,11 @@ describe('api worker', () => {
 
   it('routes natural missing child/person messages to family reunification', async () => {
     const classifier = enableTelegramIntentClassifier(
-      vi.fn().mockResolvedValue({ intent: 'family_reunification', confidence: 0.94, extractedFacts: { caseType: 'missing_person' } }),
+      vi.fn().mockResolvedValue({
+        intent: 'family_reunification',
+        confidence: 0.94,
+        extractedFacts: { caseType: 'missing_person', subjectType: 'child', locationHint: 'north gate' },
+      }),
     );
     const telegramUserId = 25204;
 
@@ -1029,6 +1035,70 @@ describe('api worker', () => {
       .bind(`flow:family-reunification:chat:${telegramUserId}:from:${telegramUserId}`)
       .first<{ step: string }>();
     expect(state).toMatchObject({ step: 'awaitingIncident' });
+  });
+
+  it('routes clear workcenter intent with valid facts through typed flow context without creating operations', async () => {
+    const classifier = enableTelegramIntentClassifier(
+      vi.fn().mockResolvedValue({
+        intent: 'workcenter',
+        confidence: 0.93,
+        extractedFacts: { signal: 'capacity', status: 'active', priorityHint: 'high', locationHint: 'north shelter' },
+      }),
+    );
+    const telegramUserId = 25211;
+    const beforeWorkCenters = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM work_centers').first<{ count: number }>();
+
+    const result = await postTelegramMessage(telegramUserId, 'north shelter is full but active', 'WorkcenterFacts');
+    expect(result).toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining('Choose an incident before reporting a work center'),
+    });
+    expect(classifier).toHaveBeenCalledTimes(1);
+
+    const state = await (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?')
+      .bind(`flow:workcenter:chat:${telegramUserId}:from:${telegramUserId}`)
+      .first<{ step: string }>();
+    expect(state).toMatchObject({ step: 'awaitingIncident' });
+
+    const workCenters = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM work_centers').first<{ count: number }>();
+    expect(workCenters?.count).toBe(beforeWorkCenters?.count);
+  });
+
+  it('ignores invalid non-resource extracted facts while preserving the clear intent route', async () => {
+    const classifier = enableTelegramIntentClassifier(
+      vi.fn().mockResolvedValue({
+        intent: 'workcenter',
+        confidence: 0.93,
+        extractedFacts: { signal: 'capacity', fullName: 'private name' },
+      }),
+    );
+    const telegramUserId = 25212;
+
+    await expect(postTelegramMessage(telegramUserId, 'the north center is full', 'InvalidWorkcenterFacts')).resolves.toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining('Choose an incident before reporting a work center'),
+    });
+    expect(classifier).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes clear dispatch intent safely when extracted facts are absent', async () => {
+    const classifier = enableTelegramIntentClassifier(
+      vi.fn().mockResolvedValue({
+        intent: 'dispatch',
+        confidence: 0.93,
+        extractedFacts: {},
+      }),
+    );
+    const telegramUserId = 25213;
+
+    await expect(postTelegramMessage(telegramUserId, 'update dispatch task status', 'DispatchNoFacts')).resolves.toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining('Choose an incident before updating dispatch tasks'),
+    });
+    expect(classifier).toHaveBeenCalledTimes(1);
   });
 
   it('asks for clarification instead of falling back to incident join on ambiguous or low-confidence intent', async () => {

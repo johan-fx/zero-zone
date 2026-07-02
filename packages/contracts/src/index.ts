@@ -822,6 +822,9 @@ export const telegramIntents = [
 export const TelegramIntentSchema = z.enum(telegramIntents);
 export type TelegramIntent = z.infer<typeof TelegramIntentSchema>;
 
+export const telegramAcceptedIntents = ['resource', 'workcenter', 'family_reunification', 'sos', 'dispatch', 'incident_join'] as const;
+export type TelegramAcceptedIntent = (typeof telegramAcceptedIntents)[number];
+
 export const TelegramIntentExtractedFactsSchema = JsonObjectPayloadSchema;
 export type TelegramIntentExtractedFacts = z.infer<typeof TelegramIntentExtractedFactsSchema>;
 
@@ -846,6 +849,71 @@ export const TelegramResourceIntentFactsSchema = z.object({
   implicitQuestion: TelegramResourceImplicitQuestionSchema.default('none'),
 }).strict();
 export type TelegramResourceIntentFacts = z.infer<typeof TelegramResourceIntentFactsSchema>;
+
+export const telegramWorkCenterFactSignals = ['status', 'capacity', 'damage', 'location', 'availability', 'unknown'] as const;
+export const TelegramWorkCenterFactSignalSchema = z.enum(telegramWorkCenterFactSignals);
+export type TelegramWorkCenterFactSignal = z.infer<typeof TelegramWorkCenterFactSignalSchema>;
+
+export const TelegramWorkCenterIntentFactsSchema = z.object({
+  signal: TelegramWorkCenterFactSignalSchema.default('unknown'),
+  status: WorkCenterStatusSchema.optional(),
+  priorityHint: WorkCenterPrioritySchema.optional(),
+  locationHint: z.string().min(1).max(120).optional(),
+}).strict();
+export type TelegramWorkCenterIntentFacts = z.infer<typeof TelegramWorkCenterIntentFactsSchema>;
+
+export const telegramFamilyReunificationCaseTypes = ['missing_person', 'found_person', 'separated_group', 'reunification_info', 'unknown'] as const;
+export const TelegramFamilyReunificationCaseTypeSchema = z.enum(telegramFamilyReunificationCaseTypes);
+export type TelegramFamilyReunificationCaseType = z.infer<typeof TelegramFamilyReunificationCaseTypeSchema>;
+
+export const telegramFamilyReunificationSubjectTypes = ['child', 'adult', 'elderly', 'group', 'unknown'] as const;
+export const TelegramFamilyReunificationSubjectTypeSchema = z.enum(telegramFamilyReunificationSubjectTypes);
+export type TelegramFamilyReunificationSubjectType = z.infer<typeof TelegramFamilyReunificationSubjectTypeSchema>;
+
+export const TelegramFamilyReunificationIntentFactsSchema = z.object({
+  caseType: TelegramFamilyReunificationCaseTypeSchema.default('unknown'),
+  subjectType: TelegramFamilyReunificationSubjectTypeSchema.default('unknown'),
+  locationHint: z.string().min(1).max(120).optional(),
+}).strict();
+export type TelegramFamilyReunificationIntentFacts = z.infer<typeof TelegramFamilyReunificationIntentFactsSchema>;
+
+export const TelegramSosIntentFactsSchema = z.object({
+  severity: SosSeveritySchema.default('other'),
+  locationHint: z.string().min(1).max(120).optional(),
+  peopleCountApprox: z.string().min(1).max(60).optional(),
+}).strict();
+export type TelegramSosIntentFacts = z.infer<typeof TelegramSosIntentFactsSchema>;
+
+export const telegramDispatchFactSignals = ['assignment', 'status_update', 'logistics_request', 'eta_update', 'cancel', 'unknown'] as const;
+export const TelegramDispatchFactSignalSchema = z.enum(telegramDispatchFactSignals);
+export type TelegramDispatchFactSignal = z.infer<typeof TelegramDispatchFactSignalSchema>;
+
+export const TelegramDispatchIntentFactsSchema = z.object({
+  signal: TelegramDispatchFactSignalSchema.default('unknown'),
+  status: DispatchTaskStatusSchema.optional(),
+  destinationHint: z.string().min(1).max(120).optional(),
+}).strict();
+export type TelegramDispatchIntentFacts = z.infer<typeof TelegramDispatchIntentFactsSchema>;
+
+export const telegramIncidentJoinFactSignals = ['select_incident', 'request_join', 'change_incident', 'onboarding', 'unknown'] as const;
+export const TelegramIncidentJoinFactSignalSchema = z.enum(telegramIncidentJoinFactSignals);
+export type TelegramIncidentJoinFactSignal = z.infer<typeof TelegramIncidentJoinFactSignalSchema>;
+
+export const TelegramIncidentJoinIntentFactsSchema = z.object({
+  signal: TelegramIncidentJoinFactSignalSchema.default('unknown'),
+  incidentHint: z.string().min(1).max(100).optional(),
+  roleHint: IncidentRoleSchema.optional(),
+}).strict();
+export type TelegramIncidentJoinIntentFacts = z.infer<typeof TelegramIncidentJoinIntentFactsSchema>;
+
+export const TelegramAcceptedIntentFactsSchemas = {
+  resource: TelegramResourceIntentFactsSchema,
+  workcenter: TelegramWorkCenterIntentFactsSchema,
+  family_reunification: TelegramFamilyReunificationIntentFactsSchema,
+  sos: TelegramSosIntentFactsSchema,
+  dispatch: TelegramDispatchIntentFactsSchema,
+  incident_join: TelegramIncidentJoinIntentFactsSchema,
+} as const;
 
 export const TelegramIntentClassificationSchema = z.object({
   intent: TelegramIntentSchema,

@@ -744,13 +744,13 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 
 | Equipo | Checklist |
 |---|---|
-| A | ⬜ Diseñar `TelegramFlowContext` común con `preferredLocale`, `sourceIntent`, `facts`, `prefill` y `confidence`. |
-| A | ⬜ Adaptar handlers para aceptar contexto opcional sin romper llamadas por comando explícito. |
-| B | ⬜ Añadir schemas tipados para `workcenter`, `sos`, `family_reunification`, `dispatch`, `incident_join` y mantener `resource`. |
-| B | ⬜ Actualizar prompt del classifier para extraer facts por intent con ejemplos ES/EN. |
-| B | ⬜ Añadir parsers seguros por intent y descartar facts inválidos sin caer a `unknown` si el intent es claro. |
-| B | ⬜ Telemetría solo con intent/action/scope/confidence bucket; sin texto libre ni PII. |
-| C | ⬜ Revisar que los schemas compartidos no introducen campos imposibles de materializar offline. |
+| A | 🟢 Diseñar `TelegramFlowContext` común con `preferredLocale`, `sourceIntent`, `facts`, `prefill` y `confidence`. |
+| A | 🟢 Adaptar handlers para aceptar contexto opcional sin romper llamadas por comando explícito. |
+| B | 🟢 Añadir schemas tipados para `workcenter`, `sos`, `family_reunification`, `dispatch`, `incident_join` y mantener `resource`. |
+| B | 🟢 Actualizar prompt del classifier para extraer facts por intent con ejemplos ES/EN. |
+| B | 🟢 Añadir parsers seguros por intent y descartar facts inválidos sin caer a `unknown` si el intent es claro. |
+| B | 🟢 Telemetría solo con intent/action/scope/confidence bucket; sin texto libre ni PII. |
+| C | 🟢 Revisar que los schemas compartidos no introducen campos imposibles de materializar offline. |
 
 **Definition of Done**
 
@@ -770,6 +770,25 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 - `pnpm --filter @zona-cero/api exec vitest run src/telegram-intent-classifier.test.ts src/index.test.ts`
 - `pnpm --filter @zona-cero/telegram-channel test:strict`
 - Fresh review de privacidad/telemetría.
+
+**Cierre Slice 14**
+
+- Se añadieron schemas estrictos de facts tipados para los intents Telegram aceptados.
+- La API valida `extractedFacts` crudos hacia contexto tipado y dejó de concatenar texto ad hoc para el router.
+- `TelegramFlowContext` se exporta desde `telegram-channel` y se pasa de forma opcional a los flows.
+- El preface seguro de `/resource` vive en el handling de flows de `telegram-channel`.
+- Los flows no-resource aceptan contexto, pero todavía no consumen facts; las siguientes slices cubren el prefill UX.
+- La revisión de telemetría/privacidad confirmó que no se emite texto crudo, facts extraídos ni PII en la telemetría estructurada del intent-router.
+- La compatibilidad native/offline fue revisada y aprobada.
+
+**Evidencia ejecutada**
+
+- `pnpm --filter @zona-cero/contracts test:strict` — ✅ 26 tests.
+- `pnpm --filter @zona-cero/api exec vitest run src/telegram-intent-classifier.test.ts src/index.test.ts` — ✅ 90 tests; queda el aviso existente de close-timeout después del éxito.
+- `pnpm --filter @zona-cero/telegram-channel test:strict` — ✅ 52 tests.
+- `pnpm --filter @zona-cero/api typecheck` — ✅.
+- `pnpm --filter @zona-cero/telegram-channel typecheck` — ✅.
+- `git diff --check` — ✅.
 
 ## Slice 15 - Telegram `/workcenter` natural-language prefill
 
