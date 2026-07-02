@@ -40,7 +40,7 @@ Usar este reparto como contrato de trabajo para todas las slices. La clave es qu
 | 10 | Telegram intent routing con Workers AI | 🟢 | 🟢 | 🟢 | Hecho |
 | 11 | Telegram intent extraction v2 + prefill seguro | 🟡 | 🟡 | 🟡 | En progreso |
 | 12 | Telegram resource need matching + recomendaciones | 🟢 | 🟢 | ⬜ | Implementado |
-| 13 | Telegram channel modularization | ⬜ | 🟡 | ⬜ | Planificado |
+| 13 | Telegram channel modularization | 🟢 | 🟢 | ⬜ | Implementado |
 | 14 | Telegram intent facts v3 contract + router context | 🟡 | 🟡 | 🟡 | Planificado |
 | 15 | Telegram `/workcenter` natural-language prefill | 🟡 | 🟡 | ⬜ | Planificado |
 | 16 | Telegram `/sos` natural-language prefill | 🟡 | 🟡 | 🟡 | Planificado |
@@ -677,12 +677,12 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 
 | Equipo | Checklist |
 |---|---|
-| A | ⬜ Crear estructura modular interna sin romper exports existentes. |
-| A | ⬜ Extraer tipos de actualización, estados y ports compartidos. |
-| A | ⬜ Extraer helpers transversales: locale, command parsing, incident selection, confirmation/cancel parsing, formatting. |
-| A | ⬜ Extraer cada flow a su módulo propio con tests existentes apuntando al barrel público. |
-| B | ⬜ Ejecutar tests API que cubren webhook y persistencia de conversación. |
-| Todos | ⬜ Fresh review de diff mecánico antes de implementar intents nuevos. |
+| A | 🟢 Crear estructura modular interna sin romper exports existentes. |
+| A | 🟢 Extraer tipos de actualización, estados y ports compartidos. |
+| A | 🟢 Extraer helpers transversales: locale, command parsing, incident selection, confirmation/cancel parsing, formatting. |
+| A | 🟢 Extraer cada flow a su módulo propio con tests existentes apuntando al barrel público. |
+| B | 🟢 Ejecutar tests API que cubren webhook y persistencia de conversación. |
+| Todos | 🟢 Fresh review de diff mecánico antes de implementar intents nuevos. |
 
 **Definition of Done**
 
@@ -703,6 +703,28 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 - `pnpm --filter @zona-cero/api typecheck`
 - `git diff --check`
 - Fresh review confirmando equivalencia funcional.
+
+**Cierre Slice 13**
+
+- Equipo A convirtió `apps/telegram-channel/src/index.ts` en un barrel público pequeño y extrajo la implementación a módulos internos sin cambiar comportamiento funcional.
+- La estructura modular separa tipos, estado, telemetría, locale, parsing, selección de incidentes, actualización Telegram, webhook/bot y flows por dominio: incident join, work center, resource, dispatch, SOS y family reunification.
+- El contrato público del paquete se mantuvo estable: la revisión fresca verificó paridad de exports `62/62`, incluyendo `resolveTelegramLocale`.
+- Equipo B confirmó que `services/api` sigue consumiendo solo `@zona-cero/telegram-channel` mediante el barrel público, sin conocer rutas internas de flows.
+- No se movieron responsabilidades API/D1, lectura de entorno ni secretos al paquete Telegram.
+- Se limpió el duplicado de `normalizeDispatchStatusText`: la implementación canónica queda en `apps/telegram-channel/src/dispatch-helpers.ts` y se eliminó la copia no usada de `apps/telegram-channel/src/parsing.ts`.
+- Fresh review adversarial con dos jueces ciegos terminó `JUDGMENT: APPROVED` en ambos casos, sin CRITICAL ni WARNING real.
+
+**Evidencia ejecutada**
+
+- `pnpm --filter @zona-cero/telegram-channel test:strict` — ✅ 52 tests.
+- `pnpm --filter @zona-cero/telegram-channel typecheck` — ✅.
+- `pnpm --filter @zona-cero/api exec vitest run src/index.test.ts` — ✅ 77 tests.
+- `pnpm --filter @zona-cero/api typecheck` — ✅.
+- `git diff --check` — ✅.
+
+**Nota de revisión**
+
+- Antes de commit, stagear `apps/telegram-channel/src/index.ts`, `apps/telegram-channel/src/parsing.ts` y todos los nuevos módulos extraídos bajo `apps/telegram-channel/src/*.ts`; los archivos nuevos quedan fuera de `git diff` hasta estar staged.
 
 ## Slice 14 - Telegram intent facts v3 contract + router context
 
