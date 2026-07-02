@@ -51,10 +51,18 @@
     "api:seed:staging": "pnpm --filter @zona-cero/api seed:staging",
     "api:deploy:staging": "pnpm --filter @zona-cero/api deploy:staging",
     "web:build:staging": "pnpm --filter @zona-cero/web-ui build:staging",
-    "web:deploy:staging": "pnpm web:build:staging && pnpm --filter @zona-cero/api exec wrangler pages deploy ../../apps/web-ui/dist --project-name zona-cero-web-ui-staging --branch staging"
+    "web:deploy:staging": "pnpm web:build:staging && pnpm --filter @zona-cero/api exec wrangler pages deploy ../../apps/web-ui/dist --project-name zona-cero-web-ui-staging --branch staging",
+    "e2e:telegram:auth": "tsx e2e/telegram/staging-telegram-runner.ts auth",
+    "e2e:telegram:dry-run": "tsx e2e/telegram/staging-telegram-runner.ts dry-run",
+    "e2e:telegram:typecheck": "tsc --noEmit -p e2e/tsconfig.json",
+    "e2e:staging:telegram": "E2E_STAGING_TELEGRAM_REAL=1 playwright test -c e2e/playwright.staging.config.ts staging-telegram.spec.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.0",
-    "@zona-cero/testing": "workspace:*"
+    "@types/node": "^26.1.0",
+    "@zona-cero/testing": "workspace:*",
+    "telegram": "^2.26.22",
+    "tsx": "^4.22.4",
+    "typescript": "~6.0.3"
   }
 }
