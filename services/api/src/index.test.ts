@@ -47,7 +47,12 @@ async function request(path: string, init?: RequestInit): Promise<Response> {
   return response;
 }
 
-async function postTelegramMessage(telegramUserId: number, text: string, firstName = 'Webhook'): Promise<ReturnType<typeof TelegramWebhookResultSchema.parse>> {
+async function postTelegramMessage(
+  telegramUserId: number,
+  text: string,
+  firstName = 'Webhook',
+  languageCode = 'en',
+): Promise<ReturnType<typeof TelegramWebhookResultSchema.parse>> {
   const response = await request('/telegram/webhook', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -57,7 +62,7 @@ async function postTelegramMessage(telegramUserId: number, text: string, firstNa
         message_id: 1,
         text,
         chat: { id: telegramUserId, type: 'private' },
-        from: { id: telegramUserId, is_bot: false, first_name: firstName, language_code: 'en' },
+        from: { id: telegramUserId, is_bot: false, first_name: firstName, language_code: languageCode },
       },
     }),
   });
@@ -779,21 +784,76 @@ describe('api worker', () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
     try {
-      const result = await postTelegramMessage(telegramUserId, 'tengo agua potable, dónde la necesitan?', 'Water');
+      const result = await postTelegramMessage(telegramUserId, 'tengo agua potable, dónde la necesitan?', 'Water', 'ca');
       expect(result).toMatchObject({ accepted: true, command: null });
       expect(result.responseText).toContain('agua potable');
       expect(result.responseText).toContain('Te guiaré');
-      expect(result.responseText).toContain('Choose an incident before reporting resources');
+      expect(result.responseText).toContain('Elige un incidente antes de reportar recursos');
+      expect(result.responseText).not.toContain('Choose an incident before reporting resources');
       expect(classifier).toHaveBeenCalledTimes(1);
       expect(logSpy.mock.calls.map((call) => call.join(' ')).join('\n')).not.toMatch(/tengo agua potable|agua potable|resourceDirection|where_needed/i);
 
-      const state = await (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?')
+      const state = await (env as Env).DB.prepare('SELECT step, state_json AS stateJson FROM telegram_conversation_states WHERE state_key = ?')
         .bind(`flow:resource:chat:${telegramUserId}:from:${telegramUserId}`)
-        .first<{ step: string }>();
+        .first<{ step: string; stateJson: string }>();
       expect(state).toMatchObject({ step: 'awaitingIncident' });
+      expect(JSON.parse(state?.stateJson ?? '{}')).toMatchObject({ preferredLocale: 'es' });
     } finally {
       logSpy.mockRestore();
     }
+  });
+
+  it('routes natural English resource messages with English-only visible text', async () => {
+    const classifier = enableTelegramIntentClassifier(
+      vi.fn().mockResolvedValue({
+        intent: 'resource',
+        confidence: 0.92,
+        extractedFacts: {
+          resourceDirection: 'offer',
+          resourceType: 'medicine',
+          resourceLabel: 'medicine',
+          implicitQuestion: 'where_needed',
+        },
+      }),
+    );
+    const telegramUserId = 25204;
+
+    const result = await postTelegramMessage(telegramUserId, 'I have medicine, where is it needed?', 'Medicine', 'en');
+    expect(result).toMatchObject({ accepted: true, command: null });
+    expect(result.responseText).toContain('I understand you have medicine available');
+    expect(result.responseText).toContain('Choose an incident before reporting resources');
+    expect(result.responseText).not.toContain('Entiendo que tienes');
+    expect(result.responseText).not.toContain('Elige un incidente antes de reportar recursos');
+    expect(classifier).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears the Spanish resource flow after permission denied instead of persisting localized error state', async () => {
+    const telegramUserId = 25208;
+
+    await expect(postTelegramMessage(telegramUserId, '/resource', 'Denied', 'es')).resolves.toMatchObject({
+      responseText: expect.stringContaining('Elige un incidente antes de reportar recursos'),
+    });
+    await expect(postTelegramMessage(telegramUserId, '1', 'Denied', 'es')).resolves.toMatchObject({
+      responseText: expect.stringContaining('necesario o sobrante'),
+    });
+    await expect(postTelegramMessage(telegramUserId, 'sobrante', 'Denied', 'es')).resolves.toMatchObject({
+      responseText: expect.stringContaining('categoría del recurso'),
+    });
+    await postTelegramMessage(telegramUserId, 'medicamentos', 'Denied', 'es');
+    await expect(postTelegramMessage(telegramUserId, '10 cajas', 'Denied', 'es')).resolves.toMatchObject({
+      responseText: expect.stringContaining('baja, media, alta o crítica'),
+    });
+    await postTelegramMessage(telegramUserId, 'alta', 'Denied', 'es');
+    await postTelegramMessage(telegramUserId, 'omitir', 'Denied', 'es');
+    await postTelegramMessage(telegramUserId, 'omitir', 'Denied', 'es');
+    const denied = await postTelegramMessage(telegramUserId, 'sí', 'Denied', 'es');
+
+    expect(denied.responseText).toContain('Permiso denegado');
+
+    const state = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM telegram_conversation_states WHERE state_key = ?')
+      .bind(`flow:resource:chat:${telegramUserId}:from:${telegramUserId}`)
+      .first<{ count: number }>();
+    expect(state?.count).toBe(0);
   });
 
   it('ignores invalid resource extracted facts without creating a resource report', async () => {
@@ -806,9 +866,9 @@ describe('api worker', () => {
     );
     const telegramUserId = 25207;
 
-    const result = await postTelegramMessage(telegramUserId, 'tengo agua potable, dónde la necesitan?', 'InvalidFacts');
+    const result = await postTelegramMessage(telegramUserId, 'tengo agua potable, dónde la necesitan?', 'InvalidFacts', 'ca');
     expect(result).toMatchObject({ accepted: true, command: null });
-    expect(result.responseText).toContain('Choose an incident before reporting resources');
+    expect(result.responseText).toContain('Elige un incidente antes de reportar recursos');
     expect(result.responseText).not.toContain('Te guiaré');
     expect(classifier).toHaveBeenCalledTimes(1);
 
@@ -844,7 +904,7 @@ describe('api worker', () => {
     await expect(postTelegramMessage(telegramUserId, 'Necesitamos ayuda con esto', 'Ambiguous')).resolves.toMatchObject({
       accepted: true,
       command: null,
-      responseText: expect.stringContaining('not sure which operation'),
+      responseText: expect.stringContaining('No estoy seguro de qué operación necesitas'),
     });
     expect(classifier).toHaveBeenCalledTimes(1);
 
@@ -861,7 +921,7 @@ describe('api worker', () => {
     await expect(postTelegramMessage(telegramUserId, 'Quiero reportar algo', 'Failure')).resolves.toMatchObject({
       accepted: true,
       command: null,
-      responseText: expect.stringContaining('not sure which operation'),
+      responseText: expect.stringContaining('No estoy seguro de qué operación necesitas'),
     });
     expect(classifier).toHaveBeenCalledTimes(1);
 

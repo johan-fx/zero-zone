@@ -203,15 +203,15 @@ export type TelegramIncidentJoinState =
   | { step: 'cancelled' };
 
 export type TelegramResourceReportState =
-  | { step: 'idle' }
-  | { step: 'awaitingIncident'; incidents: IncidentSummary[]; externalUserId: string; displayName?: string }
-  | { step: 'awaitingKind'; incident: IncidentSummary; externalUserId: string; displayName?: string }
-  | { step: 'awaitingCategory'; incident: IncidentSummary; externalUserId: string; displayName?: string; reportKind: ResourceReportKind }
-  | { step: 'awaitingQuantity'; incident: IncidentSummary; externalUserId: string; displayName?: string; reportKind: ResourceReportKind; category: string }
-  | { step: 'awaitingUrgency'; incident: IncidentSummary; externalUserId: string; displayName?: string; reportKind: ResourceReportKind; category: string; quantityApprox: string }
-  | { step: 'awaitingConstraints'; incident: IncidentSummary; externalUserId: string; displayName?: string; reportKind: ResourceReportKind; category: string; quantityApprox: string; urgency: ResourceReportUrgency }
-  | { step: 'awaitingWorkCenter'; incident: IncidentSummary; externalUserId: string; displayName?: string; request: ResourceReportConnectedCreateRequest }
-  | { step: 'awaitingConfirmation'; incident: IncidentSummary; externalUserId: string; displayName?: string; request: ResourceReportConnectedCreateRequest }
+  | { step: 'idle'; preferredLocale?: SupportedLocale }
+  | { step: 'awaitingIncident'; incidents: IncidentSummary[]; externalUserId: string; displayName?: string; preferredLocale?: SupportedLocale }
+  | { step: 'awaitingKind'; incident: IncidentSummary; externalUserId: string; displayName?: string; preferredLocale?: SupportedLocale }
+  | { step: 'awaitingCategory'; incident: IncidentSummary; externalUserId: string; displayName?: string; preferredLocale?: SupportedLocale; reportKind: ResourceReportKind }
+  | { step: 'awaitingQuantity'; incident: IncidentSummary; externalUserId: string; displayName?: string; preferredLocale?: SupportedLocale; reportKind: ResourceReportKind; category: string }
+  | { step: 'awaitingUrgency'; incident: IncidentSummary; externalUserId: string; displayName?: string; preferredLocale?: SupportedLocale; reportKind: ResourceReportKind; category: string; quantityApprox: string }
+  | { step: 'awaitingConstraints'; incident: IncidentSummary; externalUserId: string; displayName?: string; preferredLocale?: SupportedLocale; reportKind: ResourceReportKind; category: string; quantityApprox: string; urgency: ResourceReportUrgency }
+  | { step: 'awaitingWorkCenter'; incident: IncidentSummary; externalUserId: string; displayName?: string; preferredLocale?: SupportedLocale; request: ResourceReportConnectedCreateRequest }
+  | { step: 'awaitingConfirmation'; incident: IncidentSummary; externalUserId: string; displayName?: string; preferredLocale?: SupportedLocale; request: ResourceReportConnectedCreateRequest }
   | { step: 'reported'; response: ResourceReportCreateResponse }
   | { step: 'cancelled' };
 
@@ -643,43 +643,46 @@ function parseTelegramWorkCenterReportStateValue(value: unknown): TelegramWorkCe
 
 function parseTelegramResourceReportStateValue(value: unknown): TelegramResourceReportState | null {
   if (!isRecord(value) || typeof value.step !== 'string') return null;
-  if (value.step === 'idle') return hasOnlyKeys(value, ['step']) ? { step: 'idle' } : null;
+  if (value.step === 'idle') {
+    const preferredLocale = parsePreferredLocale(value);
+    return hasOnlyKeys(value, ['step', 'preferredLocale']) && preferredLocale ? { step: 'idle', ...preferredLocale } : null;
+  }
   if (value.step === 'cancelled') return hasOnlyKeys(value, ['step']) ? { step: 'cancelled' } : null;
 
   const incident = 'incident' in value ? IncidentSummarySchema.safeParse(value.incident) : null;
   const base = parseConversationBase(value);
 
   if (value.step === 'awaitingIncident') {
-    if (!hasOnlyKeys(value, ['step', 'incidents', 'externalUserId', 'displayName']) || !base || !Array.isArray(value.incidents)) return null;
+    if (!hasOnlyKeys(value, ['step', 'incidents', 'externalUserId', 'displayName', 'preferredLocale']) || !base || !Array.isArray(value.incidents)) return null;
     const incidents = parseIncidentArray(value.incidents);
     return incidents ? { step: 'awaitingIncident', incidents, ...base } : null;
   }
 
   if (value.step === 'awaitingKind') {
-    if (!hasOnlyKeys(value, ['step', 'incident', 'externalUserId', 'displayName']) || !base || !incident?.success) return null;
+    if (!hasOnlyKeys(value, ['step', 'incident', 'externalUserId', 'displayName', 'preferredLocale']) || !base || !incident?.success) return null;
     return { step: 'awaitingKind', incident: incident.data, ...base };
   }
 
   if (value.step === 'awaitingCategory') {
-    if (!hasOnlyKeys(value, ['step', 'incident', 'externalUserId', 'displayName', 'reportKind']) || !base || !incident?.success) return null;
+    if (!hasOnlyKeys(value, ['step', 'incident', 'externalUserId', 'displayName', 'preferredLocale', 'reportKind']) || !base || !incident?.success) return null;
     const reportKind = parseReportKind(value.reportKind);
     return reportKind ? { step: 'awaitingCategory', incident: incident.data, ...base, reportKind } : null;
   }
 
   if (value.step === 'awaitingQuantity') {
-    if (!hasOnlyKeys(value, ['step', 'incident', 'externalUserId', 'displayName', 'reportKind', 'category']) || !base || !incident?.success || !isNonEmptyString(value.category)) return null;
+    if (!hasOnlyKeys(value, ['step', 'incident', 'externalUserId', 'displayName', 'preferredLocale', 'reportKind', 'category']) || !base || !incident?.success || !isNonEmptyString(value.category)) return null;
     const reportKind = parseReportKind(value.reportKind);
     return reportKind ? { step: 'awaitingQuantity', incident: incident.data, ...base, reportKind, category: value.category } : null;
   }
 
   if (value.step === 'awaitingUrgency') {
-    if (!hasOnlyKeys(value, ['step', 'incident', 'externalUserId', 'displayName', 'reportKind', 'category', 'quantityApprox']) || !base || !incident?.success || !isNonEmptyString(value.category) || !isNonEmptyString(value.quantityApprox)) return null;
+    if (!hasOnlyKeys(value, ['step', 'incident', 'externalUserId', 'displayName', 'preferredLocale', 'reportKind', 'category', 'quantityApprox']) || !base || !incident?.success || !isNonEmptyString(value.category) || !isNonEmptyString(value.quantityApprox)) return null;
     const reportKind = parseReportKind(value.reportKind);
     return reportKind ? { step: 'awaitingUrgency', incident: incident.data, ...base, reportKind, category: value.category, quantityApprox: value.quantityApprox } : null;
   }
 
   if (value.step === 'awaitingConstraints') {
-    if (!hasOnlyKeys(value, ['step', 'incident', 'externalUserId', 'displayName', 'reportKind', 'category', 'quantityApprox', 'urgency']) || !base || !incident?.success || !isNonEmptyString(value.category) || !isNonEmptyString(value.quantityApprox)) return null;
+    if (!hasOnlyKeys(value, ['step', 'incident', 'externalUserId', 'displayName', 'preferredLocale', 'reportKind', 'category', 'quantityApprox', 'urgency']) || !base || !incident?.success || !isNonEmptyString(value.category) || !isNonEmptyString(value.quantityApprox)) return null;
     const reportKind = parseReportKind(value.reportKind);
     const urgency = parseUrgency(value.urgency);
     return reportKind && urgency ? { step: 'awaitingConstraints', incident: incident.data, ...base, reportKind, category: value.category, quantityApprox: value.quantityApprox, urgency } : null;
@@ -687,7 +690,7 @@ function parseTelegramResourceReportStateValue(value: unknown): TelegramResource
 
   if (value.step === 'awaitingWorkCenter' || value.step === 'awaitingConfirmation') {
     const request = ResourceReportConnectedCreateRequestSchema.safeParse(value.request);
-    if (!hasOnlyKeys(value, ['step', 'incident', 'externalUserId', 'displayName', 'request']) || !base || !incident?.success || !request.success) return null;
+    if (!hasOnlyKeys(value, ['step', 'incident', 'externalUserId', 'displayName', 'preferredLocale', 'request']) || !base || !incident?.success || !request.success) return null;
     return { step: value.step, incident: incident.data, ...base, request: request.data };
   }
 
@@ -840,11 +843,21 @@ function parsePreferredLocale(value: Record<string, unknown>): { preferredLocale
 }
 
 function parseReportKind(value: unknown): ResourceReportKind | null {
-  return value === 'needed' || value === 'surplus' ? value : null;
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (['needed', 'need', 'necesario', 'necesaria', 'necesarios', 'necesarias', 'necesitado', 'necesitada'].includes(normalized)) return 'needed';
+  if (['surplus', 'available', 'offer', 'sobrante', 'sobrantes', 'disponible', 'disponibles', 'oferta'].includes(normalized)) return 'surplus';
+  return null;
 }
 
 function parseUrgency(value: unknown): ResourceReportUrgency | null {
-  return value === 'low' || value === 'medium' || value === 'high' || value === 'critical' ? value : null;
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (['low', 'baja', 'bajo'].includes(normalized)) return 'low';
+  if (['medium', 'media', 'medio'].includes(normalized)) return 'medium';
+  if (['high', 'alta', 'alto'].includes(normalized)) return 'high';
+  if (['critical', 'critica', 'crítica', 'critico', 'crítico'].includes(normalized)) return 'critical';
+  return null;
 }
 
 function parseDispatchStatus(value: unknown): DispatchTaskStatus | null {
@@ -916,7 +929,22 @@ function readCommandArgument(update: TelegramUpdateLike): string | null {
 }
 
 export function resolveTelegramLocale(update: TelegramUpdateLike, preferredLocale?: string | null): SupportedLocale {
-  return resolveLocaleFromCandidates([preferredLocale, update.message?.from?.language_code]);
+  return resolveLocaleFromCandidates([preferredLocale, inferTelegramLocaleFromText(update.message?.text), update.message?.from?.language_code]);
+}
+
+function inferTelegramLocaleFromText(text: string | null | undefined): SupportedLocale | null {
+  const normalized = text?.trim().toLowerCase() ?? '';
+  if (!normalized) return null;
+
+  if (/\b(tengo|d[oó]nde|necesitan|necesito|necesitamos|busco|quiero|reportar|ayuda|medicamentos|agua potable|comida|mantas)\b/.test(normalized)) {
+    return 'es';
+  }
+
+  if (/\b(i have|where|needed|need|looking for|searching for|available|surplus|medicine|water|food|blankets)\b/.test(normalized)) {
+    return 'en';
+  }
+
+  return null;
 }
 
 function localeName(locale: SupportedLocale, displayLocale: SupportedLocale): string {
@@ -1233,39 +1261,41 @@ export async function handleTelegramResourceReportFlow(
     async () => {
       const text = update.message?.text?.trim() ?? '';
       const command = resolveTelegramCommand(update);
+      const locale = resolveTelegramLocale(update, getPreferredLocaleFromState(state));
+      const languageResult = handleTelegramLanguageCommand(update, locale);
+      if (languageResult) return { state: withPreferredLocale(state, languageResult.locale), responseText: languageResult.responseText };
 
-      if (command === '/cancel') return { state: { step: 'cancelled' }, responseText: 'Resource report cancelled. Send /resource to begin again.' };
+      if (command === '/cancel') return { state: { step: 'cancelled' }, responseText: formatMessage(locale, 'telegram.resource.cancelled') };
       if (command === '/resource' || state.step === 'idle' || state.step === 'cancelled' || state.step === 'reported') {
-        return startResourceIncidentSelection(update, ports);
+        return startResourceIncidentSelection(update, ports, locale);
       }
 
       if (state.step === 'awaitingIncident') {
         const incident = selectIncident(state.incidents, text);
-        if (!incident) return { state, responseText: `Incident not found. Reply with a number or incident id from the list.
-      ${formatIncidentList(state.incidents)}` };
-        return { state: { step: 'awaitingKind', incident, externalUserId: state.externalUserId, displayName: state.displayName }, responseText: 'Is this resource needed or surplus? Reply needed or surplus.' };
+        if (!incident) return { state, responseText: formatMessage(locale, 'telegram.error.incident_not_found', { incidentList: formatIncidentList(state.incidents) }) };
+        return { state: { step: 'awaitingKind', incident, externalUserId: state.externalUserId, displayName: state.displayName, preferredLocale: locale }, responseText: formatMessage(locale, 'telegram.resource.kind.prompt') };
       }
 
       if (state.step === 'awaitingKind') {
         const reportKind = parseReportKind(text.toLowerCase());
-        if (!reportKind) return { state, responseText: 'Reply needed or surplus. Use /cancel to stop.' };
-        return { state: { step: 'awaitingCategory', incident: state.incident, externalUserId: state.externalUserId, displayName: state.displayName, reportKind }, responseText: 'Send the resource category exactly as operations uses it.' };
+        if (!reportKind) return { state, responseText: formatMessage(locale, 'telegram.resource.kind.invalid') };
+        return { state: { step: 'awaitingCategory', incident: state.incident, externalUserId: state.externalUserId, displayName: state.displayName, preferredLocale: locale, reportKind }, responseText: formatMessage(locale, 'telegram.resource.category.prompt') };
       }
 
       if (state.step === 'awaitingCategory') {
-        if (!text || text.startsWith('/')) return { state, responseText: 'Resource category is required. Send a category, or /cancel to stop.' };
-        return { state: { step: 'awaitingQuantity', incident: state.incident, externalUserId: state.externalUserId, displayName: state.displayName, reportKind: state.reportKind, category: text }, responseText: 'Send the approximate quantity.' };
+        if (!text || text.startsWith('/')) return { state, responseText: formatMessage(locale, 'telegram.resource.category.required') };
+        return { state: { step: 'awaitingQuantity', incident: state.incident, externalUserId: state.externalUserId, displayName: state.displayName, preferredLocale: locale, reportKind: state.reportKind, category: text }, responseText: formatMessage(locale, 'telegram.resource.quantity.prompt') };
       }
 
       if (state.step === 'awaitingQuantity') {
-        if (!text || text.startsWith('/')) return { state, responseText: 'Approximate quantity is required. Send a value like "20 blankets", or /cancel to stop.' };
-        return { state: { ...state, step: 'awaitingUrgency', quantityApprox: text }, responseText: 'Send urgency: low, medium, high, or critical.' };
+        if (!text || text.startsWith('/')) return { state, responseText: formatMessage(locale, 'telegram.resource.quantity.required') };
+        return { state: { ...state, step: 'awaitingUrgency', preferredLocale: locale, quantityApprox: text }, responseText: formatMessage(locale, 'telegram.resource.urgency.prompt') };
       }
 
       if (state.step === 'awaitingUrgency') {
         const urgency = parseUrgency(text.toLowerCase());
-        if (!urgency) return { state, responseText: 'Invalid urgency. Reply low, medium, high, or critical.' };
-        return { state: { ...state, step: 'awaitingConstraints', urgency }, responseText: 'Send optional restrictions separated by commas, or reply skip.' };
+        if (!urgency) return { state, responseText: formatMessage(locale, 'telegram.resource.urgency.invalid') };
+        return { state: { ...state, step: 'awaitingConstraints', preferredLocale: locale, urgency }, responseText: formatMessage(locale, 'telegram.resource.constraints.prompt') };
       }
 
       if (state.step === 'awaitingConstraints') {
@@ -1282,28 +1312,32 @@ export async function handleTelegramResourceReportFlow(
             reportKind: state.reportKind,
           },
         });
-        return { state: { step: 'awaitingWorkCenter', incident: state.incident, externalUserId: state.externalUserId, displayName: state.displayName, request }, responseText: 'Send a work center id for this report, or reply skip.' };
+        return { state: { step: 'awaitingWorkCenter', incident: state.incident, externalUserId: state.externalUserId, displayName: state.displayName, preferredLocale: locale, request }, responseText: formatMessage(locale, 'telegram.resource.work_center.prompt') };
       }
 
       if (state.step === 'awaitingWorkCenter') {
         const request = text && !isSkip(text) && !text.startsWith('/')
           ? ResourceReportConnectedCreateRequestSchema.parse({ ...state.request, payload: { ...state.request.payload, workCenterId: text } })
           : state.request;
-        return { state: { step: 'awaitingConfirmation', incident: state.incident, externalUserId: state.externalUserId, displayName: state.displayName, request }, responseText: formatResourceReportConfirmation(state.incident, request) };
+        return { state: { step: 'awaitingConfirmation', incident: state.incident, externalUserId: state.externalUserId, displayName: state.displayName, preferredLocale: locale, request }, responseText: formatResourceReportConfirmation(locale, state.incident, request) };
       }
 
       if (state.step === 'awaitingConfirmation') {
-        if (isCancellation(text)) return { state: { step: 'cancelled' }, responseText: 'Resource report cancelled. Send /resource to begin again.' };
-        if (!isConfirmation(text)) return { state, responseText: 'Reply yes to submit the resource report, no to cancel, or /cancel to stop.' };
+        if (isCancellation(text)) return { state: { step: 'cancelled' }, responseText: formatMessage(locale, 'telegram.resource.cancelled') };
+        if (!isConfirmation(text)) return { state, responseText: formatMessage(locale, 'telegram.resource.confirmation.required') };
         try {
           const response = await ports.createResourceReport(state.incident.incidentId, state.request);
-          return { state: { step: 'reported', response }, responseText: formatResourceReportSuccess(response) };
+          return { state: { step: 'reported', response }, responseText: formatResourceReportSuccess(locale, response) };
         } catch (error) {
-          return { state, responseText: formatResourceReportError(error) };
+          const errorCode = readErrorCode(error);
+          return {
+            state: errorCode === 'permission_denied' ? { step: 'cancelled' } : state,
+            responseText: formatResourceReportError(locale, error),
+          };
         }
       }
 
-      return { state, responseText: 'Send /resource to begin the resource report flow.' };
+      return { state, responseText: formatMessage(locale, 'telegram.resource.prompt') };
     },
   );
 }
@@ -1585,17 +1619,24 @@ async function startWorkCenterIncidentSelection(
 }
 
 
-async function startResourceIncidentSelection(update: TelegramUpdateLike, ports: TelegramResourceReportPorts): Promise<TelegramResourceReportFlowResult> {
+async function startResourceIncidentSelection(
+  update: TelegramUpdateLike,
+  ports: TelegramResourceReportPorts,
+  preferredLocale?: SupportedLocale,
+): Promise<TelegramResourceReportFlowResult> {
+  const locale = resolveTelegramLocale(update, preferredLocale);
   const externalUserId = getTelegramExternalUserId(update);
-  if (!externalUserId) return { state: { step: 'idle' }, responseText: 'Telegram user id is required to report resources.' };
+  if (!externalUserId) return { state: { step: 'idle', preferredLocale: locale }, responseText: formatMessage(locale, 'telegram.resource.user.required') };
 
   try {
     const { incidents } = await ports.listIncidents();
-    if (incidents.length === 0) return { state: { step: 'idle' }, responseText: 'No active incidents are available right now.' };
-    return { state: { step: 'awaitingIncident', incidents, externalUserId, displayName: getTelegramDisplayName(update) }, responseText: `Choose an incident before reporting resources:
-${formatIncidentList(incidents)}` };
+    if (incidents.length === 0) return { state: { step: 'idle', preferredLocale: locale }, responseText: formatMessage(locale, 'telegram.error.no_active_incidents') };
+    return {
+      state: { step: 'awaitingIncident', incidents, externalUserId, displayName: getTelegramDisplayName(update), preferredLocale: locale },
+      responseText: formatMessage(locale, 'telegram.resource.start', { incidentList: formatIncidentList(incidents) }),
+    };
   } catch {
-    return { state: { step: 'idle' }, responseText: 'Could not load incidents from the backend. Please try again later.' };
+    return { state: { step: 'idle', preferredLocale: locale }, responseText: formatMessage(locale, 'telegram.error.incidents_load_failed') };
   }
 }
 
@@ -1679,11 +1720,11 @@ function formatJoinSuccess(locale: SupportedLocale, response: IncidentJoinRespon
 }
 
 function isConfirmation(text: string): boolean {
-  return ['yes', 'y', 'confirm', 'ok'].includes(text.trim().toLowerCase());
+  return ['yes', 'y', 'confirm', 'ok', 'si', 'sí', 'confirmar'].includes(text.trim().toLowerCase());
 }
 
 function isCancellation(text: string): boolean {
-  return ['no', 'n', 'cancel'].includes(text.trim().toLowerCase());
+  return ['no', 'n', 'cancel', 'cancelar'].includes(text.trim().toLowerCase());
 }
 
 function isStrongSosConfirmation(text: string): boolean {
@@ -1731,7 +1772,7 @@ function parseOptionalList(text: string): string[] {
 }
 
 function isSkip(text: string): boolean {
-  return ['skip', 'none', 'no', 'n/a'].includes(text.trim().toLowerCase());
+  return ['skip', 'none', 'no', 'n/a', 'omitir', 'saltar', 'ninguna', 'ninguno'].includes(text.trim().toLowerCase());
 }
 
 function normalizeDispatchStatusText(text: string): string {
@@ -1753,34 +1794,50 @@ function formatDispatchTaskList(tasks: DispatchTask[]): string {
   return tasks.map((task, index) => `${index + 1}. ${task.category} · ${task.quantityApprox} · ${task.status} (${task.dispatchTaskId})`).join('\n');
 }
 
-function formatResourceReportConfirmation(incident: IncidentSummary, request: ResourceReportConnectedCreateRequest): string {
+function formatResourceReportKind(locale: SupportedLocale, reportKind: ResourceReportKind): string {
+  if (locale === 'es') return reportKind === 'needed' ? 'necesario' : 'sobrante';
+  return reportKind;
+}
+
+function formatResourceUrgency(locale: SupportedLocale, urgency: ResourceReportUrgency): string {
+  if (locale !== 'es') return urgency;
+  const labels: Record<ResourceReportUrgency, string> = {
+    low: 'baja',
+    medium: 'media',
+    high: 'alta',
+    critical: 'crítica',
+  };
+  return labels[urgency];
+}
+
+function formatResourceReportConfirmation(locale: SupportedLocale, incident: IncidentSummary, request: ResourceReportConnectedCreateRequest): string {
   const payload = request.payload;
-  return [
-    'Confirm resource report:',
-    `Incident: ${incident.name}`,
-    `Kind: ${payload.reportKind}`,
-    `Category: ${payload.category}`,
-    `Quantity: ${payload.quantityApprox}`,
-    `Urgency: ${payload.urgency}`,
-    `Restrictions: ${payload.constraints.length ? payload.constraints.join(', ') : 'none'}`,
-    `Work center: ${payload.workCenterId ?? 'not linked'}`,
-    'Reply yes to submit, or /cancel to stop.',
-  ].join('\n');
+  return formatMessage(locale, 'telegram.resource.confirmation', {
+    incidentName: incident.name,
+    reportKind: formatResourceReportKind(locale, payload.reportKind),
+    category: payload.category,
+    quantityApprox: payload.quantityApprox,
+    urgency: formatResourceUrgency(locale, payload.urgency),
+    constraints: payload.constraints.length ? payload.constraints.join(', ') : formatMessage(locale, 'telegram.resource.none'),
+    workCenter: payload.workCenterId ?? formatMessage(locale, 'telegram.resource.not_linked'),
+  });
 }
 
-function formatResourceReportSuccess(response: ResourceReportCreateResponse): string {
-  return [
-    `Resource ${response.resourceReport.reportKind} reported: ${response.resourceReport.category} (${response.resourceReport.quantityApprox}).`,
-    `Urgency: ${response.resourceReport.urgency}`,
-    `Audit: ${response.audit.auditEventId}`,
-  ].join('\n');
+function formatResourceReportSuccess(locale: SupportedLocale, response: ResourceReportCreateResponse): string {
+  return formatMessage(locale, 'telegram.resource.success', {
+    reportKind: formatResourceReportKind(locale, response.resourceReport.reportKind),
+    category: response.resourceReport.category,
+    quantityApprox: response.resourceReport.quantityApprox,
+    urgency: formatResourceUrgency(locale, response.resourceReport.urgency),
+    auditEventId: response.audit.auditEventId,
+  });
 }
 
-function formatResourceReportError(error: unknown): string {
+function formatResourceReportError(locale: SupportedLocale, error: unknown): string {
   const code = readErrorCode(error);
-  if (code === 'permission_denied') return 'Permission denied. Join this incident first with /start, then report the resource again.';
-  if (code === 'invalid_payload') return 'Invalid resource report. Send /resource and try again with category, quantity, urgency and kind.';
-  return 'Could not report the resource. The backend rejected or failed the request.';
+  if (code === 'permission_denied') return formatMessage(locale, 'telegram.resource.error.permission_denied');
+  if (code === 'invalid_payload') return formatMessage(locale, 'telegram.resource.error.invalid_payload');
+  return formatMessage(locale, 'telegram.resource.error.default');
 }
 
 function formatDispatchTaskSuccess(response: DispatchTaskResponse): string {

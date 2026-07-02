@@ -198,8 +198,8 @@ const validJoinStates = [
 
 const validResourceStates = [
   { step: 'idle' },
-  { step: 'awaitingIncident', incidents: incidentListHappyFixture.incidents, externalUserId: '1001', displayName: 'Field' },
-  { step: 'awaitingKind', incident: incidentListHappyFixture.incidents[0], externalUserId: '1001', displayName: 'Field' },
+  { step: 'awaitingIncident', incidents: incidentListHappyFixture.incidents, externalUserId: '1001', displayName: 'Field', preferredLocale: 'es' },
+  { step: 'awaitingKind', incident: incidentListHappyFixture.incidents[0], externalUserId: '1001', displayName: 'Field', preferredLocale: 'es' },
   { step: 'awaitingCategory', incident: incidentListHappyFixture.incidents[0], externalUserId: '1001', displayName: 'Field', reportKind: 'needed' },
   { step: 'awaitingQuantity', incident: incidentListHappyFixture.incidents[0], externalUserId: '1001', displayName: 'Field', reportKind: 'needed', category: 'water' },
   { step: 'awaitingUrgency', incident: incidentListHappyFixture.incidents[0], externalUserId: '1001', displayName: 'Field', reportKind: 'needed', category: 'water', quantityApprox: '20 bottles' },
@@ -276,12 +276,13 @@ async function advance(
 async function advanceResource(
   inputs: string[],
   ports = createResourcePorts(),
+  languageCode = 'en',
 ): Promise<{ state: TelegramResourceReportState; responseText: string; ports: TelegramResourceReportPorts }> {
   let state: TelegramResourceReportState = { step: 'idle' };
   let responseText = '';
 
   for (const input of inputs) {
-    const result = await handleTelegramResourceReportFlow(state, telegramUserUpdate(input), ports);
+    const result = await handleTelegramResourceReportFlow(state, telegramUserUpdate(input, languageCode), ports);
     state = result.state;
     responseText = result.responseText;
   }
@@ -755,12 +756,28 @@ describe('telegram channel flows', () => {
     expect(ResourceReportConnectedCreateRequestSchema.parse(vi.mocked(ports.createResourceReport).mock.calls[0]?.[1]).payload.reportKind).toBe('needed');
   });
 
-  it('keeps resource report state and reports backend errors visibly', async () => {
-    const ports = createResourcePorts({ createResourceReport: vi.fn().mockRejectedValue({ error: 'permission_denied' }) });
-    const { state, responseText } = await advanceResource(['/resource', '1', 'surplus', 'blankets', '10 boxes', 'medium', 'skip', 'skip', 'yes'], ports);
+  it('starts the resource flow in Spanish for clear Spanish resource text', async () => {
+    const result = await handleTelegramResourceReportFlow({ step: 'idle' }, telegramUserUpdate('tengo medicamentos, dónde la necesitan?', 'ca'), createResourcePorts());
 
-    expect(state.step).toBe('awaitingConfirmation');
-    expect(responseText).toContain('Permission denied');
+    expect(result.state).toMatchObject({ step: 'awaitingIncident', preferredLocale: 'es' });
+    expect(result.responseText).toContain('Elige un incidente antes de reportar recursos');
+    expect(result.responseText).not.toContain('Choose an incident before reporting resources');
+  });
+
+  it('starts the resource flow in English for clear English resource text', async () => {
+    const result = await handleTelegramResourceReportFlow({ step: 'idle' }, telegramUserUpdate('I have medicine, where is it needed?', 'ca'), createResourcePorts());
+
+    expect(result.state).toMatchObject({ step: 'awaitingIncident', preferredLocale: 'en' });
+    expect(result.responseText).toContain('Choose an incident before reporting resources');
+    expect(result.responseText).not.toContain('Elige un incidente antes de reportar recursos');
+  });
+
+  it('cancels the resource flow on permission denied so API persistence clears it', async () => {
+    const ports = createResourcePorts({ createResourceReport: vi.fn().mockRejectedValue({ error: 'permission_denied' }) });
+    const { state, responseText } = await advanceResource(['/resource', '1', 'sobrante', 'mantas', '10 cajas', 'media', 'omitir', 'omitir', 'sí'], ports, 'es');
+
+    expect(state.step).toBe('cancelled');
+    expect(responseText).toContain('Permiso denegado');
   });
 
   it('runs the /dispatch happy path using canonical dispatch statuses', async () => {

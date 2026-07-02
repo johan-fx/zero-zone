@@ -112,6 +112,7 @@ import {
   isTerminalTelegramSosState,
   isTerminalTelegramWorkCenterReportState,
   resolveTelegramCommand,
+  resolveTelegramLocale,
   safeParseTelegramDispatchTaskState,
   safeParseTelegramFamilyReunificationState,
   safeParseTelegramIncidentJoinState,
@@ -3632,6 +3633,8 @@ async function routeClassifiedTelegramIntent(
     return null;
   }
 
+  const preferredLocale = resolveTelegramLocale(update);
+
   const classification = await classifyTelegramIntent({
     ai,
     text,
@@ -3639,18 +3642,18 @@ async function routeClassifiedTelegramIntent(
     confidenceThreshold: config.confidenceThreshold,
     context: {
       command: null,
-      locale: update.message?.from?.language_code,
+      locale: preferredLocale,
       messageType: update.message?.chat?.type,
     },
   });
 
   if (!isActionableTelegramIntentClassification(classification, config.confidenceThreshold)) {
     emitTelegramIntentRouterTelemetry('rejected', `classification:${classification.intent}`);
-    return buildTelegramIntentClarificationResponse();
+    return buildTelegramIntentClarificationResponse(preferredLocale);
   }
 
   emitTelegramIntentRouterTelemetry('accepted', `classification:${classification.intent}`);
-  return routeAcceptedTelegramIntent(db, update, classification, stateKeys, telemetry);
+  return routeAcceptedTelegramIntent(db, update, classification, stateKeys, preferredLocale, telemetry);
 }
 
 async function routeAcceptedTelegramIntent(
@@ -3658,13 +3661,14 @@ async function routeAcceptedTelegramIntent(
   update: TelegramUpdateLike,
   classification: TelegramIntentClassification & { intent: Exclude<TelegramIntentClassification['intent'], 'unknown' | 'ambiguous'> },
   stateKeys: TelegramConversationStateKeys,
+  preferredLocale: SupportedLocale,
   telemetry?: ChannelTelemetryPort,
 ): Promise<string> {
   switch (classification.intent) {
     case 'resource': {
       await deleteTelegramConversationStates(db, [stateKeys.workCenterStateKey, stateKeys.dispatchStateKey, stateKeys.sosStateKey, stateKeys.familyStateKey]);
       const responseText = await handleTelegramResourceConversation(db, update, stateKeys.resourceStateKey, undefined, telemetry);
-      const context = buildTelegramResourceIntentContext(parseTelegramResourceIntentFacts(classification));
+      const context = buildTelegramResourceIntentContext(parseTelegramResourceIntentFacts(classification), preferredLocale);
       return context ? `${context}\n\n${responseText}` : responseText;
     }
     case 'workcenter':
@@ -3713,44 +3717,73 @@ function parseTelegramResourceIntentFacts(classification: TelegramIntentClassifi
   return parsed.success ? parsed.data : null;
 }
 
-function buildTelegramResourceIntentContext(facts: TelegramResourceIntentFacts | null): string | null {
+function buildTelegramResourceIntentContext(facts: TelegramResourceIntentFacts | null, locale: SupportedLocale): string | null {
   if (!facts) {
     return null;
   }
 
-  const resourceLabel = resolveTelegramResourceIntentLabel(facts);
+  const resourceLabel = resolveTelegramResourceIntentLabel(facts, locale);
   if (!resourceLabel) {
     return null;
   }
 
   if (facts.resourceDirection === 'offer' || facts.implicitQuestion === 'where_needed') {
-    return `Entiendo que tienes ${resourceLabel} disponible. Te guiaré para registrarlo de forma segura; el reporte no se creará hasta que confirmes los datos.`;
+    if (locale === 'es') {
+      const agreement = resolveSpanishResourceAgreement(facts, resourceLabel);
+      return `Entiendo que tienes ${resourceLabel} ${agreement.available}. Te guiaré para ${agreement.registerPronoun} de forma segura; el reporte no se creará hasta que confirmes los datos.`;
+    }
+
+    return `I understand you have ${resourceLabel} available. I’ll guide you to register it safely; the report will not be created until you confirm the details.`;
   }
 
   if (facts.resourceDirection === 'need' || facts.implicitQuestion === 'where_available') {
-    return `Entiendo que necesitas ${resourceLabel}. Te guiaré para registrarlo de forma segura; el reporte no se creará hasta que confirmes los datos.`;
+    return locale === 'es'
+      ? `Entiendo que necesitas ${resourceLabel}. Te guiaré para registrarlo de forma segura; el reporte no se creará hasta que confirmes los datos.`
+      : `I understand you need ${resourceLabel}. I’ll guide you to register it safely; the report will not be created until you confirm the details.`;
   }
 
-  return `Entiendo que quieres reportar información sobre ${resourceLabel}. Te guiaré con las preguntas obligatorias antes de crear cualquier reporte.`;
+  return locale === 'es'
+    ? `Entiendo que quieres reportar información sobre ${resourceLabel}. Te guiaré con las preguntas obligatorias antes de crear cualquier reporte.`
+    : `I understand you want to report information about ${resourceLabel}. I’ll guide you through the required questions before creating any report.`;
 }
 
-function resolveTelegramResourceIntentLabel(facts: TelegramResourceIntentFacts): string | null {
+function resolveSpanishResourceAgreement(
+  facts: TelegramResourceIntentFacts,
+  resourceLabel: string,
+): { available: 'disponible' | 'disponibles'; registerPronoun: 'registrarlo' | 'registrarlos' } {
+  const normalizedLabel = resourceLabel.trim().toLowerCase();
+  const plural = /(?:s|es)$/.test(normalizedLabel) && !/(?:gas|víveres)$/.test(normalizedLabel);
+  return plural ? { available: 'disponibles', registerPronoun: 'registrarlos' } : { available: 'disponible', registerPronoun: 'registrarlo' };
+}
+
+function resolveTelegramResourceIntentLabel(facts: TelegramResourceIntentFacts, locale: SupportedLocale): string | null {
   const explicitLabel = facts.resourceLabel?.trim();
   if (explicitLabel) {
     return explicitLabel;
   }
 
-  const fallbackLabels: Partial<Record<TelegramResourceIntentFacts['resourceType'], string>> = {
-    water: 'agua',
-    food: 'comida',
-    medicine: 'medicinas',
-    shelter: 'refugio',
-    equipment: 'equipamiento',
-    transport: 'transporte',
-    fuel: 'combustible',
+  const fallbackLabels: Record<SupportedLocale, Partial<Record<TelegramResourceIntentFacts['resourceType'], string>>> = {
+    es: {
+      water: 'agua',
+      food: 'comida',
+      medicine: 'medicamentos',
+      shelter: 'refugio',
+      equipment: 'equipamiento',
+      transport: 'transporte',
+      fuel: 'combustible',
+    },
+    en: {
+      water: 'water',
+      food: 'food',
+      medicine: 'medicine',
+      shelter: 'shelter',
+      equipment: 'equipment',
+      transport: 'transport',
+      fuel: 'fuel',
+    },
   };
 
-  return fallbackLabels[facts.resourceType] ?? null;
+  return fallbackLabels[locale][facts.resourceType] ?? null;
 }
 
 function getTelegramIntentAiBinding(env: Env): TelegramIntentAiBinding | null {
@@ -3770,7 +3803,11 @@ function emitTelegramIntentRouterTelemetry(result: 'accepted' | 'rejected' | 'by
   });
 }
 
-function buildTelegramIntentClarificationResponse(): string {
+function buildTelegramIntentClarificationResponse(locale: SupportedLocale): string {
+  if (locale === 'es') {
+    return 'No estoy seguro de qué operación necesitas. Responde con /resource, /workcenter, /reunificacion, /sos, /dispatch o /start.';
+  }
+
   return 'I’m not sure which operation you need. Reply with /resource, /workcenter, /reunificacion, /sos, /dispatch, or /start.';
 }
 
