@@ -4031,7 +4031,13 @@ function buildTelegramAcceptedIntentFlowContext(
     }
     case 'workcenter': {
       const facts = parseTelegramWorkCenterIntentFacts(classification);
-      return { sourceIntent: 'workcenter', preferredLocale: locale, facts, prefill: facts ?? {}, confidence: classification.confidence };
+      return {
+        sourceIntent: 'workcenter',
+        preferredLocale: locale,
+        facts,
+        prefill: facts ? buildTelegramWorkCenterIntentPrefill(facts) : {},
+        confidence: classification.confidence,
+      };
     }
     case 'family_reunification': {
       const facts = parseTelegramFamilyReunificationIntentFacts(classification);
@@ -4066,6 +4072,18 @@ function parseTelegramWorkCenterIntentFacts(
   if (classification.intent !== 'workcenter') return null;
   const parsed = TelegramWorkCenterIntentFactsSchema.safeParse(classification.extractedFacts);
   return parsed.success ? parsed.data : null;
+}
+
+function buildTelegramWorkCenterIntentPrefill(facts: TelegramWorkCenterIntentFacts): Partial<TelegramWorkCenterIntentFacts> {
+  const prefill: Partial<TelegramWorkCenterIntentFacts> = {};
+
+  if (facts.name) prefill.name = facts.name;
+  if (facts.locationHint) prefill.locationHint = facts.locationHint;
+  if (facts.priority) prefill.priority = facts.priority;
+  if (facts.initialNeed) prefill.initialNeed = facts.initialNeed;
+  if (facts.surplus) prefill.surplus = facts.surplus;
+
+  return prefill;
 }
 
 function parseTelegramFamilyReunificationIntentFacts(

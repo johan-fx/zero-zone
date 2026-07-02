@@ -34,6 +34,9 @@ type SentStep = {
 
 type RunnerResult = {
   marker: string;
+  commandWorkCenterMarker: string;
+  naturalWorkCenterMarker: string;
+  preConfirmationMarkerVisible?: boolean;
   botUsername: string;
   incidentId: string;
   cellId: string;
@@ -64,13 +67,17 @@ export async function authenticateTelegramSession(): Promise<void> {
 export async function runTelegramStagingFlow(options: RunnerOptions = {}): Promise<RunnerResult> {
   const env = readRequiredEnv();
   const marker = options.marker ?? `e2e-${Date.now()}`;
-  const safeSteps = buildSafeTelegramSequence(env, marker);
+  const commandWorkCenterMarker = `${marker}-command-wc`;
+  const naturalWorkCenterMarker = `${marker}-natural-wc`;
+  const safeSteps = buildSafeTelegramSequence(env, { marker, commandWorkCenterMarker, naturalWorkCenterMarker });
   const sensitiveSteps = buildSensitiveTelegramHelpers(marker).map((step) => ({ ...step, skipped: !options.includeSensitiveFlows }));
   const steps = [...safeSteps, ...sensitiveSteps];
 
   if (options.dryRun) {
     return {
-      marker,
+      marker: naturalWorkCenterMarker,
+      commandWorkCenterMarker,
+      naturalWorkCenterMarker,
       botUsername: env.TELEGRAM_E2E_BOT_USERNAME,
       incidentId: env.E2E_INCIDENT_ID,
       cellId: env.E2E_CELL_ID,
@@ -82,12 +89,17 @@ export async function runTelegramStagingFlow(options: RunnerOptions = {}): Promi
   const client = await createTelegramClient(env, { requireInteractiveAuth: false });
   const bot = await client.getEntity(env.TELEGRAM_E2E_BOT_USERNAME);
   const sentSteps: SentStep[] = [];
+  let preConfirmationMarkerVisible: boolean | undefined;
 
   try {
     for (const step of steps) {
       if (step.skipped) {
         sentSteps.push(step);
         continue;
+      }
+
+      if (step.label === 'natural-workcenter-confirmation') {
+        preConfirmationMarkerVisible = await findMarkerInStagingApi(naturalWorkCenterMarker, env);
       }
 
       const botReplyPreview = await sendMessageAndReadReply(client, bot, step.message, options.waitMs ?? 8_000);
@@ -100,7 +112,10 @@ export async function runTelegramStagingFlow(options: RunnerOptions = {}): Promi
   }
 
   return {
-    marker,
+    marker: naturalWorkCenterMarker,
+    commandWorkCenterMarker,
+    naturalWorkCenterMarker,
+    preConfirmationMarkerVisible,
     botUsername: env.TELEGRAM_E2E_BOT_USERNAME,
     incidentId: env.E2E_INCIDENT_ID,
     cellId: env.E2E_CELL_ID,
@@ -185,7 +200,8 @@ async function persistSession(env: RequiredEnv, client: TelegramClient): Promise
   await writeFile(env.TELEGRAM_E2E_SESSION_FILE, `${session}\n`, { mode: 0o600 });
 }
 
-function buildSafeTelegramSequence(env: RequiredEnv, marker: string): SentStep[] {
+function buildSafeTelegramSequence(env: RequiredEnv, markers: { marker: string; commandWorkCenterMarker: string; naturalWorkCenterMarker: string }): SentStep[] {
+  const { marker, commandWorkCenterMarker, naturalWorkCenterMarker } = markers;
   return [
     { label: 'start', message: '/start' },
     { label: 'join-incident', message: env.E2E_INCIDENT_ID },
@@ -195,8 +211,12 @@ function buildSafeTelegramSequence(env: RequiredEnv, marker: string): SentStep[]
     { label: 'language-selection', message: 'es' },
     { label: 'workcenter-command', message: '/workcenter' },
     { label: 'workcenter-incident', message: env.E2E_INCIDENT_ID },
-    { label: 'workcenter-name', message: `${marker} staging logistics point` },
+    { label: 'workcenter-name', message: `${commandWorkCenterMarker} staging logistics point` },
     { label: 'workcenter-confirmation', message: 'yes' },
+    { label: 'natural-workcenter-phrase', message: `El centro de trabajo se llama ${naturalWorkCenterMarker}. Está en la escuela, prioridad alta, y necesita medicamentos.` },
+    { label: 'natural-workcenter-incident', message: env.E2E_INCIDENT_ID },
+    { label: 'natural-workcenter-name-correction', message: `name: ${naturalWorkCenterMarker} medical post` },
+    { label: 'natural-workcenter-confirmation', message: 'yes' },
     { label: 'resource-command', message: '/resource' },
     { label: 'resource-incident', message: env.E2E_INCIDENT_ID },
     { label: 'resource-kind', message: 'surplus' },

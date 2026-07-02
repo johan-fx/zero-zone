@@ -15,7 +15,7 @@ function createAi(response: unknown): TelegramIntentAiBinding & { run: ReturnTyp
 }
 
 describe('telegram intent classifier', () => {
-  it('uses deterministic Workers AI JSON classification defaults and typed resource schema hints', async () => {
+  it('uses deterministic Workers AI JSON classification defaults and typed schema hints', async () => {
     const ai = createAi({
       choices: [
         {
@@ -49,7 +49,7 @@ describe('telegram intent classifier', () => {
       DEFAULT_TELEGRAM_INTENT_MODEL,
       expect.objectContaining({
         temperature: 0,
-        max_tokens: 220,
+        max_tokens: 280,
         response_format: expect.objectContaining({ type: 'json_schema' }),
       }),
     );
@@ -58,7 +58,8 @@ describe('telegram intent classifier', () => {
     const request = firstCall[1];
     const messages = request.messages as Array<{ role: string; content: string }>;
     expect(messages[0]?.content).toContain('"tengo agua potable, dónde la necesitan?" => intent resource');
-    expect(messages[0]?.content).toContain('"el centro norte está lleno" => intent workcenter');
+    expect(messages[0]?.content).toContain('"hay un puesto médico en la escuela con prioridad alta y necesitan medicamentos" => intent workcenter');
+    expect(messages[0]?.content).toContain('Never geocode locationHint or output coordinates');
     expect(messages[0]?.content).toContain('"found a separated child near gate 2" => intent family_reunification');
     expect(messages[0]?.content).toContain('"hay dos personas atrapadas en la escalera este" => intent sos');
     expect(messages[0]?.content).toContain('"equipo en camino al almacén" => intent dispatch');
@@ -84,7 +85,10 @@ describe('telegram intent classifier', () => {
                 enum: expect.arrayContaining(['capacity', 'status_update', 'request_join']),
               }),
               status: expect.objectContaining({ enum: expect.arrayContaining(['active', 'en_route']) }),
-              priorityHint: expect.objectContaining({ enum: ['low', 'medium', 'high', 'critical'] }),
+              name: expect.objectContaining({ type: 'string' }),
+              priority: expect.objectContaining({ enum: ['low', 'medium', 'high', 'critical'] }),
+              initialNeed: expect.objectContaining({ type: 'string' }),
+              surplus: expect.objectContaining({ type: 'string' }),
               caseType: expect.objectContaining({ enum: ['missing_person', 'found_person', 'separated_group', 'reunification_info', 'unknown'] }),
               subjectType: expect.objectContaining({ enum: ['child', 'adult', 'elderly', 'group', 'unknown'] }),
               severity: expect.objectContaining({ enum: ['critical', 'medical', 'security', 'trapped', 'other'] }),
@@ -125,6 +129,45 @@ describe('telegram intent classifier', () => {
     await expect(classifyTelegramIntent({ ai, text })).resolves.toMatchObject({
       intent: 'resource',
       confidence: 0.91,
+      extractedFacts,
+    });
+  });
+
+  it.each([
+    [
+      'hay un puesto médico en la escuela con prioridad alta y necesitan medicamentos',
+      {
+        signal: 'availability',
+        name: 'puesto médico',
+        locationHint: 'escuela',
+        priority: 'high',
+        initialNeed: 'medicamentos',
+        implicitQuestion: 'none',
+      },
+    ],
+    [
+      'north shelter is active and has spare cots',
+      {
+        signal: 'availability',
+        status: 'active',
+        name: 'north shelter',
+        surplus: 'cots',
+        implicitQuestion: 'none',
+      },
+    ],
+  ])('preserves typed workcenter prefill facts for "%s"', async (text, extractedFacts) => {
+    const ai = createAi({
+      response: {
+        intent: 'workcenter',
+        confidence: 0.93,
+        reason: 'The user is describing a work center.',
+        extractedFacts,
+      },
+    });
+
+    await expect(classifyTelegramIntent({ ai, text })).resolves.toMatchObject({
+      intent: 'workcenter',
+      confidence: 0.93,
       extractedFacts,
     });
   });

@@ -13,6 +13,7 @@ import {
   SosAlertCreateResponseSchema,
   SosConnectedCreateRequestSchema,
   WorkCenterConnectedCreateRequestSchema,
+  WorkCenterPrioritySchema,
   WorkCenterCreateResponseSchema,
   type IncidentSummary,
 } from '@zona-cero/contracts';
@@ -33,6 +34,7 @@ import type {
   TelegramResourceNeedRecommendation,
   TelegramResourceReportState,
   TelegramSosState,
+  TelegramWorkCenterPrefill,
   TelegramWorkCenterReportState,
 } from './types';
 
@@ -344,7 +346,7 @@ function parseTelegramWorkCenterReportStateValue(value: unknown): TelegramWorkCe
 
   if (value.step === 'awaitingIncident') {
     if (
-      !hasOnlyKeys(value, ['step', 'incidents', 'externalUserId', 'displayName']) ||
+      !hasOnlyKeys(value, ['step', 'incidents', 'externalUserId', 'displayName', 'prefill']) ||
       typeof value.externalUserId !== 'string' ||
       value.externalUserId.length === 0 ||
       !isOptionalString(value.displayName) ||
@@ -362,18 +364,20 @@ function parseTelegramWorkCenterReportStateValue(value: unknown): TelegramWorkCe
       incidents.push(incident.data);
     }
 
+    const prefill = parseWorkCenterPrefill(value.prefill);
     return {
       step: 'awaitingIncident',
       incidents,
       externalUserId: value.externalUserId,
       ...(value.displayName ? { displayName: value.displayName } : {}),
+      ...(prefill ? { prefill } : {}),
     };
   }
 
   if (value.step === 'awaitingName') {
     const incident = IncidentSummarySchema.safeParse(value.incident);
     if (
-      !hasOnlyKeys(value, ['step', 'incident', 'externalUserId', 'displayName']) ||
+      !hasOnlyKeys(value, ['step', 'incident', 'externalUserId', 'displayName', 'prefill']) ||
       typeof value.externalUserId !== 'string' ||
       value.externalUserId.length === 0 ||
       !isOptionalString(value.displayName) ||
@@ -382,11 +386,13 @@ function parseTelegramWorkCenterReportStateValue(value: unknown): TelegramWorkCe
       return null;
     }
 
+    const prefill = parseWorkCenterPrefill(value.prefill);
     return {
       step: 'awaitingName',
       incident: incident.data,
       externalUserId: value.externalUserId,
       ...(value.displayName ? { displayName: value.displayName } : {}),
+      ...(prefill ? { prefill } : {}),
     };
   }
 
@@ -425,6 +431,24 @@ function parseTelegramWorkCenterReportStateValue(value: unknown): TelegramWorkCe
   return null;
 }
 
+
+
+function parseWorkCenterPrefill(value: unknown): TelegramWorkCenterPrefill | null {
+  if (value === undefined) return null;
+  if (!isRecord(value) || !hasOnlyKeys(value, ['name', 'description', 'priority', 'initialNeed', 'surplus'])) return null;
+
+  const priority = value.priority === undefined ? undefined : WorkCenterPrioritySchema.safeParse(value.priority);
+  if (priority && !priority.success) return null;
+
+  const prefill: TelegramWorkCenterPrefill = {};
+  if (isNonEmptyString(value.name)) prefill.name = value.name;
+  if (isNonEmptyString(value.description)) prefill.description = value.description;
+  if (priority?.success) prefill.priority = priority.data;
+  if (isNonEmptyString(value.initialNeed)) prefill.initialNeed = value.initialNeed;
+  if (isNonEmptyString(value.surplus)) prefill.surplus = value.surplus;
+
+  return Object.keys(prefill).length > 0 ? prefill : null;
+}
 
 function parseTelegramResourceReportStateValue(value: unknown): TelegramResourceReportState | null {
   if (!isRecord(value) || typeof value.step !== 'string') return null;

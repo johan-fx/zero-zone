@@ -804,16 +804,17 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 |---|---|---|---|---|
 | A | UX conversacional de prefill, corrección de campos faltantes y confirmación localizada. | Facts validados de B. | Crear work centers sin confirmación del usuario. | Flow que salta preguntas ya contestadas y pide solo lo que falte. |
 | B | Schema `TelegramWorkCenterIntentFacts`, parser API y mapping a `WorkCenterConnectedCreateRequest`. | Necesidades de A. | Resolver geocoding/rutas en esta slice. | Facts normalizados: name/locationHint/priority/initialNeed/surplus. |
-| C | No aplica directamente. | N/A | N/A | N/A |
+| C | Fresh compatibility review native/offline y E2E marker safety. | Contratos de B y flujo Telegram de A. | Cambiar UX nativa o reinterpretar `locationHint` como coordenadas. | Confirmación de que `work_center.create` sigue compatible offline y que facts Telegram no elevan estado/confianza. |
 
 | Equipo | Checklist |
 |---|---|
-| A | ⬜ Aceptar contexto prefill en `handleTelegramWorkCenterReportFlow`. |
-| A | ⬜ Saltar `awaitingName` si hay nombre suficiente y pedir confirmación de resumen. |
-| A | ⬜ Pedir campos faltantes con copy ES/EN y permitir corrección. |
-| B | ⬜ Extraer `name`, `locationHint`, `priority`, `initialNeed`, `surplus` y `implicitQuestion`. |
-| B | ⬜ Mantener permisos/auditoría existentes en `createConnectedWorkCenter`. |
-| Todos | ⬜ Añadir tests de mensaje natural ES/EN y fallback cuando facts incompletos. |
+| A | 🟢 Aceptar contexto prefill en `handleTelegramWorkCenterReportFlow`. |
+| A | 🟢 Saltar `awaitingName` si hay nombre suficiente y pedir confirmación de resumen. |
+| A | 🟢 Pedir campos faltantes con copy ES/EN y permitir corrección. |
+| B | 🟢 Extraer `name`, `locationHint`, `priority`, `initialNeed`, `surplus` y `implicitQuestion`. |
+| B | 🟢 Mantener permisos/auditoría existentes en `createConnectedWorkCenter`. |
+| C | 🟢 Revisar compatibilidad mobile/offline: no hay nuevos required fields en `WorkCenterConnectedCreateRequest`; `locationHint` queda como `description`, no como `payload.location`. |
+| Todos | 🟢 Añadir tests de mensaje natural ES/EN y fallback cuando facts incompletos. |
 
 **Definition of Done**
 
@@ -832,6 +833,23 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 - `pnpm --filter @zona-cero/telegram-channel test:strict`
 - `pnpm --filter @zona-cero/api exec vitest run src/index.test.ts src/telegram-intent-classifier.test.ts`
 - Smoke local webhook con mensaje natural de work center.
+
+**Cierre Slice 15**
+
+- `/workcenter` acepta contexto natural de facts y conserva confirmación explícita antes de persistir.
+- `WorkCenterConnectedCreateRequest` no añade campos obligatorios y mantiene el payload offline-compatible usado por mobile.
+- `locationHint` se transforma solo en `payload.description` (`Location hint: ...`); no se genera `payload.location` ni coordenadas.
+- Los facts Telegram se usan como prefill seguro, no como señal de corroboración: la creación sigue insertando solo `creator_report`, por lo que no activa/corrobora ni eleva confianza por sí sola.
+- El E2E usa marcadores separados para command-flow y natural-flow; además comprueba que el marcador natural no sea visible antes de la confirmación cuando la ejecución real puede consultarlo.
+
+**Evidencia ejecutada**
+
+- `pnpm --filter @zona-cero/contracts test:strict` — ✅ 26 tests.
+- `pnpm --filter @zona-cero/api exec vitest run src/index.test.ts src/telegram-intent-classifier.test.ts` — ✅ 92 tests; Vitest reportó close-timeout/esbuild deadlock después del éxito, sin fallo de suite.
+- `pnpm --filter @zona-cero/telegram-channel test:strict` — ✅ 55 tests.
+- `pnpm e2e:telegram:typecheck` — ✅.
+- `pnpm e2e:telegram:dry-run` con env dummy no secreto — ✅; el marcador natural fue `*-natural-wc`.
+- `pnpm mobile:test:strict` — ✅ 20 suites / 112 tests.
 
 ## Slice 16 - Telegram `/sos` natural-language prefill
 

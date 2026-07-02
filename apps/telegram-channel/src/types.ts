@@ -27,6 +27,7 @@ import type {
   TelegramSosIntentFacts,
   TelegramWorkCenterIntentFacts,
   WorkCenterConnectedCreateRequest,
+  WorkCenterCreatePayload,
   WorkCenterCreateResponse,
 } from '@zona-cero/contracts';
 
@@ -180,10 +181,12 @@ export type TelegramFamilyReunificationState =
   | { step: 'linked'; response: PrivateWebLinkIssueResponse }
   | { step: 'cancelled' };
 
+export type TelegramWorkCenterPrefill = Partial<Pick<WorkCenterCreatePayload, 'name' | 'description' | 'priority' | 'initialNeed' | 'surplus'>>;
+
 export type TelegramWorkCenterReportState =
   | { step: 'idle' }
-  | { step: 'awaitingIncident'; incidents: IncidentSummary[]; externalUserId: string; displayName?: string }
-  | { step: 'awaitingName'; incident: IncidentSummary; externalUserId: string; displayName?: string }
+  | { step: 'awaitingIncident'; incidents: IncidentSummary[]; externalUserId: string; displayName?: string; prefill?: TelegramWorkCenterPrefill }
+  | { step: 'awaitingName'; incident: IncidentSummary; externalUserId: string; displayName?: string; prefill?: TelegramWorkCenterPrefill }
   | {
       step: 'awaitingConfirmation';
       incident: IncidentSummary;

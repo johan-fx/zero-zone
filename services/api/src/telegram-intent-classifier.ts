@@ -68,7 +68,7 @@ const TELEGRAM_INTENT_RESPONSE_SCHEMA = {
         implicitQuestion: {
           type: 'string',
           enum: telegramResourceImplicitQuestions,
-          description: 'For resource intent only: implicit question asked by the user, or none.',
+          description: 'For resource or workcenter only: implicit question asked by the user, or none.',
         },
         signal: {
           type: 'string',
@@ -80,10 +80,25 @@ const TELEGRAM_INTENT_RESPONSE_SCHEMA = {
           enum: [...workCenterStatuses, ...dispatchTaskStatuses],
           description: 'For workcenter or dispatch only: normalized status when explicitly stated.',
         },
-        priorityHint: {
+        name: {
+          type: 'string',
+          maxLength: 120,
+          description: 'For workcenter only: safe short work center name or label, without personal names or contact details.',
+        },
+        priority: {
           type: 'string',
           enum: workCenterPriorities,
-          description: 'For workcenter only: priority hint when explicitly stated.',
+          description: 'For workcenter only: priority when explicitly stated.',
+        },
+        initialNeed: {
+          type: 'string',
+          maxLength: 160,
+          description: 'For workcenter only: initial operational need such as medicine, water, volunteers, or equipment.',
+        },
+        surplus: {
+          type: 'string',
+          maxLength: 160,
+          description: 'For workcenter only: surplus capacity or supplies explicitly reported.',
         },
         caseType: {
           type: 'string',
@@ -196,7 +211,7 @@ export async function classifyTelegramIntent({
         json_schema: TELEGRAM_INTENT_RESPONSE_SCHEMA,
       },
       temperature: 0,
-      max_tokens: 220,
+      max_tokens: 280,
     });
 
     const parsedPayload = parseAiJsonPayload(response);
@@ -228,14 +243,17 @@ function buildTelegramIntentSystemPrompt(): string {
     'Allowed intents: resource, workcenter, family_reunification, sos, dispatch, incident_join, unknown, ambiguous.',
     'Map offers, needs, or reports of supplies, potable water, food, medicine, shelter, transport, fuel, or equipment to resource.',
     'Map missing child, missing person, lost family member, found child/person, or search/reunification requests to family_reunification.',
-    'Map volunteer center status, capacity, damage, location, or availability to workcenter.',
+    'Map volunteer center, medical post, shelter, supply hub, triage point, status, capacity, damage, location, availability, needs, or surplus to workcenter.',
     'Map immediate danger, injury, trapped person, urgent help, or life-safety emergency to sos.',
     'Map task assignment, task status, logistics dispatch, or mission updates to dispatch.',
     'Map joining/selecting an incident or onboarding into an incident to incident_join.',
     'Use ambiguous when more than one operational intent is plausible. Use unknown when no operational route is clear.',
     'Extract facts only when clear. Facts are candidates for backend validation, not commands.',
     'For resource: resourceDirection, resourceType, resourceLabel, quantityApprox, locationHint, implicitQuestion.',
-    'For workcenter: signal, status, priorityHint, locationHint. Example ES: "el centro norte está lleno" => intent workcenter, signal capacity, locationHint "centro norte". Example EN: "north shelter is active" => intent workcenter, status active, locationHint "north shelter".',
+    'For workcenter: signal, status, name, locationHint, priority, initialNeed, surplus, implicitQuestion. Never geocode locationHint or output coordinates.',
+    'Workcenter examples ES: "hay un puesto médico en la escuela con prioridad alta y necesitan medicamentos" => intent workcenter, signal availability, name "puesto médico", locationHint "escuela", priority high, initialNeed "medicamentos".',
+    'Workcenter examples EN: "north shelter is active and needs blankets" => intent workcenter, status active, name "north shelter", initialNeed "blankets".',
+    'Workcenter examples ES: "el centro norte está lleno" => intent workcenter, signal capacity, name "centro norte". Example EN: "north shelter has spare cots" => intent workcenter, signal availability, name "north shelter", surplus "cots".',
     'For family_reunification: caseType, subjectType, locationHint. Example ES: "busco a mi hijo desaparecido" => intent family_reunification, caseType missing_person, subjectType child. Example EN: "found a separated child near gate 2" => intent family_reunification, caseType found_person, subjectType child, locationHint "gate 2".',
     'For sos: severity, peopleCountApprox, locationHint. Example ES: "hay dos personas atrapadas en la escalera este" => intent sos, severity trapped, peopleCountApprox "2", locationHint "escalera este". Example EN: "urgent medical help at east stairs" => intent sos, severity medical, locationHint "east stairs".',
     'For dispatch: signal, status, destinationHint. Example ES: "equipo en camino al almacén" => intent dispatch, signal status_update, status en_route, destinationHint "almacén". Example EN: "deliver supplies to north gate" => intent dispatch, signal logistics_request, destinationHint "north gate".',

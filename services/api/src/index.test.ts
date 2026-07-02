@@ -1042,7 +1042,16 @@ describe('api worker', () => {
       vi.fn().mockResolvedValue({
         intent: 'workcenter',
         confidence: 0.93,
-        extractedFacts: { signal: 'capacity', status: 'active', priorityHint: 'high', locationHint: 'north shelter' },
+        extractedFacts: {
+          signal: 'availability',
+          status: 'active',
+          name: 'puesto médico',
+          locationHint: 'escuela norte',
+          priority: 'high',
+          initialNeed: 'medicamentos',
+          surplus: 'mantas',
+          implicitQuestion: 'none',
+        },
       }),
     );
     const telegramUserId = 25211;

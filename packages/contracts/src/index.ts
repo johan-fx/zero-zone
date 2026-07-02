@@ -857,8 +857,12 @@ export type TelegramWorkCenterFactSignal = z.infer<typeof TelegramWorkCenterFact
 export const TelegramWorkCenterIntentFactsSchema = z.object({
   signal: TelegramWorkCenterFactSignalSchema.default('unknown'),
   status: WorkCenterStatusSchema.optional(),
-  priorityHint: WorkCenterPrioritySchema.optional(),
-  locationHint: z.string().min(1).max(120).optional(),
+  name: z.string().min(1).max(120).optional(),
+  locationHint: z.string().min(1).max(160).optional(),
+  priority: WorkCenterPrioritySchema.optional(),
+  initialNeed: z.string().min(1).max(160).optional(),
+  surplus: z.string().min(1).max(160).optional(),
+  implicitQuestion: TelegramResourceImplicitQuestionSchema.default('none'),
 }).strict();
 export type TelegramWorkCenterIntentFacts = z.infer<typeof TelegramWorkCenterIntentFactsSchema>;
 

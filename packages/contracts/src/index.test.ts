@@ -751,16 +751,26 @@ describe('contracts package', () => {
       TelegramWorkCenterIntentFactsSchema.parse({
         signal: 'capacity',
         status: 'active',
-        priorityHint: 'high',
-        locationHint: 'north gate',
+        name: 'puesto médico',
+        locationHint: 'escuela norte',
+        priority: 'high',
+        initialNeed: 'medicamentos',
+        surplus: 'mantas',
+        implicitQuestion: 'where_needed',
       }),
     ).toEqual({
       signal: 'capacity',
       status: 'active',
-      priorityHint: 'high',
-      locationHint: 'north gate',
+      name: 'puesto médico',
+      locationHint: 'escuela norte',
+      priority: 'high',
+      initialNeed: 'medicamentos',
+      surplus: 'mantas',
+      implicitQuestion: 'where_needed',
     });
-    expect(TelegramWorkCenterIntentFactsSchema.parse({})).toEqual({ signal: 'unknown' });
+    expect(TelegramWorkCenterIntentFactsSchema.parse({})).toEqual({ signal: 'unknown', implicitQuestion: 'none' });
+    expect(TelegramWorkCenterIntentFactsSchema.safeParse({ signal: 'capacity', priorityHint: 'high' }).success).toBe(false);
+    expect(TelegramWorkCenterIntentFactsSchema.safeParse({ signal: 'capacity', payload: { location: { latitude: 41.38 } } }).success).toBe(false);
     expect(TelegramWorkCenterIntentFactsSchema.safeParse({ signal: 'capacity', freeText: 'long note' }).success).toBe(false);
 
     expect(

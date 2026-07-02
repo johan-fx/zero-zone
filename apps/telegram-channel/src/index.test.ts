@@ -683,6 +683,86 @@ describe('telegram channel flows', () => {
     });
   });
 
+  it('prefills a natural-language work center report and requires explicit confirmation before creation', async () => {
+    const ports = createWorkCenterPorts();
+    const flowContext = {
+      preferredLocale: 'es' as const,
+      sourceIntent: 'workcenter' as const,
+      confidence: 0.94,
+      facts: { signal: 'availability' as const, name: 'puesto médico', locationHint: 'escuela', priority: 'high' as const, initialNeed: 'medicamentos', surplus: 'camillas', implicitQuestion: 'none' as const },
+      prefill: { name: 'puesto médico', locationHint: 'escuela', priority: 'high' as const, initialNeed: 'medicamentos', surplus: 'camillas' },
+    };
+
+    let state: TelegramWorkCenterReportState = { step: 'idle' };
+    let result = await handleTelegramWorkCenterReportFlow(state, telegramUserUpdate('Hay un puesto médico en la escuela con prioridad alta y necesitan medicamentos.', 'es'), ports, flowContext);
+    state = result.state;
+
+    expect(state).toMatchObject({ step: 'awaitingIncident', prefill: expect.objectContaining({ name: 'puesto médico', priority: 'high', initialNeed: 'medicamentos' }) });
+    expect(ports.createWorkCenter).not.toHaveBeenCalled();
+
+    result = await handleTelegramWorkCenterReportFlow(state, telegramUserUpdate('1', 'es'), ports);
+
+    expect(result.state.step).toBe('awaitingConfirmation');
+    expect(result.responseText).toContain('Confirma el reporte de puesto de trabajo');
+    expect(result.responseText).toContain('Nombre: puesto médico');
+    expect(result.responseText).toContain('Ubicación aproximada: escuela');
+    expect(result.responseText).toContain('Prioridad: high');
+    expect(ports.createWorkCenter).not.toHaveBeenCalled();
+
+    result = await handleTelegramWorkCenterReportFlow(result.state, telegramUserUpdate('sí', 'es'), ports);
+
+    expect(result.state.step).toBe('reported');
+    expect(ports.createWorkCenter).toHaveBeenCalledWith('incident-zc-demo', {
+      channel: 'telegram',
+      externalId: '1001',
+      displayName: 'Field',
+      payload: {
+        name: 'puesto médico',
+        description: 'Location hint: escuela',
+        priority: 'high',
+        initialNeed: 'medicamentos',
+        surplus: 'camillas',
+      },
+    });
+    expect(vi.mocked(ports.createWorkCenter).mock.calls[0]?.[1].payload).not.toHaveProperty('location');
+  });
+
+  it('asks only for a missing natural-language work center name and preserves safe prefill', async () => {
+    const ports = createWorkCenterPorts();
+    const flowContext = {
+      preferredLocale: 'en' as const,
+      sourceIntent: 'workcenter' as const,
+      confidence: 0.91,
+      facts: { signal: 'availability' as const, locationHint: 'school', priority: 'high' as const, initialNeed: 'medicine', implicitQuestion: 'none' as const },
+      prefill: { locationHint: 'school', priority: 'high' as const, initialNeed: 'medicine' },
+    };
+
+    let result = await handleTelegramWorkCenterReportFlow({ step: 'idle' }, telegramUserUpdate('There is a medical post at the school with high priority and they need medicine.'), ports, flowContext);
+    result = await handleTelegramWorkCenterReportFlow(result.state, telegramUserUpdate('1'), ports);
+
+    expect(result.state).toMatchObject({ step: 'awaitingName', prefill: expect.objectContaining({ description: 'Location hint: school', priority: 'high', initialNeed: 'medicine' }) });
+    expect(result.responseText).toContain('Send only the work center name');
+    expect(ports.createWorkCenter).not.toHaveBeenCalled();
+
+    result = await handleTelegramWorkCenterReportFlow(result.state, telegramUserUpdate('School medical post'), ports);
+
+    expect(result.state.step).toBe('awaitingConfirmation');
+    expect(result.responseText).toContain('Name: School medical post');
+    expect(result.responseText).toContain('Location hint: school');
+    expect(ports.createWorkCenter).not.toHaveBeenCalled();
+  });
+
+  it('allows safe work center name correction before explicit confirmation', async () => {
+    const ports = createWorkCenterPorts();
+    const { state } = await advanceWorkCenter(['/workcenter', '1', 'Wrong name'], ports);
+
+    const corrected = await handleTelegramWorkCenterReportFlow(state, telegramUserUpdate('name: Corrected triage point'), ports);
+
+    expect(corrected.state).toMatchObject({ step: 'awaitingConfirmation', request: expect.objectContaining({ payload: expect.objectContaining({ name: 'Corrected triage point' }) }) });
+    expect(corrected.responseText).toContain('Name: Corrected triage point');
+    expect(ports.createWorkCenter).not.toHaveBeenCalled();
+  });
+
   it('cancels an active work center report flow before submitting', async () => {
     const { state, responseText, ports } = await advanceWorkCenter(['/workcenter', '1', 'North triage point', 'no']);
 

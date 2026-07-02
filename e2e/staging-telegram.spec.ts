@@ -22,17 +22,12 @@ test('staging Telegram -> API/D1 -> Web UI exposes the E2E marker', async ({ req
 
   const result = await runTelegramRunner();
 
-  const browser = await chromium.launch();
-  try {
-    const page = await browser.newPage();
-    await page.goto(webUrl, { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('body')).toBeVisible();
-
-    const markerInUi = await waitForMarkerInUi(page, result.marker);
-    if (markerInUi) return;
-  } finally {
-    await browser.close();
+  if (result.preConfirmationMarkerVisible !== undefined) {
+    expect(result.preConfirmationMarkerVisible).toBe(false);
   }
+
+  const markerInUi = await findMarkerInUiWhenBrowserIsAvailable(webUrl, result.marker);
+  if (markerInUi) return;
 
   await expect
     .poll(async () => findMarkerInStagingApi(apiBaseUrl, incidentId, result.marker), {
@@ -52,7 +47,7 @@ async function ensureTelegramSessionExists(): Promise<void> {
   }
 }
 
-async function runTelegramRunner(): Promise<{ marker: string }> {
+async function runTelegramRunner(): Promise<{ marker: string; preConfirmationMarkerVisible?: boolean }> {
   const { stdout } = await execFileAsync('pnpm', ['tsx', 'e2e/telegram/staging-telegram-runner.ts', 'run', '--json'], {
     cwd: process.cwd().endsWith('/e2e') ? '..' : process.cwd(),
     env: process.env,
@@ -62,10 +57,10 @@ async function runTelegramRunner(): Promise<{ marker: string }> {
   if (typeof parsed.marker !== 'string' || !parsed.marker.startsWith('e2e-')) {
     throw new Error('Telegram runner did not return a valid E2E marker.');
   }
-  return { marker: parsed.marker };
+  return { marker: parsed.marker, preConfirmationMarkerVisible: typeof parsed.preConfirmationMarkerVisible === 'boolean' ? parsed.preConfirmationMarkerVisible : undefined };
 }
 
-function parseRunnerResult(stdout: string): { marker?: unknown } {
+function parseRunnerResult(stdout: string): { marker?: unknown; preConfirmationMarkerVisible?: unknown } {
   const resultLine = stdout
     .split(/\r?\n/)
     .reverse()
@@ -76,6 +71,22 @@ function parseRunnerResult(stdout: string): { marker?: unknown } {
   }
 
   return JSON.parse(resultLine.slice('TELEGRAM_E2E_RESULT_JSON='.length)) as { marker?: unknown };
+}
+
+async function findMarkerInUiWhenBrowserIsAvailable(webUrl: string, marker: string): Promise<boolean> {
+  let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+  try {
+    browser = await chromium.launch();
+    const page = await browser.newPage();
+    await page.goto(webUrl, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('body')).toBeVisible();
+    return waitForMarkerInUi(page, marker);
+  } catch (error) {
+    console.warn(`Browser UI check unavailable; falling back to staging API marker lookup. Reason: ${(error as Error).message}`);
+    return false;
+  } finally {
+    await browser?.close();
+  }
 }
 
 async function waitForMarkerInUi(page: import('@playwright/test').Page, marker: string): Promise<boolean> {

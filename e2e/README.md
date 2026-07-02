@@ -51,7 +51,7 @@ pnpm e2e:telegram:dry-run
 pnpm e2e:staging:telegram
 ```
 
-The test sends a safe sequence to the bot (`/start` incident join, language selection, work-center report, explicit resource report, and a natural-language resource report completed through confirmation), then opens `E2E_WEB_UI_URL`. If the marker is not visible in the UI, the test falls back to staging API reads for work centers and resource reports.
+The test sends a safe sequence to the bot: `/start` incident join, language selection, command-oriented `/workcenter` report, natural-language work-center report (`Hay un puesto médico {marker} en la escuela con prioridad alta y necesitan medicamentos.`), explicit `/resource` report, and natural-language resource report. Work-center and resource flows must reach a summary and explicit confirmation before persistence. For the natural work-center step, the runner checks the staging API before sending `yes` when running against real staging, then the Playwright test verifies the marker after confirmation via `E2E_WEB_UI_URL` or API fallback. If the marker is not visible in the UI, the test falls back to staging API reads for work centers and resource reports.
 
 ## Sensitive helpers
 
