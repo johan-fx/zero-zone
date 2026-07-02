@@ -39,6 +39,7 @@ Usar este reparto como contrato de trabajo para todas las slices. La clave es qu
 | 9 | Localización multi-idioma | 🟢 | 🟢 | 🟢 | Hecho |
 | 10 | Telegram intent routing con Workers AI | 🟢 | 🟢 | 🟢 | Hecho |
 | 11 | Telegram intent extraction v2 + prefill seguro | 🟡 | 🟡 | 🟡 | En progreso |
+| 12 | Telegram resource need matching + recomendaciones | 🟢 | 🟢 | ⬜ | Implementado |
 
 Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloqueado.
 
@@ -569,7 +570,7 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 | B | 🟡 Añadir tests del clasificador con respuestas mockeadas y parsing de facts. |
 | C | 🟡 Pasar facts aceptados al inicio del flujo resource como prefill seguro. |
 | C | 🟡 Responder en español con confirmación contextual cuando el intent venga de lenguaje natural. |
-| Todos | 🟡 Fresh review independiente antes de cerrar. |
+| Todos | 🟢 Fresh review independiente antes de cerrar. |
 
 **Definition of Done**
 
@@ -594,6 +595,61 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 - `pnpm --filter @zona-cero/api build`
 - `git diff --check`
 - Fresh review independiente sin defectos confirmados
+
+
+## Slice 12 - Telegram resource need matching + recomendaciones
+
+**Objetivo:** cuando un usuario ofrece recursos en lenguaje natural y pregunta dónde se necesitan, el bot debe priorizar destinos según necesidades reales reportadas, no listar incidentes o centros de forma genérica.
+
+**Decisión técnica:** reutilizar el modelo canónico de recursos `needed/surplus` y el matching determinista del dominio. El LLM solo clasifica intención y extrae facts (`resourceType`, `resourceLabel`, dirección e implicit question); la recomendación se calcula con datos persistidos de backend.
+
+**Principio de seguridad:** una recomendación logística no crea una tarea ni confirma una entrega. El usuario elige destino o decide registrar la oferta; el flujo mantiene confirmación antes de persistir operaciones.
+
+### Reparto de ownership
+
+| Equipo | Owns | Consume de | No debe hacer | Handoff esperado |
+|---|---|---|---|---|
+| A | UX conversacional de recomendaciones en Telegram, copy localizado, selección de destino y fallback cuando no hay necesidades. | Ranking/matches de B y facts extraídos por Slice 11. | Inventar ranking local no compartido o prometer disponibilidad no verificada. | Mensaje corto con destinos ordenados y continuidad hacia el flujo `/resource` sin mezclar idiomas. |
+| B | Consulta/ranking de necesidades por categoría, normalización de categorías/sinónimos y puertos API para Telegram. | Casos UX de A y resource reports existentes. | Usar el LLM para decidir destino o saltarse permisos/auditoría. | Servicio determinista que devuelve necesidades compatibles ordenadas por urgencia, frescura, confianza y centro. |
+| C | Validación de compatibilidad con datos nativos/offline existentes. | Contratos/matching de B. | Reimplementar recomendaciones en mobile en esta slice. | Confirmación de que el contrato no rompe materialización offline ni vista de recursos. |
+
+| Equipo | Checklist |
+|---|---|
+| A | 🟢 Detectar en Telegram ofertas con pregunta implícita `where_needed` y mostrar recomendaciones antes de pedir incidente genérico. |
+| A | 🟢 Permitir elegir destino recomendado por número o continuar con registro manual de oferta. |
+| A | 🟢 Mantener respuesta localizada usando `preferredLocale` y no mezclar español/inglés. |
+| B | 🟢 Normalizar categorías de recurso para casos frecuentes: medicamentos/medicine, agua/water, comida/food, mantas/blankets, combustible/fuel, transporte/transport, refugio/shelter, equipamiento/equipment. |
+| B | 🟢 Añadir consulta determinista de necesidades compatibles por recurso, ordenada por urgencia, frescura, confianza y especificidad de centro. |
+| B | 🟢 Conectar Telegram a la consulta sin exponer PII ni registrar texto libre del usuario. |
+| C | ⬜ Verificar que los contratos usados siguen siendo compatibles con outbox/materializer mobile. |
+| Todos | 🟢 Fresh review independiente antes de cerrar. |
+
+**Definition of Done**
+
+- “tengo medicamentos, dónde la necesitan?” devuelve una lista breve de necesidades compatibles ordenadas por prioridad si existen.
+- La recomendación muestra centro/destino, categoría, cantidad aproximada, urgencia y motivo de ranking sin crear operaciones automáticamente.
+- Si no hay necesidades compatibles, el bot cae al flujo seguro actual para registrar oferta o elegir incidente manualmente.
+- Las necesidades registradas desde `/resource` o desde centros activos alimentan el ranking sin lógica paralela en Telegram.
+- El ranking es determinista, testeado y no depende del LLM para decidir destino.
+- Las respuestas respetan `preferredLocale` y los logs no incluyen texto libre ni facts sensibles.
+
+**Riesgos y límites**
+
+- La calidad del ranking depende de que existan reportes `needed` recientes y categorizados correctamente.
+- La normalización de categorías debe empezar con sinónimos simples; un catálogo operativo más rico puede requerir una slice posterior.
+- Esta slice recomienda destinos; no optimiza rutas, disponibilidad de transporte ni capacidad real de recepción.
+
+**Evidencia de verificación**
+
+- ✅ `pnpm --filter @zona-cero/domain test:strict`
+- ✅ `pnpm --filter @zona-cero/telegram-channel test:strict`
+- ✅ `pnpm --filter @zona-cero/api exec vitest run src/index.test.ts`
+- ✅ `pnpm --filter @zona-cero/api typecheck`
+- ✅ `pnpm --filter @zona-cero/i18n test:strict`
+- ✅ `pnpm --filter @zona-cero/api build`
+- ✅ Smoke local de webhook con Workers AI remoto para “tengo medicamentos, dónde la necesitan?” con necesidades seeded desde `resource_reports` y centros activos.
+- ✅ `git diff --check`
+- ✅ Fresh review independiente final sin defectos confirmados.
 
 ## Gates antes de implementar cada slice
 

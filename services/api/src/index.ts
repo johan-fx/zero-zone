@@ -97,7 +97,15 @@ import {
   type TelegramResourceIntentFacts,
   type WorkCenterSummary,
 } from '@zona-cero/contracts';
-import { deriveResourceReportState, deriveWorkCenterState, matchResourceReports, type WorkCenterSignalInput } from '@zona-cero/domain';
+import {
+  deriveResourceReportState,
+  deriveWorkCenterState,
+  matchResourceReports,
+  normalizeResourceCategory,
+  recommendResourceNeeds,
+  type ResourceNeedRecommendation,
+  type WorkCenterSignalInput,
+} from '@zona-cero/domain';
 import {
   handleTelegramDispatchTaskFlow,
   handleTelegramFamilyReunificationFlow,
@@ -949,6 +957,53 @@ type WorkCenterRow = {
 };
 
 type WorkCenterSignalRow = { signalId: string; signalType: WorkCenterSignalType; sourceChannel: Channel; sourceId: string; createdAt: string };
+
+export type TelegramNeedRecommendation = {
+  incidentId: string;
+  incidentName?: string;
+  incidentStatus?: IncidentSummary['status'];
+  incidentStartsAt?: string;
+  incidentLocationName?: string;
+  workCenterId?: string;
+  workCenterName?: string;
+  workCenterLocation?: { latitude: number; longitude: number };
+  category: string;
+  quantityApprox: string;
+  urgency: ResourceReportSummary['urgency'];
+  score: number;
+  reasons: string[];
+};
+
+export type TelegramNeedRecommendationInput = {
+  resourceLabel?: string | null;
+  resourceType?: string | null;
+  incidentId?: string | null;
+  limit?: number;
+};
+
+type ResourceNeedRecommendationRow = ResourceReportRecommendationRow | WorkCenterInitialNeedRecommendationRow;
+
+type ResourceReportRecommendationRow = ResourceReportRow & {
+  incidentName: string | null;
+  incidentStatus: IncidentSummary['status'] | null;
+  incidentStartsAt: string | null;
+  incidentLocationName: string | null;
+  workCenterName: string | null;
+  workCenterLatitude: number | null;
+  workCenterLongitude: number | null;
+};
+
+type WorkCenterInitialNeedRecommendationRow = ResourceReportRow & {
+  incidentName: string | null;
+  incidentStatus: IncidentSummary['status'] | null;
+  incidentStartsAt: string | null;
+  incidentLocationName: string | null;
+  workCenterName: string;
+  workCenterLatitude: number | null;
+  workCenterLongitude: number | null;
+  initialNeed: string;
+  workCenterPriority: WorkCenterPriority;
+};
 
 type ResourceReportRow = {
   resourceReportId: string;
@@ -2567,6 +2622,215 @@ async function getResourceReportDetail(db: D1Database, incidentId: string, resou
   return row ? rowToResourceReportDetail(row) : null;
 }
 
+export async function recommendTelegramResourceNeeds(
+  db: D1Database,
+  input: TelegramNeedRecommendationInput,
+): Promise<TelegramNeedRecommendation[]> {
+  const reportRows = await listNeededResourceReportRecommendationRows(db, input.incidentId ?? null);
+  const workCenterRows = await listWorkCenterInitialNeedRecommendationRows(db, input.incidentId ?? null, reportRows);
+  const rows: ResourceNeedRecommendationRow[] = [...reportRows, ...workCenterRows];
+  const rowByReportId = new Map(rows.map((row) => [row.resourceReportId, row]));
+  const recommendations = recommendResourceNeeds({
+    resourceLabel: input.resourceLabel,
+    resourceType: input.resourceType,
+    incidentId: input.incidentId ?? null,
+    needs: rows.map(rowToResourceReportSummary),
+  });
+
+  return recommendations.slice(0, input.limit ?? 5).map((recommendation) => {
+    const row = rowByReportId.get(recommendation.need.resourceReportId);
+    return rowToTelegramNeedRecommendation(recommendation, row ?? null);
+  });
+}
+
+async function listNeededResourceReportRecommendationRows(
+  db: D1Database,
+  incidentId: string | null,
+): Promise<ResourceReportRecommendationRow[]> {
+  const whereClause = incidentId ? 'WHERE rr.report_kind = ? AND rr.incident_id = ?' : 'WHERE rr.report_kind = ?';
+  const statement = db.prepare(
+    `SELECT rr.resource_report_id AS resourceReportId, rr.incident_id AS incidentId, rr.cell_id AS cellId,
+      rr.work_center_id AS workCenterId, rr.category, rr.quantity_approx AS quantityApprox, rr.urgency,
+      rr.constraints_json AS constraintsJson, rr.report_kind AS reportKind, rr.freshness, rr.confidence, rr.risk,
+      rr.source_channel AS sourceChannel, rr.source_operation_id AS sourceOperationId, rr.actor_key_id AS actorKeyId,
+      rr.created_at AS createdAt, rr.updated_at AS updatedAt, incidents.name AS incidentName,
+      incidents.status AS incidentStatus, incidents.starts_at AS incidentStartsAt, incidents.location_name AS incidentLocationName,
+      wc.name AS workCenterName, wc.latitude AS workCenterLatitude, wc.longitude AS workCenterLongitude
+     FROM resource_reports rr
+     LEFT JOIN incidents ON incidents.incident_id = rr.incident_id
+     LEFT JOIN work_centers wc ON wc.work_center_id = rr.work_center_id
+     ${whereClause}`
+  );
+  const bound = incidentId ? statement.bind('needed', incidentId) : statement.bind('needed');
+  const { results } = await bound.all<ResourceReportRecommendationRow>();
+  return results;
+}
+
+async function listWorkCenterInitialNeedRecommendationRows(
+  db: D1Database,
+  incidentId: string | null,
+  reportRows: ResourceReportRecommendationRow[],
+): Promise<WorkCenterInitialNeedRecommendationRow[]> {
+  const duplicateKeys = new Set(
+    reportRows
+      .filter((row) => row.workCenterId)
+      .map((row) => `${row.workCenterId}:${normalizeResourceCategory(row.category)}`),
+  );
+  const whereClause = incidentId
+    ? `WHERE wc.status = ? AND wc.initial_need IS NOT NULL AND TRIM(wc.initial_need) != '' AND wc.incident_id = ?`
+    : `WHERE wc.status = ? AND wc.initial_need IS NOT NULL AND TRIM(wc.initial_need) != ''`;
+  const statement = db.prepare(
+    `SELECT wc.work_center_id AS workCenterId, wc.incident_id AS incidentId, wc.cell_id AS cellId, wc.name AS workCenterName,
+      wc.initial_need AS initialNeed, wc.priority AS workCenterPriority, wc.freshness, wc.confidence, wc.risk,
+      wc.latitude AS workCenterLatitude, wc.longitude AS workCenterLongitude, wc.source_channel AS sourceChannel,
+      wc.created_at AS createdAt, wc.updated_at AS updatedAt, incidents.name AS incidentName,
+      incidents.status AS incidentStatus, incidents.starts_at AS incidentStartsAt, incidents.location_name AS incidentLocationName
+     FROM work_centers wc
+     LEFT JOIN incidents ON incidents.incident_id = wc.incident_id
+     ${whereClause}
+     ORDER BY wc.updated_at DESC, wc.work_center_id ASC`,
+  );
+  const bound = incidentId ? statement.bind('active', incidentId) : statement.bind('active');
+  const { results } = await bound.all<{
+    workCenterId: string;
+    incidentId: string;
+    cellId: string;
+    workCenterName: string;
+    initialNeed: string;
+    workCenterPriority: WorkCenterPriority;
+    freshness: ResourceReportSummary['freshness'];
+    confidence: ResourceReportSummary['confidence'];
+    risk: ResourceReportSummary['risk'];
+    workCenterLatitude: number | null;
+    workCenterLongitude: number | null;
+    sourceChannel: Channel | null;
+    createdAt: string;
+    updatedAt: string;
+    incidentName: string | null;
+    incidentStatus: IncidentSummary['status'] | null;
+    incidentStartsAt: string | null;
+    incidentLocationName: string | null;
+  }>();
+
+  return results.flatMap((row): WorkCenterInitialNeedRecommendationRow[] => {
+    const parsedNeed = parseWorkCenterInitialNeed(row.initialNeed);
+    const duplicateKey = `${row.workCenterId}:${normalizeResourceCategory(parsedNeed.category)}`;
+
+    if (!parsedNeed.category || duplicateKeys.has(duplicateKey)) {
+      return [];
+    }
+
+    return [{
+      resourceReportId: `wc_need_${row.workCenterId}_${slug(parsedNeed.category)}`,
+      incidentId: row.incidentId,
+      cellId: row.cellId,
+      workCenterId: row.workCenterId,
+      category: parsedNeed.category,
+      quantityApprox: parsedNeed.quantityApprox,
+      urgency: row.workCenterPriority,
+      constraintsJson: '[]',
+      reportKind: 'needed',
+      freshness: row.freshness,
+      confidence: row.confidence,
+      risk: row.risk,
+      sourceChannel: row.sourceChannel,
+      sourceOperationId: null,
+      actorKeyId: null,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      incidentName: row.incidentName,
+      incidentStatus: row.incidentStatus,
+      incidentStartsAt: row.incidentStartsAt,
+      incidentLocationName: row.incidentLocationName,
+      workCenterName: row.workCenterName,
+      workCenterLatitude: row.workCenterLatitude,
+      workCenterLongitude: row.workCenterLongitude,
+      initialNeed: row.initialNeed,
+      workCenterPriority: row.workCenterPriority,
+    }];
+  });
+}
+
+function parseWorkCenterInitialNeed(initialNeed: string): { category: string; quantityApprox: string } {
+  const category = inferInitialNeedCategory(initialNeed);
+  return {
+    category,
+    quantityApprox: extractInitialNeedQuantity(initialNeed, category) ?? initialNeed.trim(),
+  };
+}
+
+function inferInitialNeedCategory(initialNeed: string): string {
+  const normalized = normalizeInitialNeedText(initialNeed);
+  const categoryTerms: Record<string, string[]> = {
+    medicine: ['medicamentos', 'medicamento', 'medicinas', 'medicina', 'farmacos', 'farmaco', 'medications', 'medication', 'medicines', 'medicine'],
+    water: ['agua potable', 'agua', 'water'],
+    food: ['alimentos', 'alimento', 'comida', 'food'],
+    blankets: ['mantas', 'manta', 'blankets', 'blanket'],
+    fuel: ['combustible', 'fuel'],
+    transport: ['transporte', 'transport'],
+    shelter: ['refugio', 'shelter'],
+    equipment: ['equipamiento', 'equipo', 'equipment'],
+  };
+
+  for (const terms of Object.values(categoryTerms)) {
+    const matchedTerm = terms.find((term) => normalized.includes(term));
+    if (matchedTerm) {
+      return matchedTerm;
+    }
+  }
+
+  return normalizeResourceCategory(initialNeed);
+}
+
+function extractInitialNeedQuantity(initialNeed: string, category: string): string | null {
+  const normalizedNeed = normalizeInitialNeedText(initialNeed);
+  const normalizedCategory = normalizeInitialNeedText(category);
+  const match = normalizedNeed.match(/\b\d+[\w\s.,-]{0,40}/);
+
+  if (!match) {
+    return null;
+  }
+
+  const quantity = match[0]
+    .replace(new RegExp(`\\b${normalizedCategory}\\b`, 'i'), '')
+    .replace(/\b(de|of)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return quantity || null;
+}
+
+function normalizeInitialNeedText(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function rowToTelegramNeedRecommendation(
+  recommendation: ResourceNeedRecommendation,
+  row: ResourceNeedRecommendationRow | null,
+): TelegramNeedRecommendation {
+  return {
+    incidentId: recommendation.need.incidentId,
+    ...(row?.incidentName ? { incidentName: row.incidentName } : {}),
+    ...(row?.incidentStatus ? { incidentStatus: row.incidentStatus } : {}),
+    ...(row?.incidentStartsAt ? { incidentStartsAt: row.incidentStartsAt } : {}),
+    ...(row?.incidentLocationName ? { incidentLocationName: row.incidentLocationName } : {}),
+    ...(recommendation.need.workCenterId ? { workCenterId: recommendation.need.workCenterId } : {}),
+    ...(row?.workCenterName ? { workCenterName: row.workCenterName } : {}),
+    ...(row?.workCenterLatitude !== null && row?.workCenterLatitude !== undefined && row?.workCenterLongitude !== null && row?.workCenterLongitude !== undefined
+      ? { workCenterLocation: { latitude: row.workCenterLatitude, longitude: row.workCenterLongitude } }
+      : {}),
+    category: recommendation.need.category,
+    quantityApprox: recommendation.need.quantityApprox,
+    urgency: recommendation.need.urgency,
+    score: recommendation.score,
+    reasons: recommendation.reasons,
+  };
+}
+
 function resourceReportSelectSql(whereClause: string): string {
   return `SELECT resource_report_id AS resourceReportId, incident_id AS incidentId, cell_id AS cellId, work_center_id AS workCenterId,
     category, quantity_approx AS quantityApprox, urgency, constraints_json AS constraintsJson, report_kind AS reportKind,
@@ -4057,6 +4321,32 @@ function createTelegramResourceReportPorts(db: D1Database, telemetry?: ChannelTe
     telemetry,
     async listIncidents() {
       return IncidentListResponseSchema.parse({ incidents: await listIncidents(db) });
+    },
+    async listResourceNeedRecommendations(input) {
+      const recommendations = await recommendTelegramResourceNeeds(db, {
+        resourceLabel: input.category,
+        resourceType: input.category,
+        limit: 5,
+      });
+
+      return {
+        recommendations: recommendations.map((recommendation) => ({
+          incident: {
+            incidentId: recommendation.incidentId,
+            name: recommendation.incidentName ?? recommendation.incidentId,
+            status: recommendation.incidentStatus ?? 'active',
+            startsAt: recommendation.incidentStartsAt ?? new Date(0).toISOString(),
+            locationName: recommendation.incidentLocationName ?? recommendation.incidentName ?? recommendation.incidentId,
+          },
+          ...(recommendation.workCenterId ? { workCenterId: recommendation.workCenterId } : {}),
+          ...(recommendation.workCenterName ? { workCenterName: recommendation.workCenterName } : {}),
+          category: recommendation.category,
+          quantityApprox: recommendation.quantityApprox,
+          urgency: recommendation.urgency,
+          score: recommendation.score,
+          reasons: recommendation.reasons,
+        })),
+      };
     },
     async createResourceReport(incidentId, request) {
       const incident = await findIncident(db, incidentId);

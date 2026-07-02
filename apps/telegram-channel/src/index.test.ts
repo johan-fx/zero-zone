@@ -54,6 +54,7 @@ import {
   type TelegramFamilyReunificationPorts,
   type TelegramFamilyReunificationState,
   type TelegramIncidentJoinPorts,
+  type TelegramResourceNeedRecommendation,
   type TelegramResourceReportPorts,
   type TelegramResourceReportState,
   type TelegramIncidentJoinState,
@@ -130,6 +131,18 @@ const resourceReportCreateResponseFixture: ResourceReportCreateResponse = {
   idempotent: false,
 };
 
+const resourceNeedRecommendationFixture: TelegramResourceNeedRecommendation = {
+  incident: incidentListHappyFixture.incidents[0],
+  workCenterId: 'center-pharmacy',
+  workCenterName: 'Farmacia norte',
+  category: 'medication',
+  urgency: 'critical',
+  score: 0.95,
+  quantityApprox: '10 cajas',
+  reasons: ['same_category', 'linked_work_center', 'urgency_high'],
+};
+
+
 const dispatchTaskFixture: DispatchTask = {
   dispatchTaskId: 'dispatch-task-water-1',
   incidentId: 'incident-zc-demo',
@@ -199,6 +212,7 @@ const validJoinStates = [
 const validResourceStates = [
   { step: 'idle' },
   { step: 'awaitingIncident', incidents: incidentListHappyFixture.incidents, externalUserId: '1001', displayName: 'Field', preferredLocale: 'es' },
+  { step: 'awaitingRecommendedNeedSelection', recommendations: [resourceNeedRecommendationFixture], externalUserId: '1001', displayName: 'Field', preferredLocale: 'es', category: 'medication' },
   { step: 'awaitingKind', incident: incidentListHappyFixture.incidents[0], externalUserId: '1001', displayName: 'Field', preferredLocale: 'es' },
   { step: 'awaitingCategory', incident: incidentListHappyFixture.incidents[0], externalUserId: '1001', displayName: 'Field', reportKind: 'needed' },
   { step: 'awaitingQuantity', incident: incidentListHappyFixture.incidents[0], externalUserId: '1001', displayName: 'Field', reportKind: 'needed', category: 'water' },
@@ -762,6 +776,41 @@ describe('telegram channel flows', () => {
     expect(result.state).toMatchObject({ step: 'awaitingIncident', preferredLocale: 'es' });
     expect(result.responseText).toContain('Elige un incidente antes de reportar recursos');
     expect(result.responseText).not.toContain('Choose an incident before reporting resources');
+  });
+
+  it('shows Spanish need recommendations for an implicit where-needed offer before generic incidents', async () => {
+    const ports = createResourcePorts({
+      listResourceNeedRecommendations: vi.fn().mockResolvedValue({ recommendations: [resourceNeedRecommendationFixture] }),
+    });
+
+    const result = await handleTelegramResourceReportFlow({ step: 'idle' }, telegramUserUpdate('tengo medicamentos, dónde la necesitan?', 'ca'), ports);
+
+    expect(result.state).toMatchObject({ step: 'awaitingRecommendedNeedSelection', preferredLocale: 'es', category: 'medication' });
+    expect(result.responseText).toContain('Encontré necesidades compatibles');
+    expect(result.responseText).toContain('1.');
+    expect(result.responseText).toContain('Farmacia norte');
+    expect(result.responseText).toContain('Elige destino respondiendo con un número');
+    expect(result.responseText).not.toContain('Elige un incidente antes de reportar recursos');
+    expect(ports.listIncidents).not.toHaveBeenCalled();
+  });
+
+  it('selects a recommended need and continues the surplus offer flow with incident and work center preselected', async () => {
+    const ports = createResourcePorts({
+      listResourceNeedRecommendations: vi.fn().mockResolvedValue({ recommendations: [resourceNeedRecommendationFixture] }),
+    });
+
+    let result = await handleTelegramResourceReportFlow({ step: 'idle' }, telegramUserUpdate('tengo medicamentos, dónde la necesitan?', 'ca'), ports);
+    result = await handleTelegramResourceReportFlow(result.state, telegramUserUpdate('1', 'ca'), ports);
+
+    expect(result.state).toMatchObject({
+      step: 'awaitingQuantity',
+      incident: resourceNeedRecommendationFixture.incident,
+      reportKind: 'surplus',
+      category: 'medication',
+      recommendedWorkCenterId: 'center-pharmacy',
+      preferredLocale: 'es',
+    });
+    expect(result.responseText).toContain('Envía la cantidad aproximada');
   });
 
   it('starts the resource flow in English for clear English resource text', async () => {

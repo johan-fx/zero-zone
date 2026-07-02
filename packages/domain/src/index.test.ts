@@ -11,6 +11,8 @@ import {
   deriveResourceReportState,
   deriveWorkCenterState,
   matchResourceReports,
+  normalizeResourceCategory,
+  recommendResourceNeeds,
   isCriticalOperation,
 } from './index';
 
@@ -98,5 +100,67 @@ describe('domain package', () => {
     expect(matches).toHaveLength(1);
     expect(matches[0]).toMatchObject({ need: { resourceReportId: 'need-1' }, surplus: { resourceReportId: 'surplus-1' }, reasons: ['same_cell', 'same_category'] });
   });
+
+  it('normalizes frequent resource category synonyms deterministically', () => {
+    expect(normalizeResourceCategory('medicamentos')).toBe('medicine');
+    expect(normalizeResourceCategory('medicina')).toBe('medicine');
+    expect(normalizeResourceCategory('fármacos')).toBe('medicine');
+    expect(normalizeResourceCategory('agua potable')).toBe('water');
+    expect(normalizeResourceCategory('alimentos')).toBe('food');
+  });
+
+  it('recommends needed reports by normalized category with deterministic ranking', () => {
+    const base = {
+      incidentId: 'incident-zc-demo',
+      cellId: 'cell-a',
+      category: 'medicina',
+      quantityApprox: '10 boxes',
+      constraints: [] as string[],
+      reportKind: 'needed' as const,
+      createdAt: '2026-06-30T10:00:00.000Z',
+      updatedAt: '2026-06-30T10:00:00.000Z',
+    };
+
+    const recommendations = recommendResourceNeeds({
+      resourceLabel: 'medicamentos',
+      needs: [
+        {
+          ...base,
+          resourceReportId: 'need-medium-work-center',
+          workCenterId: 'wc-medical',
+          urgency: 'medium',
+          freshness: 'fresh',
+          confidence: 'high',
+          risk: 'low',
+        },
+        {
+          ...base,
+          resourceReportId: 'need-critical-stale',
+          category: 'fármacos',
+          urgency: 'critical',
+          freshness: 'stale',
+          confidence: 'medium',
+          risk: 'medium',
+        },
+        {
+          ...base,
+          resourceReportId: 'need-high-food',
+          category: 'food',
+          urgency: 'high',
+          freshness: 'fresh',
+          confidence: 'high',
+          risk: 'low',
+        },
+      ],
+    });
+
+    expect(recommendations.map((recommendation) => recommendation.need.resourceReportId)).toEqual([
+      'need-critical-stale',
+      'need-medium-work-center',
+    ]);
+    expect(recommendations[0]).toMatchObject({ normalizedCategory: 'medicine', reasons: expect.arrayContaining(['same_category', 'urgency_critical']) });
+    expect(recommendations[1]?.reasons).toContain('linked_work_center');
+  });
+
 
 });

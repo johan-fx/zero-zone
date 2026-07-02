@@ -37,7 +37,7 @@ import {
   WorkCenterDetailResponseSchema,
   WorkCenterListResponseSchema,
 } from '@zona-cero/contracts';
-import { app } from './index';
+import { app, recommendTelegramResourceNeeds } from './index';
 import { resetApiTestDatabase } from './test-support';
 
 async function request(path: string, init?: RequestInit): Promise<Response> {
@@ -788,7 +788,8 @@ describe('api worker', () => {
       expect(result).toMatchObject({ accepted: true, command: null });
       expect(result.responseText).toContain('agua potable');
       expect(result.responseText).toContain('Te guiaré');
-      expect(result.responseText).toContain('Elige un incidente antes de reportar recursos');
+      expect(result.responseText).toContain('No encontré recomendaciones compatibles para este recurso');
+      expect(result.responseText).toContain('Elige un incidente:');
       expect(result.responseText).not.toContain('Choose an incident before reporting resources');
       expect(classifier).toHaveBeenCalledTimes(1);
       expect(logSpy.mock.calls.map((call) => call.join(' ')).join('\n')).not.toMatch(/tengo agua potable|agua potable|resourceDirection|where_needed/i);
@@ -821,10 +822,144 @@ describe('api worker', () => {
     const result = await postTelegramMessage(telegramUserId, 'I have medicine, where is it needed?', 'Medicine', 'en');
     expect(result).toMatchObject({ accepted: true, command: null });
     expect(result.responseText).toContain('I understand you have medicine available');
-    expect(result.responseText).toContain('Choose an incident before reporting resources');
+    expect(result.responseText).toContain('No compatible recommendations were found for this resource');
+    expect(result.responseText).toContain('Choose an incident:');
     expect(result.responseText).not.toContain('Entiendo que tienes');
     expect(result.responseText).not.toContain('Elige un incidente antes de reportar recursos');
     expect(classifier).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes natural Spanish resource offers to ranked need recommendations when needs exist', async () => {
+    await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(telegramIncidentJoinRequestFixture),
+    });
+
+    const workCenterResponse = await request('/incidents/incident-zc-demo/work-centers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        channel: 'telegram',
+        externalId: 'telegram-user-1001',
+        payload: {
+          name: 'Medical Tent North',
+          priority: 'high',
+          initialNeed: 'medicamentos',
+          location: { latitude: 40.42, longitude: -3.7 },
+        },
+      }),
+    });
+    const workCenter = WorkCenterCreateResponseSchema.parse(await workCenterResponse.json()).workCenter;
+
+    const needed = await request('/incidents/incident-zc-demo/resource-reports', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        channel: 'telegram',
+        externalId: 'telegram-user-1001',
+        payload: {
+          category: 'medicina',
+          quantityApprox: '10 cajas',
+          urgency: 'high',
+          constraints: ['sellado'],
+          reportKind: 'needed',
+          workCenterId: workCenter.workCenterId,
+        },
+      }),
+    });
+    expect(needed.status).toBe(200);
+
+    const classifier = enableTelegramIntentClassifier(
+      vi.fn().mockResolvedValue({
+        intent: 'resource',
+        confidence: 0.94,
+        extractedFacts: {
+          resourceDirection: 'offer',
+          resourceType: 'medicine',
+          resourceLabel: 'medicamentos',
+          implicitQuestion: 'where_needed',
+        },
+      }),
+    );
+    const telegramUserId = 25209;
+
+    const result = await postTelegramMessage(telegramUserId, 'tengo medicamentos, dónde la necesitan?', 'Matcher', 'es');
+    expect(result).toMatchObject({ accepted: true, command: null });
+    expect(result.responseText).toContain('Entiendo que tienes medicamentos disponibles');
+    expect(result.responseText).toContain('Encontré necesidades compatibles para este recurso');
+    expect(result.responseText).toContain('Medical Tent North');
+    expect(result.responseText).toContain('medicina');
+    expect(result.responseText).not.toContain('No encontré recomendaciones compatibles');
+    expect(result.responseText).not.toContain('Elige un incidente antes de reportar recursos');
+    expect(classifier).toHaveBeenCalledTimes(1);
+
+    const state = await (env as Env).DB.prepare('SELECT step, state_json AS stateJson FROM telegram_conversation_states WHERE state_key = ?')
+      .bind(`flow:resource:chat:${telegramUserId}:from:${telegramUserId}`)
+      .first<{ step: string; stateJson: string }>();
+    expect(state).toMatchObject({ step: 'awaitingRecommendedNeedSelection' });
+    expect(JSON.parse(state?.stateJson ?? '{}')).toMatchObject({ preferredLocale: 'es' });
+  });
+
+  it('routes natural Spanish resource offers to active work center initial needs without resource reports', async () => {
+    await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(telegramIncidentJoinRequestFixture),
+    });
+
+    const workCenterResponse = await request('/incidents/incident-zc-demo/work-centers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        channel: 'telegram',
+        externalId: 'telegram-user-1001',
+        payload: {
+          name: 'Centro Salud Este',
+          priority: 'high',
+          initialNeed: 'medicamentos',
+          location: { latitude: 40.43, longitude: -3.71 },
+        },
+      }),
+    });
+    expect(workCenterResponse.status).toBe(200);
+    const workCenter = WorkCenterCreateResponseSchema.parse(await workCenterResponse.json()).workCenter;
+
+    await (env as Env).DB.prepare("UPDATE work_centers SET status = 'active', activation_state = 'active' WHERE work_center_id = ?")
+      .bind(workCenter.workCenterId)
+      .run();
+
+    const classifier = enableTelegramIntentClassifier(
+      vi.fn().mockResolvedValue({
+        intent: 'resource',
+        confidence: 0.94,
+        extractedFacts: {
+          resourceDirection: 'offer',
+          resourceType: 'medicine',
+          resourceLabel: 'medicamentos',
+          implicitQuestion: 'where_needed',
+        },
+      }),
+    );
+    const telegramUserId = 25210;
+
+    const result = await postTelegramMessage(telegramUserId, 'tengo medicamentos, dónde la necesitan?', 'CenterOnly', 'es');
+    expect(result).toMatchObject({ accepted: true, command: null });
+    expect(result.responseText).toContain('Entiendo que tienes medicamentos disponibles');
+    expect(result.responseText).toContain('Encontré necesidades compatibles para este recurso');
+    expect(result.responseText).toContain('Centro Salud Este');
+    expect(result.responseText).toContain('medicamentos');
+    expect(result.responseText).toContain('cantidad no especificada');
+    expect(result.responseText).not.toContain('medicamentos · medicamentos');
+    expect(result.responseText).not.toContain('No encontré recomendaciones compatibles');
+    expect(result.responseText).not.toContain('Elige un incidente:');
+    expect(classifier).toHaveBeenCalledTimes(1);
+
+    const state = await (env as Env).DB.prepare('SELECT step, state_json AS stateJson FROM telegram_conversation_states WHERE state_key = ?')
+      .bind(`flow:resource:chat:${telegramUserId}:from:${telegramUserId}`)
+      .first<{ step: string; stateJson: string }>();
+    expect(state).toMatchObject({ step: 'awaitingRecommendedNeedSelection' });
+    expect(JSON.parse(state?.stateJson ?? '{}').recommendations[0]).toMatchObject({ workCenterName: 'Centro Salud Este' });
   });
 
   it('clears the Spanish resource flow after permission denied instead of persisting localized error state', async () => {
@@ -868,7 +1003,8 @@ describe('api worker', () => {
 
     const result = await postTelegramMessage(telegramUserId, 'tengo agua potable, dónde la necesitan?', 'InvalidFacts', 'ca');
     expect(result).toMatchObject({ accepted: true, command: null });
-    expect(result.responseText).toContain('Elige un incidente antes de reportar recursos');
+    expect(result.responseText).toContain('No encontré recomendaciones compatibles para este recurso');
+    expect(result.responseText).toContain('Elige un incidente:');
     expect(result.responseText).not.toContain('Te guiaré');
     expect(classifier).toHaveBeenCalledTimes(1);
 
@@ -1825,6 +1961,60 @@ describe('api worker', () => {
     const matches = ResourceReportMatchResponseSchema.parse(await (await request('/incidents/incident-zc-demo/resource-reports/matches')).json());
     expect(matches.matches).toHaveLength(1);
     expect(matches.matches[0]).toMatchObject({ need: { reportKind: 'needed' }, surplus: { reportKind: 'surplus' } });
+  });
+
+
+  it('returns Telegram need recommendations ranked by urgency and normalized medicamentos category', async () => {
+    await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(telegramIncidentJoinRequestFixture),
+    });
+
+    const workCenterResponse = await request('/incidents/incident-zc-demo/work-centers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        channel: 'telegram',
+        externalId: 'telegram-user-1001',
+        payload: {
+          name: 'Medical Tent North',
+          priority: 'high',
+          initialNeed: 'medicamentos',
+          location: { latitude: 40.42, longitude: -3.7 },
+        },
+      }),
+    });
+    expect(workCenterResponse.status).toBe(200);
+    const workCenter = WorkCenterCreateResponseSchema.parse(await workCenterResponse.json()).workCenter;
+
+    for (const payload of [
+      { category: 'medicina', quantityApprox: '10 boxes', urgency: 'medium', constraints: ['sealed'], reportKind: 'needed', workCenterId: workCenter.workCenterId },
+      { category: 'fármacos', quantityApprox: '5 boxes', urgency: 'critical', constraints: ['cold chain'], reportKind: 'needed' },
+      { category: 'food', quantityApprox: '20 meals', urgency: 'critical', constraints: [], reportKind: 'needed' },
+    ] as const) {
+      const response = await request('/incidents/incident-zc-demo/resource-reports', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ channel: 'telegram', externalId: 'telegram-user-1001', payload }),
+      });
+      expect(response.status).toBe(200);
+    }
+
+    const recommendations = await recommendTelegramResourceNeeds((env as Env).DB, {
+      resourceLabel: 'medicamentos',
+      incidentId: 'incident-zc-demo',
+    });
+
+    expect(recommendations.map((recommendation) => recommendation.category)).toEqual(['fármacos', 'medicina']);
+    expect(recommendations.filter((recommendation) => recommendation.workCenterId === workCenter.workCenterId)).toHaveLength(1);
+    expect(recommendations[0]).toMatchObject({ incidentId: 'incident-zc-demo', incidentName: 'Zona Cero Demo Incident', urgency: 'critical' });
+    expect(recommendations[1]).toMatchObject({
+      workCenterId: workCenter.workCenterId,
+      workCenterName: 'Medical Tent North',
+      workCenterLocation: { latitude: 40.42, longitude: -3.7 },
+      reasons: expect.arrayContaining(['linked_work_center']),
+    });
   });
 
   it('creates and updates dispatch task status', async () => {
