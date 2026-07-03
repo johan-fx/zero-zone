@@ -1,5 +1,18 @@
 import { useEffect } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import L, { type DivIcon, type LatLngBoundsExpression, type LatLngExpression } from 'leaflet';
+import {
+  Activity,
+  ClipboardList,
+  Cross,
+  Eye,
+  Package,
+  ShoppingBag,
+  TriangleAlert,
+  Users,
+  Warehouse,
+  type LucideIcon,
+} from 'lucide-react';
 import { MapContainer, Marker, Popup, TileLayer, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -10,16 +23,16 @@ const osmAttribution = '&copy; <a href="https://www.openstreetmap.org/copyright"
 const osmTileUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 
 const markerIconByVariant: Record<ReturnType<typeof resolveOperationalMarkerVariant>, string> = {
-  selected_center: svgIcon('0 0 24 24', '<path d="M4 20V9l8-5 8 5v11"/><path d="M8 20v-7h8v7"/><path d="M12 4v16"/><path d="M15 6.5h4v4h-4"/><path d="M8 16h.01M16 16h.01"/>'),
+  selected_center: renderMarkerIcon(Warehouse),
   sos: '<span class="operations-map-marker__sos">SOS</span>',
-  critical_shortage: svgIcon('0 0 24 24', '<path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"/><path d="m4 7.5 8 4.5 8-4.5"/><path d="M12 12v9"/>'),
-  pending: svgIcon('0 0 24 24', '<path d="M8 4h8l2 2v14H6V6l2-2Z"/><path d="M9 10h6M9 14h6"/><path d="M10 4h4"/>'),
-  active: svgIcon('0 0 24 24', '<path d="M3 13h4l2-5 4 10 2-5h6"/>'),
-  needs_medics: svgIcon('0 0 24 24', '<path d="M10 4h4v6h6v4h-6v6h-4v-6H4v-4h6V4Z"/>'),
-  surplus_resource: svgIcon('0 0 24 24', '<path d="M7 8h10l1 12H6L7 8Z"/><path d="M9 8a3 3 0 0 1 6 0"/><path d="M12 12v5M9.5 14.5h5"/>'),
-  saturated_zone: svgIcon('0 0 24 24', '<path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path d="M16 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path d="M4 20a4 4 0 0 1 8 0"/><path d="M12 20a4 4 0 0 1 8 0"/>'),
-  observing: svgIcon('0 0 24 24', '<path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/>'),
-  dangerous_zone: svgIcon('0 0 24 24', '<path d="M12 3 22 20H2L12 3Z"/><path d="M12 9v5"/><path d="M12 17h.01"/>'),
+  critical_shortage: renderMarkerIcon(Package),
+  pending: renderMarkerIcon(ClipboardList),
+  active: renderMarkerIcon(Activity),
+  needs_medics: renderMarkerIcon(Cross),
+  surplus_resource: renderMarkerIcon(ShoppingBag),
+  saturated_zone: renderMarkerIcon(Users),
+  observing: renderMarkerIcon(Eye),
+  dangerous_zone: renderMarkerIcon(TriangleAlert),
 };
 
 const markerLabelByVariant: Record<ReturnType<typeof resolveOperationalMarkerVariant>, string> = {
@@ -119,8 +132,8 @@ function createMarkerIcon(
   });
 }
 
-function svgIcon(viewBox: string, paths: string): string {
-  return `<svg viewBox="${viewBox}" aria-hidden="true" focusable="false">${paths}</svg>`;
+function renderMarkerIcon(Icon: LucideIcon): string {
+  return renderToStaticMarkup(<Icon aria-hidden="true" focusable="false" strokeWidth={2.4} />);
 }
 
 function escapeHtml(value: string): string {

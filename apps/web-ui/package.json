@@ -19,6 +19,7 @@
     "@zona-cero/i18n": "workspace:*",
     "@zona-cero/ui": "workspace:*",
     "leaflet": "^1.9.4",
+    "lucide-react": "^1.23.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-leaflet": "^5.0.0",
