@@ -1,31 +1,95 @@
-import type { ReactNode } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CountryListResponse, OperationalMapResponse } from '@zona-cero/contracts';
 import { OperationsMapPanel } from '../OperationsMapPanel';
 
-const leafletMapMock = vi.hoisted(() => ({
-  fitBounds: vi.fn(),
-  invalidateSize: vi.fn(),
-}));
+type CapturedLayer = { id?: string; type?: string; source?: string; 'source-layer'?: string; paint?: Record<string, unknown> };
 
-vi.mock('react-leaflet', () => ({
-  MapContainer: ({ children, className }: { children: ReactNode; className?: string }) => (
-    <div data-testid="leaflet-map" className={className}>{children}</div>
-  ),
-  TileLayer: ({ attribution }: { attribution: string }) => (
-    <div data-testid="tile-layer" dangerouslySetInnerHTML={{ __html: attribution }} />
-  ),
-  Marker: ({ children, icon }: { children: ReactNode; icon: { options?: { html?: string; className?: string } } }) => (
-    <div data-testid="map-marker" className={icon.options?.className}>
-      <span data-testid="map-marker-html" dangerouslySetInnerHTML={{ __html: icon.options?.html ?? '' }} />
-      {children}
-    </div>
-  ),
-  Popup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  useMap: () => leafletMapMock,
-}));
+const maplibreMocks = vi.hoisted(() => {
+  type CapturedMapOptions = { container: HTMLElement; style?: { sources?: Record<string, unknown>; layers?: CapturedLayer[] } };
+  const maps: Array<{ options: CapturedMapOptions; fitBounds: ReturnType<typeof vi.fn>; resize: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn>; setCenter: ReturnType<typeof vi.fn>; setStyle: ReturnType<typeof vi.fn>; setZoom: ReturnType<typeof vi.fn> }> = [];
+  const markers: Array<{ element: HTMLElement; lngLat?: [number, number]; popup?: { html?: string; remove: ReturnType<typeof vi.fn> }; remove: ReturnType<typeof vi.fn> }> = [];
+  const workerUrl = vi.fn();
+
+  return { maps, markers, workerUrl };
+});
+
+vi.mock('maplibre-gl', () => {
+  class MapMock {
+    fitBounds = vi.fn();
+    resize = vi.fn();
+    remove = vi.fn();
+    setCenter = vi.fn();
+    setStyle = vi.fn();
+    setZoom = vi.fn();
+
+    options: { container: HTMLElement; style?: { sources?: Record<string, unknown>; layers?: CapturedLayer[] } };
+
+    constructor(options: { container: HTMLElement; style?: { sources?: Record<string, unknown>; layers?: CapturedLayer[] } }) {
+      this.options = options;
+      options.container.dataset.maplibreInitialized = 'true';
+      options.container.classList.add('maplibregl-map');
+      maplibreMocks.maps.push(this);
+    }
+
+    addControl() {
+      return this;
+    }
+  }
+
+  class MarkerMock {
+    element: HTMLElement;
+    lngLat?: [number, number];
+    popup?: { html?: string; remove: ReturnType<typeof vi.fn> };
+    remove = vi.fn();
+
+    constructor(options: { element: HTMLElement }) {
+      this.element = options.element;
+    }
+
+    setLngLat(lngLat: [number, number]) {
+      this.lngLat = lngLat;
+      return this;
+    }
+
+    setPopup(popup: { html?: string; remove: ReturnType<typeof vi.fn> }) {
+      this.popup = popup;
+      return this;
+    }
+
+    addTo() {
+      maplibreMocks.markers.push(this);
+      return this;
+    }
+  }
+
+  class PopupMock {
+    html?: string;
+    remove = vi.fn();
+
+    setHTML(html: string) {
+      this.html = html;
+      return this;
+    }
+  }
+
+  class LngLatBoundsMock {
+    constructor(public sw: [number, number], public ne: [number, number]) {}
+  }
+
+  return {
+    AttributionControl: class AttributionControlMock {},
+    LngLatBounds: LngLatBoundsMock,
+    Map: MapMock,
+    Marker: MarkerMock,
+    NavigationControl: class NavigationControlMock {},
+    Popup: PopupMock,
+    setWorkerUrl: maplibreMocks.workerUrl,
+  };
+});
+
+vi.mock('maplibre-gl/dist/maplibre-gl-csp-worker.js?url', () => ({ default: '/mock-maplibre-worker.js' }));
 
 const countriesFixture: CountryListResponse = {
   countries: [
@@ -92,8 +156,8 @@ const portugalEmptyMapFixture: OperationalMapResponse = {
 
 beforeEach(() => {
   vi.restoreAllMocks();
-  leafletMapMock.fitBounds.mockClear();
-  leafletMapMock.invalidateSize.mockClear();
+  maplibreMocks.maps.length = 0;
+  maplibreMocks.markers.length = 0;
 });
 
 afterEach(() => {
@@ -101,7 +165,7 @@ afterEach(() => {
 });
 
 describe('OperationsMapPanel', () => {
-  it('loads country options, renders Leaflet map plus accessible list, and exposes OSM attribution', async () => {
+  it('loads country options, renders MapLibre map plus accessible list, and exposes OSM attribution', async () => {
     const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith('/map/countries')) return jsonResponse(countriesFixture);
@@ -110,34 +174,93 @@ describe('OperationsMapPanel', () => {
       return new Response('not found', { status: 404 });
     });
 
-    render(<OperationsMapPanel />);
+    render(<OperationsMapPanel styleName="night" />);
 
     expect(screen.getByText('Loading countries…')).toBeInTheDocument();
     expect(await screen.findByLabelText('Country')).toHaveValue('ES');
-    await waitFor(() => expect(screen.getByTestId('leaflet-map')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('maplibre-map')).toBeInTheDocument());
+    await waitFor(() => expect(maplibreMocks.maps[0]?.options.style?.sources?.openmaptiles).toBeDefined());
 
     expect(fetcher).toHaveBeenCalledWith('http://127.0.0.1:8787/map/countries');
     expect(fetcher).toHaveBeenCalledWith('http://127.0.0.1:8787/map?countryCode=ES');
+    expect(maplibreMocks.workerUrl).toHaveBeenCalledWith('/mock-maplibre-worker.js');
     expect(screen.getByText('1 incidents')).toBeInTheDocument();
     expect(screen.getByText('1 work centers')).toBeInTheDocument();
     expect(screen.getByText('1 SOS alerts')).toBeInTheDocument();
     expect(screen.getByText('2 without location')).toBeInTheDocument();
-    expect(screen.getByText('Map data © OpenStreetMap contributors')).toBeVisible();
-    await waitFor(() => expect(leafletMapMock.invalidateSize).toHaveBeenCalled());
-    expect(leafletMapMock.fitBounds).toHaveBeenCalled();
+    expect(screen.getByText('Map data © OpenStreetMap, OpenMapTiles, OpenFreeMap')).toBeVisible();
+    expect(maplibreMocks.maps[0]?.options.style?.sources?.openmaptiles).toMatchObject({
+      type: 'vector',
+      url: 'https://tiles.openfreemap.org/planet',
+    });
+    expect((maplibreMocks.maps[0]?.options.style as { glyphs?: string } | undefined)?.glyphs).toBe('https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf');
+    expect(maplibreMocks.maps[0]?.options.style?.layers?.some((layer) => layer.source === 'openmaptiles')).toBe(true);
+    expect(maplibreMocks.maps[0]?.options.style?.layers?.some((layer) => layer.type === 'raster')).toBe(false);
+    expect(maplibreMocks.maps[0]?.options.style?.layers?.some((layer) => layer.id === 'place-labels' && layer.type === 'symbol')).toBe(true);
+    expect(maplibreMocks.maps[0]?.options.style?.layers?.find((layer) => layer.id === 'road-labels')?.['source-layer']).toBe('transportation_name');
+    expect(screen.queryByRole('group', { name: 'Map style' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Day')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Night')).not.toBeInTheDocument();
+    expect(screen.getByTestId('maplibre-map')).toHaveClass('operations-map__canvas--night');
+    await waitFor(() => expect(maplibreMocks.maps[0]?.resize).toHaveBeenCalled());
+    expect(maplibreMocks.maps[0]?.fitBounds).toHaveBeenCalledWith(expect.anything(), { padding: 150 });
     expect(within(screen.getByRole('list')).getByText('North triage point')).toBeInTheDocument();
     expect(within(screen.getByRole('list')).getByText('SOS sos-mobile-critical-1')).toBeInTheDocument();
 
-    const markerLabels = screen.getAllByTestId('map-marker');
-    expect(markerLabels).toHaveLength(3);
-    expect(markerLabels[0]).toHaveTextContent('Active');
-    expect(markerLabels[0].innerHTML).toContain('operations-map-marker--active');
-    expect(markerLabels[1]).toHaveTextContent('North triage point');
-    expect(markerLabels[1].innerHTML).toContain('operations-map-marker--selected-center');
-    expect(markerLabels[1].innerHTML).toContain('operations-map-marker--selected');
-    expect(markerLabels[2]).toHaveTextContent('SOS');
-    expect(markerLabels[2].innerHTML).toContain('operations-map-marker--sos');
-    expect(markerLabels[2].innerHTML).toContain('data-marker-variant="sos"');
+    expect(maplibreMocks.markers).toHaveLength(3);
+    expect(maplibreMocks.markers[0]?.lngLat).toEqual([2.17, 41.38]);
+    expect(maplibreMocks.markers[0]?.element).toHaveTextContent('Active');
+    expect(maplibreMocks.markers[0]?.element.innerHTML).toContain('operations-map-marker--active');
+    expect(maplibreMocks.markers[1]?.lngLat).toEqual([2.16, 41.39]);
+    expect(maplibreMocks.markers[1]?.element).toHaveTextContent('North triage point');
+    expect(maplibreMocks.markers[1]?.element.innerHTML).toContain('operations-map-marker--selected-center');
+    expect(maplibreMocks.markers[1]?.element.innerHTML).toContain('operations-map-marker--selected');
+    expect(maplibreMocks.markers[2]?.element).toHaveTextContent('SOS');
+    expect(maplibreMocks.markers[2]?.element.innerHTML).toContain('operations-map-marker--sos');
+    expect(maplibreMocks.markers[2]?.element.innerHTML).toContain('data-marker-variant="sos"');
+    expect(maplibreMocks.markers[2]?.popup?.html).toContain('SOS sos-mobile-critical-1');
+  });
+
+
+  it('uses the global styleName prop and switches to day without dropping markers', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/map/countries')) return jsonResponse(countriesFixture);
+      if (url.endsWith('/map?countryCode=ES')) return jsonResponse(spainMapFixture);
+      return new Response('not found', { status: 404 });
+    });
+
+    const { rerender } = render(<OperationsMapPanel styleName="night" />);
+
+    const mapCanvas = await screen.findByTestId('maplibre-map');
+    expect(screen.queryByRole('group', { name: 'Map style' })).not.toBeInTheDocument();
+    expect(mapCanvas).toHaveClass('operations-map__canvas--night');
+    expect(mapCanvas).toHaveClass('maplibregl-map');
+    await waitFor(() => expect(maplibreMocks.markers).toHaveLength(3));
+    const existingMarkers = [...maplibreMocks.markers];
+
+    const setStyle = maplibreMocks.maps[0]?.setStyle;
+    const callsBeforeStyleChange = setStyle?.mock.calls.length ?? 0;
+
+    rerender(<OperationsMapPanel styleName="day" />);
+
+    expect(mapCanvas).toHaveClass('operations-map__canvas--day');
+    expect(mapCanvas).toHaveClass('maplibregl-map');
+    expect(mapCanvas).not.toHaveClass('operations-map__canvas--night');
+    expect(maplibreMocks.maps).toHaveLength(1);
+    expect(setStyle).toHaveBeenCalledTimes(callsBeforeStyleChange + 1);
+    const latestStyle = setStyle?.mock.calls.at(-1)?.[0] as { sources?: Record<string, unknown>; layers?: Array<{ id?: string; type?: string; source?: string; 'source-layer'?: string; paint?: Record<string, unknown> }> } | undefined;
+    expect(latestStyle?.sources?.openmaptiles).toMatchObject({
+      type: 'vector',
+      url: 'https://tiles.openfreemap.org/planet',
+    });
+    expect(latestStyle?.layers?.some((layer) => layer.type === 'raster')).toBe(false);
+    expect(latestStyle?.layers?.some((layer) => layer.id === 'water' && layer.source === 'openmaptiles')).toBe(true);
+    expect(latestStyle?.layers?.some((layer) => layer.id === 'road-labels' && layer.type === 'symbol')).toBe(true);
+    expect(latestStyle?.layers?.find((layer) => layer.id === 'road-labels')?.['source-layer']).toBe('transportation_name');
+    expect(latestStyle?.layers?.find((layer) => layer.id === 'background')?.paint?.['background-color']).toBe('#f8fafc');
+    expect(maplibreMocks.markers).toHaveLength(3);
+    existingMarkers.forEach((marker) => expect(marker.remove).not.toHaveBeenCalled());
   });
 
   it('renders global and country empty states without calling tiles', async () => {
@@ -147,10 +270,10 @@ describe('OperationsMapPanel', () => {
       return new Response('not found', { status: 404 });
     });
 
-    render(<OperationsMapPanel />);
+    render(<OperationsMapPanel styleName="night" />);
 
     expect(await screen.findByRole('status')).toHaveTextContent('No countries with operational map data yet.');
-    expect(screen.queryByTestId('leaflet-map')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('maplibre-map')).not.toBeInTheDocument();
 
     cleanup();
     vi.restoreAllMocks();
@@ -162,8 +285,8 @@ describe('OperationsMapPanel', () => {
       return new Response('not found', { status: 404 });
     });
 
-    render(<OperationsMapPanel />);
-    await waitFor(() => expect(screen.getByTestId('leaflet-map')).toBeInTheDocument());
+    render(<OperationsMapPanel styleName="night" />);
+    await waitFor(() => expect(screen.getByTestId('maplibre-map')).toBeInTheDocument());
     fireEvent.change(screen.getByLabelText('Country'), { target: { value: 'PT' } });
     expect(await screen.findByRole('status')).toHaveTextContent('No public geolocated map items for Portugal yet.');
   });
@@ -171,7 +294,7 @@ describe('OperationsMapPanel', () => {
   it('renders API errors accessibly', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('nope', { status: 503 }));
 
-    render(<OperationsMapPanel />);
+    render(<OperationsMapPanel styleName="night" />);
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Map countries failed with status 503');
   });

@@ -1,6 +1,18 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import L, { type DivIcon, type LatLngBoundsExpression, type LatLngExpression } from 'leaflet';
+import {
+  AttributionControl,
+  LngLatBounds,
+  Map as MapLibreMap,
+  Marker,
+  NavigationControl,
+  Popup,
+  setWorkerUrl,
+  type ExpressionSpecification,
+  type LngLatBoundsLike,
+  type LngLatLike,
+  type StyleSpecification,
+} from 'maplibre-gl';
 import {
   Activity,
   ClipboardList,
@@ -13,14 +25,38 @@ import {
   Warehouse,
   type LucideIcon,
 } from 'lucide-react';
-import { MapContainer, Marker, Popup, TileLayer, useMap } from 'react-leaflet';
-import 'leaflet/dist/leaflet.css';
+import 'maplibre-gl/dist/maplibre-gl.css';
+import workerUrl from 'maplibre-gl/dist/maplibre-gl-csp-worker.js?url';
 
 import type { OperationalMapResponse } from '@zona-cero/contracts';
 import { flattenOperationalMapMarkers, resolveOperationalMarkerVariant, type OperationalMapMarker } from './mapData';
 
-const osmAttribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
-const osmTileUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+setWorkerUrl(workerUrl);
+
+const openMapAttribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, <a href="https://openmaptiles.org/">OpenMapTiles</a>, <a href="https://openfreemap.org/">OpenFreeMap</a>';
+const openMapGlyphsUrl = 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf';
+const defaultCenter: LngLatLike = [-3.7038, 40.4168];
+const localizedNameExpression: ExpressionSpecification = ['coalesce', ['get', 'name_en'], ['get', 'name']];
+
+export type OperationsMapStyleName = 'day' | 'night';
+
+type OperationsMapStyleConfig = {
+  className: string;
+  style: StyleSpecification;
+};
+
+const mapStyles: Record<OperationsMapStyleName, OperationsMapStyleConfig> = {
+  day: {
+    className: 'operations-map__canvas--day',
+    style: createVectorStyle('day'),
+  },
+  night: {
+    className: 'operations-map__canvas--night',
+    style: createVectorStyle('night'),
+  },
+};
+
+const defaultMapStyle: OperationsMapStyleName = 'night';
 
 const markerIconByVariant: Record<ReturnType<typeof resolveOperationalMarkerVariant>, string> = {
   selected_center: renderMarkerIcon(Warehouse),
@@ -48,60 +84,277 @@ const markerLabelByVariant: Record<ReturnType<typeof resolveOperationalMarkerVar
   dangerous_zone: 'Dangerous zone',
 };
 
-export function OperationsMap({ map }: { map: OperationalMapResponse }) {
-  const markers = flattenOperationalMapMarkers(map);
+export function OperationsMap({ map, styleName = defaultMapStyle }: { map: OperationalMapResponse; styleName?: OperationsMapStyleName }) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<MapLibreMap | null>(null);
+  const markerRefs = useRef<Array<{ marker: Marker; popup: Popup }>>([]);
+  const currentStyleNameRef = useRef<OperationsMapStyleName>(styleName);
+  const markers = useMemo(() => flattenOperationalMapMarkers(map), [map]);
   const selectedCenterId = markers.find((marker) => marker.kind === 'work_center')?.id;
-  const bounds = toLeafletBounds(map);
+  const bounds = useMemo(() => toMapLibreBounds(map), [map]);
   const longitudeCenter = toLongitudeCenter(map);
-  const center = toMapCenter(map) ?? ([40.4168, -3.7038] satisfies LatLngExpression);
+  const center = useMemo(() => toMapCenter(map) ?? defaultCenter, [map]);
+  const styleConfig = mapStyles[styleName];
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const operationalMap = new MapLibreMap({
+      attributionControl: false,
+      center,
+      container: containerRef.current,
+      cooperativeGestures: true,
+      scrollZoom: false,
+      style: styleConfig.style,
+      zoom: 6,
+    });
+
+    operationalMap.addControl(new NavigationControl({ showCompass: false }), 'top-right');
+    operationalMap.addControl(new AttributionControl({ compact: true }), 'bottom-right');
+    mapRef.current = operationalMap;
+    currentStyleNameRef.current = styleName;
+
+    return () => {
+      markerRefs.current.forEach(({ marker, popup }) => {
+        popup.remove();
+        marker.remove();
+      });
+      markerRefs.current = [];
+      operationalMap.remove();
+      if (mapRef.current === operationalMap) mapRef.current = null;
+    };
+  }, [center]);
+
+  useEffect(() => {
+    const operationalMap = mapRef.current;
+    if (!operationalMap) return;
+    if (currentStyleNameRef.current === styleName) return;
+
+    operationalMap.setStyle(styleConfig.style);
+    currentStyleNameRef.current = styleName;
+  }, [styleConfig.style, styleName]);
+
+  useEffect(() => {
+    const operationalMap = mapRef.current;
+    if (!operationalMap) return;
+
+    markerRefs.current.forEach(({ marker, popup }) => {
+      popup.remove();
+      marker.remove();
+    });
+
+    markerRefs.current = markers.map((markerData) => {
+      const selected = markerData.id === selectedCenterId;
+      const variant = resolveOperationalMarkerVariant(markerData, selected);
+      const placement = resolveMarkerPlacement(markerData, longitudeCenter);
+      const popup = new Popup({ closeButton: true, closeOnClick: true, maxWidth: '18rem' }).setHTML(createPopupHtml(markerData));
+      const marker = new Marker({ element: createMarkerElement(markerData, variant, selected, placement), anchor: 'bottom' })
+        .setLngLat([markerData.longitude, markerData.latitude])
+        .setPopup(popup)
+        .addTo(operationalMap);
+
+      return { marker, popup };
+    });
+
+    const frame = window.requestAnimationFrame(() => {
+      operationalMap.resize();
+      if (bounds) {
+        operationalMap.fitBounds(bounds, { padding: 150 });
+      } else {
+        operationalMap.setCenter(center);
+        operationalMap.setZoom(6);
+      }
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      markerRefs.current.forEach(({ marker, popup }) => {
+        popup.remove();
+        marker.remove();
+      });
+      markerRefs.current = [];
+    };
+  }, [bounds, center, longitudeCenter, markers, selectedCenterId]);
 
   return (
     <div className="operations-map" aria-label={`Operational map for ${map.countryName}`}>
-      <MapContainer
-        key={map.countryCode}
-        className="operations-map__canvas operations-map__canvas--night"
-        center={center}
-        zoom={6}
-        scrollWheelZoom={false}
-      >
-        {bounds ? <FitOperationalBounds bounds={bounds} /> : null}
-        <TileLayer attribution={osmAttribution} url={osmTileUrl} />
-        {markers.map((marker) => {
-          const selected = marker.id === selectedCenterId;
-          const variant = resolveOperationalMarkerVariant(marker, selected);
-          const placement = resolveMarkerPlacement(marker, longitudeCenter);
-
-          return (
-            <Marker key={marker.id} position={[marker.latitude, marker.longitude]} icon={createMarkerIcon(marker, variant, selected, placement)}>
-              <Popup>
-                <strong>{marker.label}</strong>
-                <br />
-                {marker.kind.replace('_', ' ')} · {marker.status}
-                <br />
-                {marker.detail}
-              </Popup>
-            </Marker>
-          );
-        })}
-      </MapContainer>
-      <p className="operations-map__attribution">Map data © OpenStreetMap contributors</p>
+      <div ref={containerRef} data-testid="maplibre-map" className={`operations-map__canvas maplibregl-map ${styleConfig.className}`} />
+      <p className="operations-map__attribution">Map data © OpenStreetMap, OpenMapTiles, OpenFreeMap</p>
     </div>
   );
 }
 
-function FitOperationalBounds({ bounds }: { bounds: LatLngBoundsExpression }) {
-  const map = useMap();
+function createVectorStyle(styleName: OperationsMapStyleName): StyleSpecification {
+  const colors = styleName === 'night'
+    ? {
+        background: '#020817',
+        land: '#08111f',
+        landcover: '#0e1a2b',
+        park: '#10251f',
+        water: '#063a5f',
+        waterway: '#0b6fa4',
+        road: '#3f5168',
+        majorRoad: '#5f7894',
+        building: '#111827',
+        boundary: '#38bdf8',
+        label: '#8fb6d8',
+        labelHalo: '#020817',
+        roadLabel: '#7898b8',
+      }
+    : {
+        background: '#f8fafc',
+        land: '#eef2f7',
+        landcover: '#e7f5df',
+        park: '#d9f99d',
+        water: '#93c5fd',
+        waterway: '#2563eb',
+        road: '#ffffff',
+        majorRoad: '#fef3c7',
+        building: '#e2e8f0',
+        boundary: '#64748b',
+        label: '#334155',
+        labelHalo: '#f8fafc',
+        roadLabel: '#475569',
+      };
 
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      map.invalidateSize();
-      map.fitBounds(bounds, { padding: [150, 150] });
-    });
-
-    return () => window.cancelAnimationFrame(frame);
-  }, [bounds, map]);
-
-  return null;
+  return {
+    version: 8,
+    glyphs: openMapGlyphsUrl,
+    sources: {
+      openmaptiles: {
+        type: 'vector',
+        url: 'https://tiles.openfreemap.org/planet',
+        attribution: openMapAttribution,
+      },
+    },
+    layers: [
+      {
+        id: 'background',
+        type: 'background',
+        paint: { 'background-color': colors.background },
+      },
+      {
+        id: 'land',
+        type: 'fill',
+        source: 'openmaptiles',
+        'source-layer': 'landuse',
+        paint: { 'fill-color': colors.land, 'fill-opacity': styleName === 'night' ? 0.42 : 0.58 },
+      },
+      {
+        id: 'landcover',
+        type: 'fill',
+        source: 'openmaptiles',
+        'source-layer': 'landcover',
+        filter: ['in', ['get', 'class'], ['literal', ['wood', 'grass', 'farmland', 'scrub']]],
+        paint: { 'fill-color': colors.landcover, 'fill-opacity': styleName === 'night' ? 0.44 : 0.72 },
+      },
+      {
+        id: 'park',
+        type: 'fill',
+        source: 'openmaptiles',
+        'source-layer': 'park',
+        paint: { 'fill-color': colors.park, 'fill-opacity': styleName === 'night' ? 0.36 : 0.62 },
+      },
+      {
+        id: 'water',
+        type: 'fill',
+        source: 'openmaptiles',
+        'source-layer': 'water',
+        paint: { 'fill-color': colors.water, 'fill-opacity': styleName === 'night' ? 0.88 : 0.82 },
+      },
+      {
+        id: 'waterway',
+        type: 'line',
+        source: 'openmaptiles',
+        'source-layer': 'waterway',
+        paint: { 'line-color': colors.waterway, 'line-opacity': styleName === 'night' ? 0.72 : 0.68, 'line-width': ['interpolate', ['linear'], ['zoom'], 5, 0.35, 12, 1.4] },
+      },
+      {
+        id: 'building',
+        type: 'fill',
+        source: 'openmaptiles',
+        'source-layer': 'building',
+        minzoom: 12,
+        paint: { 'fill-color': colors.building, 'fill-opacity': styleName === 'night' ? 0.34 : 0.48 },
+      },
+      {
+        id: 'roads-minor',
+        type: 'line',
+        source: 'openmaptiles',
+        'source-layer': 'transportation',
+        filter: ['in', ['get', 'class'], ['literal', ['minor', 'service', 'track']]],
+        paint: { 'line-color': colors.road, 'line-opacity': styleName === 'night' ? 0.2 : 0.52, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.2, 14, 1.2] },
+      },
+      {
+        id: 'roads-major',
+        type: 'line',
+        source: 'openmaptiles',
+        'source-layer': 'transportation',
+        filter: ['in', ['get', 'class'], ['literal', ['primary', 'secondary', 'tertiary', 'trunk', 'motorway']]],
+        paint: { 'line-color': colors.majorRoad, 'line-opacity': styleName === 'night' ? 0.34 : 0.76, 'line-width': ['interpolate', ['linear'], ['zoom'], 5, 0.45, 12, 2.2] },
+      },
+      {
+        id: 'boundaries',
+        type: 'line',
+        source: 'openmaptiles',
+        'source-layer': 'boundary',
+        paint: { 'line-color': colors.boundary, 'line-dasharray': [2, 2], 'line-opacity': styleName === 'night' ? 0.34 : 0.42, 'line-width': 0.8 },
+      },
+      {
+        id: 'road-labels',
+        type: 'symbol',
+        source: 'openmaptiles',
+        'source-layer': 'transportation_name',
+        minzoom: 11,
+        filter: [
+          'match',
+          ['get', 'class'],
+          ['primary', 'secondary', 'tertiary', 'trunk'],
+          true,
+          false,
+        ],
+        layout: {
+          'symbol-placement': 'line',
+          'symbol-spacing': 420,
+          'text-field': localizedNameExpression,
+          'text-font': ['Noto Sans Regular'],
+          'text-size': ['interpolate', ['linear'], ['zoom'], 10, 9, 15, 12],
+          'text-letter-spacing': 0.02,
+        },
+        paint: {
+          'text-color': colors.roadLabel,
+          'text-halo-color': colors.labelHalo,
+          'text-halo-width': styleName === 'night' ? 1.2 : 1,
+          'text-opacity': styleName === 'night' ? 0.58 : 0.72,
+        },
+      },
+      {
+        id: 'place-labels',
+        type: 'symbol',
+        source: 'openmaptiles',
+        'source-layer': 'place',
+        minzoom: 7,
+        filter: [
+          'all',
+          ['has', 'name'],
+          ['in', ['get', 'class'], ['literal', ['city', 'town', 'village', 'suburb', 'neighbourhood']]],
+        ],
+        layout: {
+          'text-field': localizedNameExpression,
+          'text-font': ['Noto Sans Regular'],
+          'text-size': ['interpolate', ['linear'], ['zoom'], 7, 10, 12, 14],
+          'text-letter-spacing': 0.01,
+          'text-max-width': 9,
+        },
+        paint: {
+          'text-color': colors.label,
+          'text-halo-color': colors.labelHalo,
+          'text-halo-width': styleName === 'night' ? 1.4 : 1.1,
+          'text-opacity': styleName === 'night' ? 0.66 : 0.82,
+        },
+      },
+    ],
+  };
 }
 
 function resolveMarkerPlacement(marker: OperationalMapMarker, longitudeCenter: number | null): 'west' | 'center' | 'east' {
@@ -111,25 +364,29 @@ function resolveMarkerPlacement(marker: OperationalMapMarker, longitudeCenter: n
   return 'center';
 }
 
-function createMarkerIcon(
+function createMarkerElement(
   marker: OperationalMapMarker,
   variant: ReturnType<typeof resolveOperationalMarkerVariant>,
   selected: boolean,
   placement: 'west' | 'center' | 'east',
-): DivIcon {
+): HTMLElement {
   const variantClass = variant.replaceAll('_', '-');
   const label = variant === 'selected_center' ? marker.label : markerLabelByVariant[variant];
   const safeLabel = escapeHtml(label);
   const safeDetail = escapeHtml(`${marker.kind.replace('_', ' ')} · ${marker.status} · ${marker.detail}`);
-  const size: [number, number] = selected ? [164, 96] : [140, 78];
+  const [width, height] = selected ? [164, 96] : [140, 78];
+  const element = document.createElement('div');
 
-  return L.divIcon({
-    className: 'operations-map-marker-shell',
-    iconSize: size,
-    iconAnchor: [size[0] / 2, selected ? 72 : 58],
-    popupAnchor: [0, selected ? -74 : -62],
-    html: `<span class="operations-map-marker operations-map-marker--${variantClass} operations-map-marker--${placement}${selected ? ' operations-map-marker--selected' : ''}" data-marker-variant="${variantClass}" title="${safeDetail}"><span class="operations-map-marker__icon" aria-hidden="true">${markerIconByVariant[variant]}</span><span class="operations-map-marker__anchor" aria-hidden="true"></span><span class="operations-map-marker__label">${safeLabel}</span></span>`,
-  });
+  element.className = 'operations-map-marker-shell';
+  element.style.width = `${width}px`;
+  element.style.height = `${height}px`;
+  element.innerHTML = `<span class="operations-map-marker operations-map-marker--${variantClass} operations-map-marker--${placement}${selected ? ' operations-map-marker--selected' : ''}" data-marker-variant="${variantClass}" title="${safeDetail}"><span class="operations-map-marker__icon" aria-hidden="true">${markerIconByVariant[variant]}</span><span class="operations-map-marker__anchor" aria-hidden="true"></span><span class="operations-map-marker__label">${safeLabel}</span></span>`;
+
+  return element;
+}
+
+function createPopupHtml(marker: OperationalMapMarker): string {
+  return `<strong>${escapeHtml(marker.label)}</strong><br />${escapeHtml(marker.kind.replace('_', ' '))} · ${escapeHtml(marker.status)}<br />${escapeHtml(marker.detail)}`;
 }
 
 function renderMarkerIcon(Icon: LucideIcon): string {
@@ -155,7 +412,7 @@ function escapeHtml(value: string): string {
   });
 }
 
-function toLeafletBounds(map: OperationalMapResponse): LatLngBoundsExpression | undefined {
+function toMapLibreBounds(map: OperationalMapResponse): LngLatBoundsLike | undefined {
   if (!map.bounds) return undefined;
 
   const latitudeSpan = map.bounds.northEast.latitude - map.bounds.southWest.latitude;
@@ -163,10 +420,10 @@ function toLeafletBounds(map: OperationalMapResponse): LatLngBoundsExpression | 
   const latitudePadding = Math.max(latitudeSpan * 0.18, 0.12);
   const longitudePadding = Math.max(longitudeSpan * 0.18, 0.12);
 
-  return [
-    [clampLatitude(map.bounds.southWest.latitude - latitudePadding), clampLongitude(map.bounds.southWest.longitude - longitudePadding)],
-    [clampLatitude(map.bounds.northEast.latitude + latitudePadding), clampLongitude(map.bounds.northEast.longitude + longitudePadding)],
-  ];
+  return new LngLatBounds(
+    [clampLongitude(map.bounds.southWest.longitude - longitudePadding), clampLatitude(map.bounds.southWest.latitude - latitudePadding)],
+    [clampLongitude(map.bounds.northEast.longitude + longitudePadding), clampLatitude(map.bounds.northEast.latitude + latitudePadding)],
+  );
 }
 
 function clampLatitude(value: number): number {
@@ -182,11 +439,11 @@ function toLongitudeCenter(map: OperationalMapResponse): number | null {
   return (map.bounds.northEast.longitude + map.bounds.southWest.longitude) / 2;
 }
 
-function toMapCenter(map: OperationalMapResponse): LatLngExpression | null {
+function toMapCenter(map: OperationalMapResponse): LngLatLike | null {
   const longitudeCenter = toLongitudeCenter(map);
   if (!map.bounds || longitudeCenter === null) return null;
   return [
-    (map.bounds.northEast.latitude + map.bounds.southWest.latitude) / 2,
     longitudeCenter,
+    (map.bounds.northEast.latitude + map.bounds.southWest.latitude) / 2,
   ];
 }

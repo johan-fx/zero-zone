@@ -37,6 +37,9 @@ import {
   type WebTelemetryAction,
 } from './telemetry';
 import { I18nProvider, LanguageSelector, useI18n } from './i18n';
+import { type AppThemeOverride, useAppThemeMode } from './themeMode';
+
+type AppThemeController = ReturnType<typeof useAppThemeMode>;
 import {
   activationStateTone,
   confidenceTone,
@@ -194,6 +197,7 @@ export function App() {
 
 function AppContent() {
   reportWebTelemetry('app.loaded', 'accepted');
+  const theme = useAppThemeMode();
   const privateLinkParams = getPrivateLinkParams();
 
   if (privateLinkParams) {
@@ -206,10 +210,10 @@ function AppContent() {
     );
   }
 
-  return <OperationsPanel />;
+  return <OperationsPanel theme={theme} />;
 }
 
-function OperationsPanel() {
+function OperationsPanel({ theme }: { theme: AppThemeController }) {
   const { t } = useI18n();
   const incidentId = import.meta.env.VITE_INCIDENT_ID || defaultIncidentId;
   const cellId = import.meta.env.VITE_CELL_ID || defaultCellId;
@@ -382,7 +386,14 @@ function OperationsPanel() {
       <section className="hero" aria-labelledby="page-title">
         <div className="hero-topline">
           <p className="eyebrow">{t('web.hero.eyebrow')}</p>
-          <LanguageSelector />
+          <div className="hero-actions">
+            <ThemeModeSelector
+              override={theme.override}
+              resolvedMode={theme.resolvedMode}
+              onChange={theme.setOverride}
+            />
+            <LanguageSelector />
+          </div>
         </div>
         <h1 id="page-title">{t('web.hero.title')}</h1>
         <p className="summary">{t('web.hero.summary')}</p>
@@ -415,7 +426,7 @@ function OperationsPanel() {
         <section className="status-card" aria-label="Operational map" aria-live="polite">
           <HubBackLink onNavigate={navigate} />
           <Suspense fallback={<p>Loading operational map…</p>}>
-            <OperationsMapPanel />
+            <OperationsMapPanel styleName={theme.resolvedMode} />
           </Suspense>
         </section>
       ) : null}
@@ -492,6 +503,55 @@ function OperationsPanel() {
         </section>
       ) : null}
     </main>
+  );
+}
+
+function ThemeModeSelector({
+  override,
+  resolvedMode,
+  onChange,
+}: {
+  override: AppThemeOverride;
+  resolvedMode: 'day' | 'night';
+  onChange: (override: AppThemeOverride) => void;
+}) {
+  return (
+    <fieldset className="theme-mode-selector" aria-label="Theme mode">
+      <legend>Theme</legend>
+      <label className="theme-mode-selector__option">
+        <input
+          type="radio"
+          name="zc-theme-mode"
+          value="auto"
+          checked={override === 'auto'}
+          onChange={() => onChange('auto')}
+        />
+        Auto
+      </label>
+      <label className="theme-mode-selector__option">
+        <input
+          type="radio"
+          name="zc-theme-mode"
+          value="day"
+          checked={override === 'day'}
+          onChange={() => onChange('day')}
+        />
+        Day
+      </label>
+      <label className="theme-mode-selector__option">
+        <input
+          type="radio"
+          name="zc-theme-mode"
+          value="night"
+          checked={override === 'night'}
+          onChange={() => onChange('night')}
+        />
+        Night
+      </label>
+      <span className="theme-mode-selector__resolved" aria-live="polite">
+        Current: {resolvedMode === 'day' ? 'Day' : 'Night'}
+      </span>
+    </fieldset>
   );
 }
 

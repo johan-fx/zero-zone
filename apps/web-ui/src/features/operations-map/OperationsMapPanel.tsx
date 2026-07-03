@@ -4,7 +4,7 @@ import type { CountryOption, OperationalMapResponse } from '@zona-cero/contracts
 import { SectionHeader, StatusBadge } from '@zona-cero/ui/web';
 import { fetchMapCountries, fetchOperationalMap } from '../../api';
 import { CountryFilter } from './CountryFilter';
-import { OperationsMap } from './OperationsMap';
+import { OperationsMap, type OperationsMapStyleName } from './OperationsMap';
 import { countMapMarkers, flattenOperationalMapMarkers } from './mapData';
 
 type CountriesState =
@@ -17,7 +17,7 @@ type MapState =
   | { status: 'ready'; map: OperationalMapResponse }
   | { status: 'error'; message: string };
 
-export function OperationsMapPanel() {
+export function OperationsMapPanel({ styleName }: { styleName: OperationsMapStyleName }) {
   const mapTitleId = useId();
   const [countriesState, setCountriesState] = useState<CountriesState>({ status: 'loading' });
   const [selectedCountryCode, setSelectedCountryCode] = useState('');
@@ -89,12 +89,12 @@ export function OperationsMapPanel() {
         <p role="status">No countries with operational map data yet.</p>
       ) : null}
 
-      {countries.length > 0 ? <MapStateView state={mapState} /> : null}
+      {countries.length > 0 ? <MapStateView state={mapState} styleName={styleName} /> : null}
     </div>
   );
 }
 
-function MapStateView({ state }: { state: MapState }) {
+function MapStateView({ state, styleName }: { state: MapState; styleName: OperationsMapStyleName }) {
   switch (state.status) {
     case 'idle':
       return null;
@@ -103,11 +103,11 @@ function MapStateView({ state }: { state: MapState }) {
     case 'error':
       return <p role="alert">{state.message}</p>;
     case 'ready':
-      return <OperationalMapReadyView map={state.map} />;
+      return <OperationalMapReadyView map={state.map} styleName={styleName} />;
   }
 }
 
-function OperationalMapReadyView({ map }: { map: OperationalMapResponse }) {
+function OperationalMapReadyView({ map, styleName }: { map: OperationalMapResponse; styleName: OperationsMapStyleName }) {
   const mapListTitleId = useId();
   const markers = useMemo(() => flattenOperationalMapMarkers(map), [map]);
   const markerCount = countMapMarkers(map);
@@ -125,7 +125,7 @@ function OperationalMapReadyView({ map }: { map: OperationalMapResponse }) {
         <p role="status">No public geolocated map items for {map.countryName} yet.</p>
       ) : (
         <>
-          <OperationsMap map={map} />
+          <OperationsMap map={map} styleName={styleName} />
           <section className="map-accessible-list" aria-labelledby={mapListTitleId}>
             <h3 id={mapListTitleId}>Map items</h3>
             <ul>
