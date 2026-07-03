@@ -156,9 +156,14 @@ describe('web ui work center shell', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date(2026, 6, 4, 21, 0));
     mockOperationsShellFetch();
+    const { webTelemetry } = await import('./telemetry');
+    const initialLoadedEvents = webTelemetry.events.filter((event) => event.action === 'app.loaded').length;
 
     render(<App />);
 
+    await waitFor(() =>
+      expect(webTelemetry.events.filter((event) => event.action === 'app.loaded')).toHaveLength(initialLoadedEvents + 1),
+    );
     expect(await screen.findByLabelText('Theme mode')).toBeInTheDocument();
     expect(screen.getByLabelText('Auto')).toBeChecked();
     expect(screen.getByText('Current: Night')).toBeInTheDocument();
@@ -166,7 +171,9 @@ describe('web ui work center shell', () => {
     expect(document.documentElement.dataset.zcThemeMode).toBe('auto');
 
     fireEvent.click(screen.getByLabelText('Day'));
+    await Promise.resolve();
 
+    expect(webTelemetry.events.filter((event) => event.action === 'app.loaded')).toHaveLength(initialLoadedEvents + 1);
     expect(screen.getByLabelText('Day')).toBeChecked();
     expect(screen.getByText('Current: Day')).toBeInTheDocument();
     expect(document.documentElement.dataset.zcTheme).toBe('light');

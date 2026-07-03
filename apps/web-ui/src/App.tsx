@@ -196,7 +196,10 @@ export function App() {
 }
 
 function AppContent() {
-  reportWebTelemetry('app.loaded', 'accepted');
+  useEffect(() => {
+    reportWebTelemetry('app.loaded', 'accepted');
+  }, []);
+
   const theme = useAppThemeMode();
   const privateLinkParams = getPrivateLinkParams();
 
