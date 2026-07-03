@@ -46,7 +46,7 @@ export function OperationsMap({ map }: { map: OperationalMapResponse }) {
     <div className="operations-map" aria-label={`Operational map for ${map.countryName}`}>
       <MapContainer
         key={map.countryCode}
-        className="operations-map__canvas"
+        className="operations-map__canvas operations-map__canvas--night"
         center={center}
         zoom={bounds ? 6 : 6}
         scrollWheelZoom={false}

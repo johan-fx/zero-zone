@@ -630,3 +630,37 @@ dd {
       drop-shadow(0 18px 28px rgba(0, 0, 0, 0.42));
   }
 }
+
+.operations-map__canvas--night {
+  background: #020817;
+  box-shadow:
+    inset 0 0 0 1px rgba(96, 165, 250, 0.18),
+    inset 0 0 80px rgba(15, 23, 42, 0.46);
+}
+
+.operations-map__canvas--night .leaflet-tile-pane {
+  background: #020817;
+}
+
+.operations-map__canvas--night .leaflet-tile {
+  filter: brightness(0.62) contrast(1.22) saturate(0.82) hue-rotate(172deg) invert(0.92);
+}
+
+.operations-map__canvas--night .leaflet-container {
+  background: #020817;
+}
+
+.operations-map__canvas--night .leaflet-control-zoom a {
+  background: rgba(15, 23, 42, 0.9);
+  border-color: rgba(96, 165, 250, 0.28);
+  color: #e5eefc;
+}
+
+.operations-map__canvas--night .leaflet-control-attribution {
+  background: rgba(15, 23, 42, 0.76);
+  color: #dbeafe;
+}
+
+.operations-map__canvas--night .leaflet-control-attribution a {
+  color: #93c5fd;
+}
