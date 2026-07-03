@@ -412,7 +412,7 @@ function OperationsPanel() {
       ) : null}
 
       {route === 'map' ? (
-        <section className="status-card" aria-labelledby="map-title" aria-live="polite">
+        <section className="status-card" aria-label="Operational map" aria-live="polite">
           <HubBackLink onNavigate={navigate} />
           <Suspense fallback={<p>Loading operational map…</p>}>
             <OperationsMapPanel />

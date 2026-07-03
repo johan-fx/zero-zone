@@ -67,22 +67,17 @@ export function resolveOperationalMarkerVariant(marker: OperationalMapMarker, se
   const status = marker.status.toLowerCase();
   const priority = marker.priority?.toLowerCase();
 
-  if (status.includes('danger') || status.includes('critical')) return 'dangerous_zone';
-  if (status.includes('medic') || status.includes('medical')) return 'needs_medics';
-  if (status.includes('surplus')) return 'surplus_resource';
-  if (status.includes('saturat') || status.includes('full')) return 'saturated_zone';
-
   if (marker.kind === 'work_center') {
-    if (priority === 'high' && (status === 'reported' || status.includes('shortage'))) return 'critical_shortage';
-    if (status === 'reported' || status === 'pending') return 'pending';
-    if (status === 'active' || status === 'open') return 'active';
+    if (status === 'reported') return priority === 'high' || priority === 'critical' ? 'critical_shortage' : 'pending';
+    if (status === 'active') return 'active';
+    return 'observing';
   }
 
-  if (marker.kind === 'incident' && (status === 'active' || status === 'open')) return 'active';
+  if (marker.kind === 'incident' && status === 'active') return 'active';
 
   return 'observing';
 }
 
 export function countMapMarkers(map: OperationalMapResponse): number {
-  return flattenOperationalMapMarkers(map).length;
+  return map.incidents.length + map.workCenters.length + map.sosAlerts.length;
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 
 import type { CountryOption, OperationalMapResponse } from '@zona-cero/contracts';
 import { SectionHeader, StatusBadge } from '@zona-cero/ui/web';
@@ -18,6 +18,7 @@ type MapState =
   | { status: 'error'; message: string };
 
 export function OperationsMapPanel() {
+  const mapTitleId = useId();
   const [countriesState, setCountriesState] = useState<CountriesState>({ status: 'loading' });
   const [selectedCountryCode, setSelectedCountryCode] = useState('');
   const [mapState, setMapState] = useState<MapState>({ status: 'idle' });
@@ -66,12 +67,12 @@ export function OperationsMapPanel() {
   const selectedCountry = countries.find((country) => country.countryCode === selectedCountryCode);
 
   return (
-    <div className="operations-map-panel" role="region" aria-labelledby="map-title" data-testid="operations-map-panel">
+    <div className="operations-map-panel" role="region" aria-labelledby={mapTitleId} data-testid="operations-map-panel">
       <div className="operations-map-panel__toolbar">
         <SectionHeader
           eyebrow="Operational map"
           title="Map overview"
-          titleId="map-title"
+          titleId={mapTitleId}
           trailing={selectedCountry ? <StatusBadge tone="info" label={`${selectedCountry.markerCount} markers`} /> : null}
         />
         <CountryFilter
@@ -107,6 +108,7 @@ function MapStateView({ state }: { state: MapState }) {
 }
 
 function OperationalMapReadyView({ map }: { map: OperationalMapResponse }) {
+  const mapListTitleId = useId();
   const markers = useMemo(() => flattenOperationalMapMarkers(map), [map]);
   const markerCount = countMapMarkers(map);
 
@@ -124,8 +126,8 @@ function OperationalMapReadyView({ map }: { map: OperationalMapResponse }) {
       ) : (
         <>
           <OperationsMap map={map} />
-          <section className="map-accessible-list" aria-labelledby="map-list-title">
-            <h3 id="map-list-title">Map items</h3>
+          <section className="map-accessible-list" aria-labelledby={mapListTitleId}>
+            <h3 id={mapListTitleId}>Map items</h3>
             <ul>
               {markers.map((marker) => (
                 <li key={marker.id}>

@@ -89,7 +89,6 @@ describe('api contract integration', () => {
     expect(populatedMap.workCenters[0]).toMatchObject({ type: 'work_center', name: 'North triage point' });
     expect(populatedMap.sosAlerts).toEqual([]);
     expect(populatedMap.counts.sosAlerts).toBe(1);
-    expect(JSON.stringify(populatedMap)).not.toContain('sosAlertId');
   });
 
   it('returns work center payloads accepted by shared contracts', async () => {

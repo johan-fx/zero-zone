@@ -1158,8 +1158,7 @@ async function getOperationalMap(db: D1Database, countryCode: string): Promise<O
     return null;
   }
 
-  const incidentIds = await listCountryIncidentIds(db, countryCode);
-  const workCenters = incidentIds.length > 0 ? await listMapWorkCenterMarkers(db, incidentIds) : [];
+  const workCenters = await listMapWorkCenterMarkers(db, countryCode);
   const sosAlertCount = await countMapSosAlerts(db, countryCode);
   const withoutLocation = await countMapItemsWithoutLocation(db, countryCode);
   // Public map payloads intentionally reduce location precision for operational privacy.
@@ -1191,14 +1190,6 @@ async function findCountryName(db: D1Database, countryCode: string): Promise<str
   return row?.countryName ?? null;
 }
 
-async function listCountryIncidentIds(db: D1Database, countryCode: string): Promise<string[]> {
-  const { results } = await db
-    .prepare('SELECT incident_id AS incidentId FROM incidents WHERE country_code = ? ORDER BY starts_at DESC')
-    .bind(countryCode)
-    .all<{ incidentId: string }>();
-  return results.map((row) => row.incidentId);
-}
-
 async function listMapIncidents(db: D1Database, countryCode: string): Promise<IncidentMapSummary[]> {
   const { results } = await db
     .prepare(
@@ -1223,17 +1214,17 @@ async function listMapIncidents(db: D1Database, countryCode: string): Promise<In
   }));
 }
 
-async function listMapWorkCenterMarkers(db: D1Database, incidentIds: string[]): Promise<MapWorkCenterMarker[]> {
-  const placeholders = incidentIds.map(() => '?').join(', ');
+async function listMapWorkCenterMarkers(db: D1Database, countryCode: string): Promise<MapWorkCenterMarker[]> {
   const { results } = await db
     .prepare(
-      `SELECT work_center_id AS workCenterId, incident_id AS incidentId, name, priority, status,
-        latitude, longitude, updated_at AS updatedAt
-       FROM work_centers
-       WHERE incident_id IN (${placeholders}) AND latitude IS NOT NULL AND longitude IS NOT NULL
-       ORDER BY updated_at DESC`,
+      `SELECT wc.work_center_id AS workCenterId, wc.incident_id AS incidentId, wc.name, wc.priority, wc.status,
+        wc.latitude, wc.longitude, wc.updated_at AS updatedAt
+       FROM work_centers wc
+       INNER JOIN incidents i ON i.incident_id = wc.incident_id
+       WHERE i.country_code = ? AND wc.latitude IS NOT NULL AND wc.longitude IS NOT NULL
+       ORDER BY wc.updated_at DESC`,
     )
-    .bind(...incidentIds)
+    .bind(countryCode)
     .all<Pick<WorkCenterRow, 'workCenterId' | 'incidentId' | 'name' | 'priority' | 'status' | 'latitude' | 'longitude' | 'updatedAt'>>();
 
   return results.map((row) => ({

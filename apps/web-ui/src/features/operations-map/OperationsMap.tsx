@@ -61,7 +61,7 @@ export function OperationsMap({ map }: { map: OperationalMapResponse }) {
         key={map.countryCode}
         className="operations-map__canvas operations-map__canvas--night"
         center={center}
-        zoom={bounds ? 6 : 6}
+        zoom={6}
         scrollWheelZoom={false}
       >
         {bounds ? <FitOperationalBounds bounds={bounds} /> : null}
@@ -183,9 +183,10 @@ function toLongitudeCenter(map: OperationalMapResponse): number | null {
 }
 
 function toMapCenter(map: OperationalMapResponse): LatLngExpression | null {
-  if (!map.bounds) return null;
+  const longitudeCenter = toLongitudeCenter(map);
+  if (!map.bounds || longitudeCenter === null) return null;
   return [
     (map.bounds.northEast.latitude + map.bounds.southWest.latitude) / 2,
-    (map.bounds.northEast.longitude + map.bounds.southWest.longitude) / 2,
+    longitudeCenter,
   ];
 }

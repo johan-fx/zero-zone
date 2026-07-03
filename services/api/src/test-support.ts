@@ -60,8 +60,8 @@ async function execSqlStatements(db: D1Database, sql: string): Promise<void> {
       await db.exec(normalized);
     } catch (error) {
       if (error instanceof Error && error.message.includes('duplicate column name')) {
-        const duplicateSafeColumns = ['ADD COLUMN preferred_locale', 'ADD COLUMN country_code', 'ADD COLUMN country_name', 'ADD COLUMN latitude', 'ADD COLUMN longitude'];
-        if (duplicateSafeColumns.some((column) => normalized.includes(column))) {
+        const duplicateSafeColumns = ['preferred_locale', 'country_code', 'country_name', 'latitude', 'longitude'];
+        if (duplicateSafeColumns.some((column) => normalized.includes(`ADD COLUMN ${column} `))) {
           continue;
         }
       }
