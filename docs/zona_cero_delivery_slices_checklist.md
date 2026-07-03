@@ -206,6 +206,40 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 - Mobile usa `WorkCenterCreatePayloadSchema`, mantiene creación offline mediante outbox/materializer/local DB y marca centros locales como provisionales hasta sincronizar estado canónico.
 - Verificación ejecutada: `pnpm contracts:test:strict`, `pnpm api:test:strict`, `pnpm telegram:test:strict`, `pnpm web:test:strict`, `pnpm mobile:test:strict`, `pnpm test:strict`, `git diff --check` y `pnpm e2e`.
 
+### Seguimiento 2026-07-03 - mapa operativo Web UI + E2E Telegram
+
+**Rama:** `feat/operational-map-dashboard`
+
+| Equipo | Checklist |
+|---|---|
+| A | 🟢 Añadir dashboard Web UI con mapa operativo, selector de país derivado y lista accesible de marcadores. |
+| A | 🟢 Añadir soporte Telegram para `message.location` en el flow `/workcenter`. |
+| A | 🟢 Añadir E2E local Telegram → API `/map` → Web UI map panel. |
+| B | 🟢 Exponer endpoints públicos de mapa operativo con países derivados de incidentes/centros geolocalizados. |
+| B | 🟢 Reducir precisión pública de coordenadas de incidentes/centros a dos decimales y excluir SOS del mapa público. |
+| Todos | 🟢 Revisar con subagentes el diff de mapa operativo y el E2E antes de commit. |
+| Todos | 🟡 Ejecutar el E2E Playwright completo en CI o entorno local con Chromium operativo. |
+
+**Commits**
+
+- `778b690 feat: add operational map dashboard`
+- `da78853 test: cover operational map e2e`
+
+**Evidencia ejecutada**
+
+- `pnpm --filter @zona-cero/contracts test:strict`
+- `pnpm --filter @zona-cero/api test:strict`
+- `pnpm --filter @zona-cero/web-ui test:strict`
+- `pnpm --filter @zona-cero/telegram-channel test:strict`
+- `pnpm e2e:telegram:typecheck`
+- `pnpm api:migrate:local`
+- `pnpm api:seed:local`
+- Verificación manual real con Chrome DevTools MCP: `/telegram/webhook` creó un centro con `message.location`, `/map?countryCode=ES` devolvió el marcador con coordenadas públicas redondeadas y `/#/map` mostró `Map overview`, conteos, lista de marcadores y tiles OpenStreetMap `200`.
+
+**Pendiente**
+
+- El comando `pnpm exec playwright test e2e/operational-map.spec.ts` queda listo, pero en este entorno local Chromium falla al arrancar por `MachPortRendezvousServer Permission denied (1100)`. Debe ejecutarse en CI o en una sesión local con permisos de Chromium válidos para generar la captura Playwright persistida.
+
 ## Slice 4 - Recursos + logística
 
 **Objetivo:** conectar faltantes, sobrantes y tareas de traslado.
