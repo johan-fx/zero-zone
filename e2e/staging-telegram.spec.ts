@@ -70,6 +70,28 @@ test('natural sos staging Telegram requires strong confirmation before backend s
   expect(String(strongConfirmation.botReplyPreview ?? '')).toMatch(/SOS ID|SOS/);
 });
 
+test('family reunification staging Telegram handles command and natural language with private links', async ({ request }) => {
+  const apiBaseUrl = requiredEnv('E2E_API_BASE_URL').replace(/\/$/, '');
+
+  await ensureTelegramSessionExists();
+
+  const health = await request.get(`${apiBaseUrl}/health`);
+  await expect(health).toBeOK();
+
+  const result = await runTelegramRunner('family-reunification');
+  const steps = getRunnerSteps(result);
+  const command = findStep(steps, 'family-reunification-command');
+  const commandIncident = findStep(steps, 'family-reunification-command-incident');
+  const naturalPhrase = findStep(steps, 'family-reunification-natural-phrase');
+  const naturalIncident = findStep(steps, 'family-reunification-natural-incident');
+
+  expect(String(command.botReplyPreview ?? '')).toMatch(/reunificación familiar|family reunification/i);
+  expect(String(commandIncident.botReplyPreview ?? '')).toMatch(/enlace web privado|private web link/i);
+  expect(String(naturalPhrase.botReplyPreview ?? '')).toMatch(/reunificación familiar|family reunification/i);
+  expect(String(naturalPhrase.botReplyPreview ?? '')).toMatch(/datos sensibles|sensitive details|canal web privado|private web channel/i);
+  expect(String(naturalIncident.botReplyPreview ?? '')).toMatch(/enlace web privado|private web link/i);
+});
+
 async function ensureTelegramSessionExists(): Promise<void> {
   const sessionFile = requiredEnv('TELEGRAM_E2E_SESSION_FILE');
   try {
@@ -79,7 +101,7 @@ async function ensureTelegramSessionExists(): Promise<void> {
   }
 }
 
-async function runTelegramRunner(scenario: 'full' | 'natural-sos' = 'full'): Promise<RunnerResult & { marker: string; preConfirmationMarkerVisible?: boolean }> {
+async function runTelegramRunner(scenario: 'full' | 'natural-sos' | 'family-reunification' = 'full'): Promise<RunnerResult & { marker: string; preConfirmationMarkerVisible?: boolean }> {
   const args = ['tsx', 'e2e/telegram/staging-telegram-runner.ts', 'run', '--json'];
   if (scenario !== 'full') args.push('--scenario', scenario);
 

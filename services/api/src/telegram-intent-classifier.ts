@@ -1,8 +1,10 @@
 import {
+  TelegramFamilyReunificationIntentFactsSchema,
   TelegramIntentClassificationSchema,
   telegramDispatchFactSignals,
-  telegramFamilyReunificationCaseTypes,
-  telegramFamilyReunificationSubjectTypes,
+  telegramFamilyReunificationActions,
+  telegramFamilyReunificationRelationshipHints,
+  telegramFamilyReunificationUrgencyHints,
   telegramIncidentJoinFactSignals,
   telegramResourceFactDirections,
   telegramResourceFactTypes,
@@ -100,15 +102,20 @@ const TELEGRAM_INTENT_RESPONSE_SCHEMA = {
           maxLength: 160,
           description: 'For workcenter only: surplus capacity or supplies explicitly reported.',
         },
-        caseType: {
+        action: {
           type: 'string',
-          enum: telegramFamilyReunificationCaseTypes,
-          description: 'For family_reunification only: compact case category without names or contact details.',
+          enum: telegramFamilyReunificationActions,
+          description: 'For family_reunification only: route intent as search, report, info, or unknown. Never include names, locations, descriptions, or contact details.',
         },
-        subjectType: {
+        relationshipHint: {
           type: 'string',
-          enum: telegramFamilyReunificationSubjectTypes,
-          description: 'For family_reunification only: broad subject type; never include names.',
+          enum: telegramFamilyReunificationRelationshipHints,
+          description: 'For family_reunification only: non-identifying relationship category, if clear.',
+        },
+        urgencyHint: {
+          type: 'string',
+          enum: telegramFamilyReunificationUrgencyHints,
+          description: 'For family_reunification only: broad urgency category, if clear.',
         },
         severity: {
           type: 'string',
@@ -230,7 +237,8 @@ export async function classifyTelegramIntent({
       return createSafeIntentClassification('unknown', 0, parsedPayload.reason);
     }
 
-    const parsedClassification = TelegramIntentClassificationSchema.safeParse(parsedPayload.value);
+    const sanitizedPayload = sanitizeTelegramIntentClassificationPayload(parsedPayload.value);
+    const parsedClassification = TelegramIntentClassificationSchema.safeParse(sanitizedPayload);
     if (!parsedClassification.success) {
       return createSafeIntentClassification('unknown', 0, 'Workers AI returned an invalid Telegram intent schema.');
     }
@@ -265,7 +273,9 @@ function buildTelegramIntentSystemPrompt(): string {
     'Workcenter examples ES: "hay un puesto médico en la escuela con prioridad alta y necesitan medicamentos" => intent workcenter, signal availability, name "puesto médico", locationHint "escuela", priority high, initialNeed "medicamentos".',
     'Workcenter examples EN: "north shelter is active and needs blankets" => intent workcenter, status active, name "north shelter", initialNeed "blankets".',
     'Workcenter examples ES: "el centro norte está lleno" => intent workcenter, signal capacity, name "centro norte". Example EN: "north shelter has spare cots" => intent workcenter, signal availability, name "north shelter", surplus "cots".',
-    'For family_reunification: caseType, subjectType, locationHint. Example ES: "busco a mi hijo desaparecido" => intent family_reunification, caseType missing_person, subjectType child. Example EN: "found a separated child near gate 2" => intent family_reunification, caseType found_person, subjectType child, locationHint "gate 2".',
+    'For family_reunification: ONLY action, relationshipHint, urgencyHint. Never extract names, ages, clothing, phone numbers, exact locations, subject descriptions, caseType, subjectType, or locationHint.',
+    'Family reunification examples ES: "busco a mi hijo desaparecido" => intent family_reunification, action search, relationshipHint parent, urgencyHint normal. Example EN: "I need family reunification help" => intent family_reunification, action info.',
+    'If a family_reunification message includes a name, age, clothing, phone, or location, classify the intent but discard those details from extractedFacts and route to the private secure flow.',
     'For sos: severity, locationHint, medicalNeed, peopleCount, hazardHint. These are candidate facts only; never create an SOS, geocode, output coordinates, copy raw user text, or include PII.',
     'SOS examples ES: "necesito ayuda médica urgente en el refugio norte, somos 3 y hay humo" => intent sos, severity medical, locationHint "refugio norte", medicalNeed "ayuda médica urgente", peopleCount 3, hazardHint "humo".',
     'SOS examples ES: "hay dos personas atrapadas en la escalera este" => intent sos, severity trapped, peopleCount 2, locationHint "escalera este". Example EN: "urgent medical help at east stairs" => intent sos, severity medical, medicalNeed "urgent medical help", locationHint "east stairs".',
@@ -278,6 +288,35 @@ function buildTelegramIntentSystemPrompt(): string {
     'Resource examples: "necesitamos mantas" => intent resource, resourceDirection need, resourceType shelter or equipment or other as best supported by the text.',
     'Keep extractedFacts small, precise, and JSON-compatible. Do not include actions to execute, raw user text, phone numbers, exact coordinates, names, or other PII.',
   ].join('\n');
+}
+
+function sanitizeTelegramIntentClassificationPayload(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+
+  const record = value as Record<string, unknown>;
+  if (record.intent !== 'family_reunification') return value;
+
+  return {
+    intent: record.intent,
+    confidence: record.confidence,
+    reason: 'Family reunification route detected; sensitive details discarded.',
+    extractedFacts: sanitizeTelegramFamilyReunificationFacts(record.extractedFacts),
+  };
+}
+
+function sanitizeTelegramFamilyReunificationFacts(value: unknown): TelegramIntentClassification['extractedFacts'] {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  const sanitized: Record<string, unknown> = {};
+
+  if (isStringIn(source.action, telegramFamilyReunificationActions)) sanitized.action = source.action;
+  if (isStringIn(source.relationshipHint, telegramFamilyReunificationRelationshipHints)) sanitized.relationshipHint = source.relationshipHint;
+  if (isStringIn(source.urgencyHint, telegramFamilyReunificationUrgencyHints)) sanitized.urgencyHint = source.urgencyHint;
+
+  return TelegramFamilyReunificationIntentFactsSchema.parse(sanitized);
+}
+
+function isStringIn<const T extends readonly string[]>(value: unknown, allowed: T): value is T[number] {
+  return typeof value === 'string' && allowed.includes(value as T[number]);
 }
 
 function parseEnabledFlag(value: string | undefined): boolean {

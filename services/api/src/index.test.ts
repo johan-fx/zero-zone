@@ -1019,22 +1019,40 @@ describe('api worker', () => {
       vi.fn().mockResolvedValue({
         intent: 'family_reunification',
         confidence: 0.94,
-        extractedFacts: { caseType: 'missing_person', subjectType: 'child', locationHint: 'north gate' },
+        reason: 'Looking for Lucia, age 8, red jacket, call +34 600 000 000 near north gate.',
+        extractedFacts: {
+          action: 'search',
+          relationshipHint: 'parent',
+          urgencyHint: 'urgent',
+          fullName: 'Lucia Example',
+          age: 8,
+          clothing: 'red jacket',
+          phone: '+34 600 000 000',
+          locationHint: 'north gate',
+          caseType: 'missing_person',
+          subjectType: 'child',
+        },
       }),
     );
     const telegramUserId = 25204;
+    const rawMessage = 'Busco a Lucia de 8 años con chaqueta roja cerca de north gate, llamad +34 600 000 000.';
 
-    await expect(postTelegramMessage(telegramUserId, 'Busco a mi hijo desaparecido', 'Family')).resolves.toMatchObject({
+    const result = await postTelegramMessage(telegramUserId, rawMessage, 'Family');
+    expect(result).toMatchObject({
       accepted: true,
       command: null,
       responseText: expect.stringContaining('incident-zc-demo'),
     });
+    expect(result.responseText).not.toMatch(/Lucia|8 años|chaqueta roja|red jacket|600 000 000|north gate/i);
     expect(classifier).toHaveBeenCalledTimes(1);
 
-    const state = await (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?')
+    const state = await (env as Env).DB.prepare('SELECT step, state_json AS stateJson FROM telegram_conversation_states WHERE state_key = ?')
       .bind(`flow:family-reunification:chat:${telegramUserId}:from:${telegramUserId}`)
-      .first<{ step: string }>();
+      .first<{ step: string; stateJson: string }>();
     expect(state).toMatchObject({ step: 'awaitingIncident' });
+    expect(state?.stateJson).not.toMatch(
+      /Lucia|8 años|chaqueta roja|red jacket|600 000 000|north gate|fullName|age|clothing|phone|locationHint|caseType|subjectType|flowContext|facts|prefill|action|relationshipHint|urgencyHint/i,
+    );
   });
 
   it('routes clear workcenter intent with valid facts through typed flow context without creating operations', async () => {
@@ -2369,7 +2387,7 @@ describe('api worker', () => {
     await expect(postTelegramMessage(telegramUserId, '/familia', 'Family')).resolves.toMatchObject({
       accepted: true,
       command: '/familia',
-      responseText: expect.stringContaining('Do not send photos'),
+      responseText: expect.stringContaining('Do not send names'),
     });
 
     const stateKey = `flow:family-reunification:chat:${telegramUserId}:from:${telegramUserId}`;
@@ -2380,7 +2398,11 @@ describe('api worker', () => {
     const linked = await postTelegramMessage(telegramUserId, '1', 'Family');
     expect(linked.responseText).toContain('Open this private web link');
     expect(linked.responseText).toContain('/family-reunification?token=');
-    expect(linked.responseText).toContain('Limits: no photos, no exact location, and no full identity of minors');
+    expect(linked.responseText).toContain('Do not send names');
+    expect(linked.responseText).toContain('identifying traits');
+    expect(linked.responseText).toContain('phone numbers');
+    expect(linked.responseText).toContain('exact locations');
+    expect(linked.responseText).toContain('complete descriptions');
     expect(linked.responseText).toContain('in-person verification');
     expect(linked.responseText).not.toMatch(/fullName|latitude|longitude|exactLocation/i);
 
@@ -2407,7 +2429,7 @@ describe('api worker', () => {
     await expect(postTelegramMessage(telegramUserId, '/reunificacion', 'NoMember')).resolves.toMatchObject({
       accepted: true,
       command: '/reunificacion',
-      responseText: expect.stringContaining('Do not send photos'),
+      responseText: expect.stringContaining('Do not send names'),
     });
 
     const fallback = await postTelegramMessage(telegramUserId, '1', 'NoMember');

@@ -866,18 +866,22 @@ export const TelegramWorkCenterIntentFactsSchema = z.object({
 }).strict();
 export type TelegramWorkCenterIntentFacts = z.infer<typeof TelegramWorkCenterIntentFactsSchema>;
 
-export const telegramFamilyReunificationCaseTypes = ['missing_person', 'found_person', 'separated_group', 'reunification_info', 'unknown'] as const;
-export const TelegramFamilyReunificationCaseTypeSchema = z.enum(telegramFamilyReunificationCaseTypes);
-export type TelegramFamilyReunificationCaseType = z.infer<typeof TelegramFamilyReunificationCaseTypeSchema>;
+export const telegramFamilyReunificationActions = ['search', 'report', 'info', 'unknown'] as const;
+export const TelegramFamilyReunificationActionSchema = z.enum(telegramFamilyReunificationActions);
+export type TelegramFamilyReunificationAction = z.infer<typeof TelegramFamilyReunificationActionSchema>;
 
-export const telegramFamilyReunificationSubjectTypes = ['child', 'adult', 'elderly', 'group', 'unknown'] as const;
-export const TelegramFamilyReunificationSubjectTypeSchema = z.enum(telegramFamilyReunificationSubjectTypes);
-export type TelegramFamilyReunificationSubjectType = z.infer<typeof TelegramFamilyReunificationSubjectTypeSchema>;
+export const telegramFamilyReunificationRelationshipHints = ['parent', 'child', 'sibling', 'partner', 'relative', 'guardian', 'unknown'] as const;
+export const TelegramFamilyReunificationRelationshipHintSchema = z.enum(telegramFamilyReunificationRelationshipHints);
+export type TelegramFamilyReunificationRelationshipHint = z.infer<typeof TelegramFamilyReunificationRelationshipHintSchema>;
+
+export const telegramFamilyReunificationUrgencyHints = ['urgent', 'normal', 'unknown'] as const;
+export const TelegramFamilyReunificationUrgencyHintSchema = z.enum(telegramFamilyReunificationUrgencyHints);
+export type TelegramFamilyReunificationUrgencyHint = z.infer<typeof TelegramFamilyReunificationUrgencyHintSchema>;
 
 export const TelegramFamilyReunificationIntentFactsSchema = z.object({
-  caseType: TelegramFamilyReunificationCaseTypeSchema.default('unknown'),
-  subjectType: TelegramFamilyReunificationSubjectTypeSchema.default('unknown'),
-  locationHint: z.string().min(1).max(120).optional(),
+  action: TelegramFamilyReunificationActionSchema.default('unknown'),
+  relationshipHint: TelegramFamilyReunificationRelationshipHintSchema.optional(),
+  urgencyHint: TelegramFamilyReunificationUrgencyHintSchema.optional(),
 }).strict();
 export type TelegramFamilyReunificationIntentFacts = z.infer<typeof TelegramFamilyReunificationIntentFactsSchema>;
 

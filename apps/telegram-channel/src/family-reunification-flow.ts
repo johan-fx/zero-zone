@@ -19,7 +19,6 @@ export async function handleTelegramFamilyReunificationFlow(
   ports: TelegramFamilyReunificationPorts,
   flowContext?: Extract<TelegramFlowContext, { sourceIntent: 'family_reunification' }>,
 ): Promise<TelegramFamilyReunificationFlowResult> {
-  void flowContext;
   const startedAt = Date.now();
   const previousStep = state.step;
 
@@ -31,7 +30,9 @@ export async function handleTelegramFamilyReunificationFlow(
     async () => {
       const text = update.message?.text?.trim() ?? '';
       const command = resolveTelegramCommand(update);
-      const locale = resolveTelegramLocale(update, getPreferredLocaleFromState(state));
+      const contextLocale = flowContext?.preferredLocale;
+      const locale = resolveTelegramLocale(update, getPreferredLocaleFromState(state) ?? contextLocale);
+      const isNaturalFamilyReunificationIntent = flowContext?.sourceIntent === 'family_reunification' && !isFamilyReunificationCommand(command);
       const languageResult = handleTelegramLanguageCommand(update, locale);
       if (languageResult) return { state: withPreferredLocale(state, languageResult.locale), responseText: languageResult.responseText };
 
@@ -40,7 +41,10 @@ export async function handleTelegramFamilyReunificationFlow(
       }
 
       if (isFamilyReunificationCommand(command) || state.step === 'idle' || state.step === 'cancelled' || state.step === 'linked') {
-        return startFamilyReunificationIncidentSelection(update, ports);
+        return startFamilyReunificationIncidentSelection(update, ports, {
+          locale,
+          messageId: isNaturalFamilyReunificationIntent ? 'telegram.family.intent.start' : 'telegram.family.start',
+        });
       }
 
       if (state.step === 'awaitingIncident') {
@@ -74,8 +78,13 @@ export async function handleTelegramFamilyReunificationFlow(
 async function startFamilyReunificationIncidentSelection(
   update: TelegramUpdateLike,
   ports: TelegramFamilyReunificationPorts,
+  options: {
+    locale?: Extract<TelegramFlowContext, { sourceIntent: 'family_reunification' }>['preferredLocale'];
+    messageId?: 'telegram.family.start' | 'telegram.family.intent.start';
+  } = {},
 ): Promise<TelegramFamilyReunificationFlowResult> {
-  const locale = resolveTelegramLocale(update);
+  const locale = options.locale ?? resolveTelegramLocale(update);
+  const messageId = options.messageId ?? 'telegram.family.start';
   const externalUserId = getTelegramExternalUserId(update);
   if (!externalUserId) return { state: { step: 'idle', preferredLocale: locale }, responseText: formatMessage(locale, 'telegram.family.user.required') };
 
@@ -84,7 +93,7 @@ async function startFamilyReunificationIncidentSelection(
     if (incidents.length === 0) return { state: { step: 'idle', preferredLocale: locale }, responseText: formatMessage(locale, 'telegram.family.no.incidents') };
     return {
       state: { step: 'awaitingIncident', incidents, externalUserId, displayName: getTelegramDisplayName(update), preferredLocale: locale },
-      responseText: formatMessage(locale, 'telegram.family.start', { incidentList: formatIncidentList(incidents) }),
+      responseText: formatMessage(locale, messageId, { incidentList: formatIncidentList(incidents) }),
     };
   } catch {
     return { state: { step: 'idle', preferredLocale: locale }, responseText: formatFamilyReunificationLinkError(locale) };

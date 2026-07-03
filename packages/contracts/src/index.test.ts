@@ -93,7 +93,9 @@ import {
   telegramIntents,
   telegramAcceptedIntents,
   telegramDispatchFactSignals,
-  telegramFamilyReunificationCaseTypes,
+  telegramFamilyReunificationActions,
+  telegramFamilyReunificationRelationshipHints,
+  telegramFamilyReunificationUrgencyHints,
   telegramIncidentJoinFactSignals,
   telegramResourceFactDirections,
   telegramResourceFactTypes,
@@ -743,7 +745,9 @@ describe('contracts package', () => {
   it('validates typed Telegram facts for every accepted non-resource intent', () => {
     expect(Object.keys(TelegramAcceptedIntentFactsSchemas)).toEqual(telegramAcceptedIntents);
     expect(telegramWorkCenterFactSignals).toContain('capacity');
-    expect(telegramFamilyReunificationCaseTypes).toContain('missing_person');
+    expect(telegramFamilyReunificationActions).toContain('search');
+    expect(telegramFamilyReunificationRelationshipHints).toContain('parent');
+    expect(telegramFamilyReunificationUrgencyHints).toContain('urgent');
     expect(telegramDispatchFactSignals).toContain('status_update');
     expect(telegramIncidentJoinFactSignals).toContain('request_join');
 
@@ -775,17 +779,22 @@ describe('contracts package', () => {
 
     expect(
       TelegramFamilyReunificationIntentFactsSchema.parse({
-        caseType: 'missing_person',
-        subjectType: 'child',
-        locationHint: 'reunification desk',
+        action: 'search',
+        relationshipHint: 'parent',
+        urgencyHint: 'urgent',
       }),
     ).toEqual({
-      caseType: 'missing_person',
-      subjectType: 'child',
-      locationHint: 'reunification desk',
+      action: 'search',
+      relationshipHint: 'parent',
+      urgencyHint: 'urgent',
     });
-    expect(TelegramFamilyReunificationIntentFactsSchema.parse({})).toEqual({ caseType: 'unknown', subjectType: 'unknown' });
-    expect(TelegramFamilyReunificationIntentFactsSchema.safeParse({ caseType: 'missing_person', fullName: 'private name' }).success).toBe(false);
+    expect(TelegramFamilyReunificationIntentFactsSchema.parse({})).toEqual({ action: 'unknown' });
+    expect(TelegramFamilyReunificationIntentFactsSchema.safeParse({ action: 'search', fullName: 'private name' }).success).toBe(false);
+    expect(TelegramFamilyReunificationIntentFactsSchema.safeParse({ action: 'search', locationHint: 'reunification desk' }).success).toBe(false);
+    expect(TelegramFamilyReunificationIntentFactsSchema.safeParse({ action: 'search', subjectType: 'child' }).success).toBe(false);
+    expect(TelegramFamilyReunificationIntentFactsSchema.safeParse({ caseType: 'missing_person' }).success).toBe(false);
+    expect(TelegramFamilyReunificationIntentFactsSchema.safeParse({ action: 'search', age: 8 }).success).toBe(false);
+    expect(TelegramFamilyReunificationIntentFactsSchema.safeParse({ action: 'search', phone: '+34000000000' }).success).toBe(false);
 
     expect(
       TelegramSosIntentFactsSchema.parse({

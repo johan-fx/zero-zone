@@ -51,6 +51,12 @@ To inspect only the command + natural-language SOS scenario without secrets or T
 pnpm e2e:telegram:dry-run:natural-sos
 ```
 
+To inspect only the family reunification scenario without secrets or Telegram access:
+
+```bash
+pnpm e2e:telegram:dry-run:family-reunification
+```
+
 ## Run the real staging test
 
 ```bash
@@ -66,6 +72,14 @@ pnpm e2e:staging:telegram --grep "natural sos"
 ```
 
 The natural SOS scenario resets any pending bot flow, joins the demo incident, sets Spanish with `/idioma es`, sends a natural Spanish SOS phrase like `Necesito ayuda médica urgente en el refugio norte. Hay humo y 3 personas afectadas.`, selects the incident, verifies that a weak `confirm` reply is rejected with an exact `CONFIRM SOS` requirement, and only then sends `CONFIRM SOS`. The bot should show the localized safe summary from normalized facts only in the initial natural-message reply. Those extracted details are not persisted in Telegram SOS conversation state, are not repeated after incident selection, and the textual location hint must not become an exact SOS payload location.
+
+To target only the family reunification coverage in staging:
+
+```bash
+pnpm e2e:staging:telegram --grep "family reunification"
+```
+
+The family reunification scenario resets any pending bot flow, sets Spanish with `/idioma es`, covers `/reunificacion`, selects the configured incident, then sends a safe natural-language phrase: `Necesito ayuda de reunificación familiar para encontrar a mi familiar.` The phrase intentionally avoids real PII. The bot should acknowledge family reunification, explain that sensitive details belong in the private web channel rather than Telegram, and issue a private link after incident selection for both command and natural-language paths.
 
 ## Sensitive helpers
 

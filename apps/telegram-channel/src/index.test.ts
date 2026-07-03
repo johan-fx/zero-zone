@@ -370,6 +370,23 @@ async function advanceFamilyReunification(
   return { state, responseText, ports };
 }
 
+async function advanceNaturalFamilyReunification(
+  inputs: string[],
+  flowContext: Extract<TelegramFlowContext, { sourceIntent: 'family_reunification' }>,
+  ports = createFamilyReunificationPorts(),
+): Promise<{ state: TelegramFamilyReunificationState; responseText: string; ports: TelegramFamilyReunificationPorts }> {
+  let state: TelegramFamilyReunificationState = { step: 'idle' };
+  let responseText = '';
+
+  for (const [index, input] of inputs.entries()) {
+    const result = await handleTelegramFamilyReunificationFlow(state, telegramUserUpdate(input, 'ca'), ports, index === 0 ? flowContext : undefined);
+    state = result.state;
+    responseText = result.responseText;
+  }
+
+  return { state, responseText, ports };
+}
+
 async function advanceWorkCenter(
   inputs: string[],
   ports = createWorkCenterPorts(),
@@ -420,9 +437,11 @@ describe('telegram channel flows', () => {
       command: '/familia',
       responseText: expect.stringContaining('private web link'),
     });
-    expect(result.responseText).toContain('Do not send photos');
+    expect(result.responseText).toContain('Do not send names');
+    expect(result.responseText).toContain('identifying traits');
+    expect(result.responseText).toContain('phone numbers');
     expect(result.responseText).toContain('exact locations');
-    expect(result.responseText).toContain('full minor identities');
+    expect(result.responseText).toContain('complete descriptions');
   });
 
   it('parses every valid incident join state variant and round-trips through JSON', () => {
@@ -1133,9 +1152,11 @@ describe('telegram channel flows', () => {
 
     expect(state.step).toBe('linked');
     expect(responseText).toContain('https://safe.example/family-reunification');
-    expect(responseText).toContain('no photos');
-    expect(responseText).toContain('no exact location');
-    expect(responseText).toContain('no full identity of minors');
+    expect(responseText).toContain('Do not send names');
+    expect(responseText).toContain('identifying traits');
+    expect(responseText).toContain('phone numbers');
+    expect(responseText).toContain('exact locations');
+    expect(responseText).toContain('complete descriptions');
     expect(responseText).toContain('in-person verification');
     expect(ports.createPrivateLink).toHaveBeenCalledWith('incident-zc-demo', {
       scope: 'family_reunification.search',
@@ -1153,6 +1174,61 @@ describe('telegram channel flows', () => {
     expect(request.scope).toBe('family_reunification.search');
     expect(request.ttlSeconds).toBe(600);
     expect(request.maxUses).toBe(1);
+  });
+
+  it('keeps the /reunificacion command flow working through private link issuance', async () => {
+    const ports = createFamilyReunificationPorts();
+    const { state, responseText } = await advanceFamilyReunification(['/reunificacion', 'incident-zc-demo'], ports);
+
+    expect(state.step).toBe('linked');
+    expect(responseText).toContain('https://safe.example/family-reunification');
+    expect(ports.createPrivateLink).toHaveBeenCalledWith('incident-zc-demo', expect.objectContaining({
+      scope: 'family_reunification.search',
+      channel: 'web-ui',
+      maxUses: 1,
+    }));
+  });
+
+  it('uses natural family reunification flow context without echoing sensitive details before issuing the private link', async () => {
+    const ports = createFamilyReunificationPorts();
+    const flowContext: Extract<TelegramFlowContext, { sourceIntent: 'family_reunification' }> = {
+      sourceIntent: 'family_reunification',
+      preferredLocale: 'en',
+      facts: { action: 'search', relationshipHint: 'parent', urgencyHint: 'normal' },
+      prefill: { action: 'search', relationshipHint: 'parent', urgencyHint: 'normal' },
+      confidence: 0.93,
+    };
+
+    const first = await advanceNaturalFamilyReunification(
+      ['I am looking for Minor Full Name, phone +1 555 0100, blue jacket near the north gate.'],
+      flowContext,
+      ports,
+    );
+
+    expect(first.state.step).toBe('awaitingIncident');
+    expect(first.responseText).toContain('I recognized a family reunification request');
+    expect(first.responseText).toContain('private web channel');
+    expect(first.responseText).toContain('Choose an incident');
+    expect(first.responseText).not.toContain('Minor Full Name');
+    expect(first.responseText).not.toContain('+1 555 0100');
+    expect(first.responseText).not.toContain('blue jacket');
+    expect(first.responseText).not.toContain('north gate');
+    expect(first.responseText).not.toContain('parent');
+    expect(ports.createPrivateLink).not.toHaveBeenCalled();
+
+    const second = await handleTelegramFamilyReunificationFlow(first.state, telegramUserUpdate('1'), ports);
+
+    expect(second.state.step).toBe('linked');
+    expect(second.responseText).toContain('https://safe.example/family-reunification');
+    expect(second.responseText).not.toContain('Minor Full Name');
+    expect(second.responseText).not.toContain('+1 555 0100');
+    expect(second.responseText).not.toContain('blue jacket');
+    expect(second.responseText).not.toContain('north gate');
+    expect(ports.createPrivateLink).toHaveBeenCalledWith('incident-zc-demo', expect.objectContaining({
+      scope: 'family_reunification.search',
+      channel: 'web-ui',
+      maxUses: 1,
+    }));
   });
 
   it('persists a changed locale during an active family reunification flow for subsequent copy', async () => {
@@ -1192,7 +1268,8 @@ describe('telegram channel flows', () => {
     expect(state.step).toBe('awaitingIncident');
     expect(responseText).toContain('Could not create a private family reunification link');
     expect(responseText).toContain('family reunification desk');
-    expect(responseText).toContain('Do not send photos');
+    expect(responseText).toContain('Do not send names');
+    expect(responseText).toContain('phone numbers');
   });
 
 });

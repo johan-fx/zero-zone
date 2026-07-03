@@ -26,7 +26,7 @@ type RunnerOptions = {
   waitMs?: number;
 };
 
-type RunnerScenario = 'full' | 'natural-sos';
+type RunnerScenario = 'full' | 'natural-sos' | 'family-reunification';
 
 type SentStep = {
   label: string;
@@ -40,6 +40,7 @@ type RunnerResult = {
   commandWorkCenterMarker: string;
   naturalWorkCenterMarker: string;
   naturalSosMarker: string;
+  familyReunificationMarker: string;
   preConfirmationMarkerVisible?: boolean;
   botUsername: string;
   incidentId: string;
@@ -74,11 +75,14 @@ export async function runTelegramStagingFlow(options: RunnerOptions = {}): Promi
   const commandWorkCenterMarker = `${marker}-command-wc`;
   const naturalWorkCenterMarker = `${marker}-natural-wc`;
   const naturalSosMarker = `${marker}-natural-sos`;
+  const familyReunificationMarker = `${marker}-family-reunification`;
   const scenario = options.scenario ?? 'full';
-  const resultMarker = scenario === 'natural-sos' ? naturalSosMarker : naturalWorkCenterMarker;
+  const resultMarker = scenario === 'natural-sos' ? naturalSosMarker : scenario === 'family-reunification' ? familyReunificationMarker : naturalWorkCenterMarker;
   const safeSteps = scenario === 'natural-sos'
     ? buildNaturalSosTelegramSequence(env, { marker })
-    : buildSafeTelegramSequence(env, { marker, commandWorkCenterMarker, naturalWorkCenterMarker });
+    : scenario === 'family-reunification'
+      ? buildFamilyReunificationTelegramSequence(env)
+      : buildSafeTelegramSequence(env, { marker, commandWorkCenterMarker, naturalWorkCenterMarker });
   const sensitiveSteps = scenario === 'full' ? buildSensitiveTelegramHelpers(marker).map((step) => ({ ...step, skipped: !options.includeSensitiveFlows })) : [];
   const steps = [...safeSteps, ...sensitiveSteps];
 
@@ -88,6 +92,7 @@ export async function runTelegramStagingFlow(options: RunnerOptions = {}): Promi
       commandWorkCenterMarker,
       naturalWorkCenterMarker,
       naturalSosMarker,
+      familyReunificationMarker,
       botUsername: env.TELEGRAM_E2E_BOT_USERNAME,
       incidentId: env.E2E_INCIDENT_ID,
       cellId: env.E2E_CELL_ID,
@@ -126,6 +131,7 @@ export async function runTelegramStagingFlow(options: RunnerOptions = {}): Promi
     commandWorkCenterMarker,
     naturalWorkCenterMarker,
     naturalSosMarker,
+    familyReunificationMarker,
     preConfirmationMarkerVisible,
     botUsername: env.TELEGRAM_E2E_BOT_USERNAME,
     incidentId: env.E2E_INCIDENT_ID,
@@ -289,6 +295,20 @@ function buildNaturalSosTelegramSequence(env: RequiredEnv, markers: { marker: st
   ];
 }
 
+function buildFamilyReunificationTelegramSequence(env: RequiredEnv): SentStep[] {
+  return [
+    { label: 'reset-cancel', message: '/cancel' },
+    { label: 'language-selection', message: '/idioma es' },
+    { label: 'family-reunification-command', message: '/reunificacion' },
+    { label: 'family-reunification-command-incident', message: env.E2E_INCIDENT_ID },
+    {
+      label: 'family-reunification-natural-phrase',
+      message: 'Necesito ayuda de reunificación familiar para encontrar a mi familiar.',
+    },
+    { label: 'family-reunification-natural-incident', message: env.E2E_INCIDENT_ID },
+  ];
+}
+
 async function sendMessageAndReadReply(client: TelegramClient, entity: any, message: string, waitMs: number): Promise<string | undefined> {
   const lastSeenId = await readLatestIncomingMessageId(client, entity);
   await client.sendMessage(entity, { message });
@@ -349,7 +369,7 @@ async function main(): Promise<void> {
   }
 
   if (command === 'help' || command === '--help' || command === '-h') {
-    console.log('Usage: tsx e2e/telegram/staging-telegram-runner.ts <auth|dry-run|run> [--scenario full|natural-sos] [--include-sensitive-flows] [--json]');
+    console.log('Usage: tsx e2e/telegram/staging-telegram-runner.ts <auth|dry-run|run> [--scenario full|natural-sos|family-reunification] [--include-sensitive-flows] [--json]');
     return;
   }
 
@@ -360,7 +380,7 @@ function readScenarioArg(argv: string[]): RunnerScenario {
   const index = argv.indexOf('--scenario');
   const value = index >= 0 ? argv[index + 1] : undefined;
   if (value === undefined) return 'full';
-  if (value === 'full' || value === 'natural-sos') return value;
+  if (value === 'full' || value === 'natural-sos' || value === 'family-reunification') return value;
   throw new Error(`Unknown Telegram E2E scenario: ${value}`);
 }
 

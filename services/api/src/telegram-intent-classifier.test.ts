@@ -60,7 +60,8 @@ describe('telegram intent classifier', () => {
     expect(messages[0]?.content).toContain('"tengo agua potable, dónde la necesitan?" => intent resource');
     expect(messages[0]?.content).toContain('"hay un puesto médico en la escuela con prioridad alta y necesitan medicamentos" => intent workcenter');
     expect(messages[0]?.content).toContain('Never geocode locationHint or output coordinates');
-    expect(messages[0]?.content).toContain('"found a separated child near gate 2" => intent family_reunification');
+    expect(messages[0]?.content).toContain('For family_reunification: ONLY action, relationshipHint, urgencyHint');
+    expect(messages[0]?.content).toContain('classify the intent but discard those details from extractedFacts');
     expect(messages[0]?.content).toContain('"necesito ayuda médica urgente en el refugio norte, somos 3 y hay humo" => intent sos');
     expect(messages[0]?.content).toContain('facts only; never create an SOS, geocode, output coordinates, copy raw user text, or include PII');
     expect(messages[0]?.content).toContain('"hay dos personas atrapadas en la escalera este" => intent sos');
@@ -91,8 +92,9 @@ describe('telegram intent classifier', () => {
               priority: expect.objectContaining({ enum: ['low', 'medium', 'high', 'critical'] }),
               initialNeed: expect.objectContaining({ type: 'string' }),
               surplus: expect.objectContaining({ type: 'string' }),
-              caseType: expect.objectContaining({ enum: ['missing_person', 'found_person', 'separated_group', 'reunification_info', 'unknown'] }),
-              subjectType: expect.objectContaining({ enum: ['child', 'adult', 'elderly', 'group', 'unknown'] }),
+              action: expect.objectContaining({ enum: ['search', 'report', 'info', 'unknown'] }),
+              relationshipHint: expect.objectContaining({ enum: ['parent', 'child', 'sibling', 'partner', 'relative', 'guardian', 'unknown'] }),
+              urgencyHint: expect.objectContaining({ enum: ['urgent', 'normal', 'unknown'] }),
               severity: expect.objectContaining({ enum: ['critical', 'medical', 'security', 'trapped', 'other'] }),
               medicalNeed: expect.objectContaining({ type: 'string' }),
               peopleCount: expect.objectContaining({ type: 'integer' }),
@@ -211,13 +213,71 @@ describe('telegram intent classifier', () => {
         intent: 'family_reunification',
         confidence: 0.96,
         reason: 'The user is looking for a missing child.',
-        extractedFacts: { caseType: 'missing_person', subjectType: 'child' },
+        extractedFacts: { action: 'search', relationshipHint: 'parent', urgencyHint: 'normal' },
       },
     });
 
     await expect(classifyTelegramIntent({ ai, text: 'Busco a mi hija desaparecida' })).resolves.toMatchObject({
       intent: 'family_reunification',
       confidence: 0.96,
+      extractedFacts: { action: 'search', relationshipHint: 'parent', urgencyHint: 'normal' },
+    });
+  });
+
+  it('sanitizes family reunification facts returned with synthetic PII', async () => {
+    const ai = createAi({
+      response: {
+        intent: 'family_reunification',
+        confidence: 0.97,
+        reason: 'Looking for Lucia, age 8, red jacket, call +34 600 000 000 near north gate.',
+        rawText: 'Busco a Lucia de 8 años con chaqueta roja cerca de north gate, llamad +34 600 000 000.',
+        extractedFacts: {
+          action: 'search',
+          relationshipHint: 'parent',
+          urgencyHint: 'urgent',
+          fullName: 'Lucia Example',
+          age: 8,
+          clothing: 'red jacket',
+          phone: '+34 600 000 000',
+          locationHint: 'north gate',
+          caseType: 'missing_person',
+          subjectType: 'child',
+        },
+      },
+    });
+
+    await expect(
+      classifyTelegramIntent({
+        ai,
+        text: 'Busco a Lucia de 8 años con chaqueta roja cerca de north gate, llamad +34 600 000 000.',
+      }),
+    ).resolves.toEqual({
+      intent: 'family_reunification',
+      confidence: 0.97,
+      reason: 'Family reunification route detected; sensitive details discarded.',
+      extractedFacts: { action: 'search', relationshipHint: 'parent', urgencyHint: 'urgent' },
+    });
+  });
+
+  it('routes family reunification while discarding legacy or unsafe AI fields', async () => {
+    const ai = createAi({
+      response: {
+        intent: 'family_reunification',
+        confidence: 0.95,
+        extractedFacts: {
+          caseType: 'found_person',
+          subjectType: 'child',
+          locationHint: 'gate 2',
+          fullName: 'Private Name',
+          phone: '+34 600 000 000',
+        },
+      },
+    });
+
+    await expect(classifyTelegramIntent({ ai, text: 'Encontré a una menor cerca de gate 2' })).resolves.toMatchObject({
+      intent: 'family_reunification',
+      confidence: 0.95,
+      extractedFacts: { action: 'unknown' },
     });
   });
 
