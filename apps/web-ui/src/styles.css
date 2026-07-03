@@ -287,6 +287,70 @@ dd {
   font-weight: 700;
 }
 
+.hero-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: flex-end;
+}
+
+.theme-mode-selector {
+  align-items: center;
+  background: var(--zc-color-surface-muted);
+  border: var(--zc-border-width) solid var(--zc-color-border);
+  border-radius: 999px;
+  color: var(--zc-color-text);
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  margin: 0;
+  padding: 0.22rem;
+}
+
+.theme-mode-selector legend {
+  color: var(--zc-color-text-muted);
+  float: left;
+  font-size: 0.78rem;
+  font-weight: 850;
+  margin: 0 0.35rem;
+  padding: 0;
+}
+
+.theme-mode-selector__option {
+  align-items: center;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 0.8rem;
+  font-weight: 850;
+  gap: 0.3rem;
+  line-height: 1;
+  padding: 0.42rem 0.58rem;
+}
+
+.theme-mode-selector__option:has(input:checked) {
+  background: var(--zc-color-info);
+  color: var(--zc-color-info-surface);
+}
+
+.theme-mode-selector__option:has(input:focus-visible) {
+  outline: 3px solid color-mix(in srgb, var(--zc-color-info) 50%, transparent);
+  outline-offset: 2px;
+}
+
+.theme-mode-selector__option input {
+  accent-color: var(--zc-color-info);
+  margin: 0;
+}
+
+.theme-mode-selector__resolved {
+  color: var(--zc-color-text-muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+  padding: 0 0.5rem 0 0.25rem;
+}
+
 .language-selector select {
   border: var(--zc-border-width) solid var(--zc-color-border-strong);
   border-radius: var(--zc-radius-pill);
@@ -631,6 +695,64 @@ dd {
   }
 }
 
+.operations-map__canvas--day .operations-map-marker {
+  --marker-label-bg: rgba(255, 255, 255, 0.9);
+  --marker-label-color: #0f172a;
+}
+
+.operations-map__canvas--day .operations-map-marker--selected-center {
+  --marker-label-bg: rgba(255, 247, 237, 0.94);
+  --marker-label-color: #7c2d12;
+}
+
+.operations-map__canvas--night .operations-map-marker {
+  --marker-label-bg: rgba(6, 10, 20, 0.94);
+  --marker-label-color: #e5eefc;
+  filter: drop-shadow(0 0 13px color-mix(in srgb, var(--marker-accent) 36%, transparent));
+}
+
+.operations-map__canvas--night .operations-map-marker--selected-center {
+  --marker-label-bg: rgba(17, 24, 39, 0.94);
+  --marker-label-color: #fff7ed;
+}
+
+.operations-map__canvas--night .operations-map-marker--sos,
+.operations-map__canvas--night .operations-map-marker--critical-shortage {
+  --marker-label-bg: rgba(69, 10, 10, 0.92);
+  --marker-label-color: #fff;
+}
+
+.operations-map__canvas--night .operations-map-marker--saturated-zone {
+  --marker-label-bg: rgba(46, 16, 101, 0.9);
+  --marker-label-color: #fff;
+}
+
+.operations-map__canvas--day {
+  background: #e0f2fe;
+  box-shadow:
+    inset 0 0 0 1px rgba(14, 116, 144, 0.14),
+    inset 0 0 72px rgba(125, 211, 252, 0.22);
+}
+
+.operations-map__canvas--day .maplibregl-canvas-container,
+.operations-map__canvas--day .maplibregl-map {
+  background: #e0f2fe;
+}
+
+.operations-map__canvas--day .maplibregl-ctrl-group {
+  background: rgba(255, 255, 255, 0.94);
+  border-color: rgba(14, 116, 144, 0.18);
+}
+
+.operations-map__canvas--day .maplibregl-ctrl-attrib {
+  background: rgba(255, 255, 255, 0.84);
+  color: #334155;
+}
+
+.operations-map__canvas--day .maplibregl-ctrl-attrib a {
+  color: #0369a1;
+}
+
 .operations-map__canvas--night {
   background: #020817;
   box-shadow:
@@ -638,29 +760,30 @@ dd {
     inset 0 0 80px rgba(15, 23, 42, 0.46);
 }
 
-.operations-map__canvas--night .leaflet-tile-pane {
+.operations-map__canvas--night .maplibregl-canvas-container {
   background: #020817;
 }
 
-.operations-map__canvas--night .leaflet-tile {
-  filter: brightness(0.62) contrast(1.22) saturate(0.82) hue-rotate(172deg) invert(0.92);
-}
 
-.operations-map__canvas--night .leaflet-container {
+.operations-map__canvas--night .maplibregl-map {
   background: #020817;
 }
 
-.operations-map__canvas--night .leaflet-control-zoom a {
+.operations-map__canvas--night .maplibregl-ctrl-group {
   background: rgba(15, 23, 42, 0.9);
   border-color: rgba(96, 165, 250, 0.28);
-  color: #e5eefc;
 }
 
-.operations-map__canvas--night .leaflet-control-attribution {
+.operations-map__canvas--night .maplibregl-ctrl button {
+  color: #e5eefc;
+  filter: invert(1) saturate(0.9);
+}
+
+.operations-map__canvas--night .maplibregl-ctrl-attrib {
   background: rgba(15, 23, 42, 0.76);
   color: #dbeafe;
 }
 
-.operations-map__canvas--night .leaflet-control-attribution a {
+.operations-map__canvas--night .maplibregl-ctrl-attrib a {
   color: #93c5fd;
 }

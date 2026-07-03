@@ -1,4 +1,3 @@
-import type { ReactNode } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -14,17 +13,7 @@ import {
   workCenterListHappyFixture,
 } from '../../../packages/testing/src';
 import { App } from './App';
-
-vi.mock('react-leaflet', () => ({
-  MapContainer: ({ children, className }: { children: ReactNode; className?: string }) => (
-    <div data-testid="leaflet-map" className={className}>{children}</div>
-  ),
-  TileLayer: ({ attribution }: { attribution: string }) => (
-    <div data-testid="tile-layer" dangerouslySetInnerHTML={{ __html: attribution }} />
-  ),
-  CircleMarker: ({ children }: { children: ReactNode }) => <div data-testid="map-marker">{children}</div>,
-  Popup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-}));
+import { millisecondsUntilNextThemeBoundary, readStoredThemeOverride, resolveAutomaticThemeMode, themeOverrideStorageKey } from './themeMode';
 
 const freshSyncPullFixture: SyncPullResponse = {
   operations: [],
@@ -130,12 +119,93 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   window.history.pushState({}, '', '/');
   window.sessionStorage.clear();
   window.localStorage.clear();
+  delete document.documentElement.dataset.zcTheme;
+  delete document.documentElement.dataset.zcThemeMode;
 });
 
 describe('web ui work center shell', () => {
+  it('resolves automatic theme from local time boundaries', () => {
+    expect(resolveAutomaticThemeMode(new Date(2026, 6, 4, 6, 59))).toBe('night');
+    expect(resolveAutomaticThemeMode(new Date(2026, 6, 4, 7, 0))).toBe('day');
+    expect(resolveAutomaticThemeMode(new Date(2026, 6, 4, 19, 59))).toBe('day');
+    expect(resolveAutomaticThemeMode(new Date(2026, 6, 4, 20, 0))).toBe('night');
+  });
+
+
+  it('schedules automatic theme refreshes at the next day/night boundary', () => {
+    expect(millisecondsUntilNextThemeBoundary(new Date(2026, 6, 4, 6, 59, 30))).toBe(30_000);
+    expect(millisecondsUntilNextThemeBoundary(new Date(2026, 6, 4, 19, 59, 30))).toBe(30_000);
+    expect(millisecondsUntilNextThemeBoundary(new Date(2026, 6, 4, 20, 0, 0))).toBe(39_600_000);
+  });
+
+  it('falls back to auto when stored theme access is unavailable', () => {
+    const storage = {
+      getItem: () => {
+        throw new DOMException('blocked', 'SecurityError');
+      },
+    } as unknown as Storage;
+
+    expect(readStoredThemeOverride(storage)).toBe('auto');
+  });
+
+  it('applies and persists the global theme mode selector', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 6, 4, 21, 0));
+    mockOperationsShellFetch();
+    const { webTelemetry } = await import('./telemetry');
+    const initialLoadedEvents = webTelemetry.events.filter((event) => event.action === 'app.loaded').length;
+
+    render(<App />);
+
+    await waitFor(() =>
+      expect(webTelemetry.events.filter((event) => event.action === 'app.loaded')).toHaveLength(initialLoadedEvents + 1),
+    );
+    expect(await screen.findByLabelText('Theme mode')).toBeInTheDocument();
+    expect(screen.getByLabelText('Auto')).toBeChecked();
+    expect(screen.getByText('Current: Night')).toBeInTheDocument();
+    expect(document.documentElement.dataset.zcTheme).toBe('dark');
+    expect(document.documentElement.dataset.zcThemeMode).toBe('auto');
+
+    fireEvent.click(screen.getByLabelText('Day'));
+    await Promise.resolve();
+
+    expect(webTelemetry.events.filter((event) => event.action === 'app.loaded')).toHaveLength(initialLoadedEvents + 1);
+    expect(screen.getByLabelText('Day')).toBeChecked();
+    expect(screen.getByText('Current: Day')).toBeInTheDocument();
+    expect(document.documentElement.dataset.zcTheme).toBe('light');
+    expect(document.documentElement.dataset.zcThemeMode).toBe('day');
+    expect(window.localStorage.getItem(themeOverrideStorageKey)).toBe('day');
+
+    cleanup();
+    mockOperationsShellFetch();
+    render(<App />);
+
+    expect(await screen.findByLabelText('Theme mode')).toBeInTheDocument();
+    expect(screen.getByLabelText('Day')).toBeChecked();
+    expect(document.documentElement.dataset.zcTheme).toBe('light');
+  });
+
+  it('cleans up global theme attributes on unmount', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 6, 4, 9, 0));
+    mockOperationsShellFetch();
+
+    const { unmount } = render(<App />);
+
+    expect(await screen.findByLabelText('Theme mode')).toBeInTheDocument();
+    expect(document.documentElement.dataset.zcTheme).toBe('light');
+    expect(document.documentElement.dataset.zcThemeMode).toBe('auto');
+
+    unmount();
+
+    expect(document.documentElement.dataset.zcTheme).toBeUndefined();
+    expect(document.documentElement.dataset.zcThemeMode).toBeUndefined();
+  });
+
   it('sets document language from query locale and renders the language selector', async () => {
     window.history.pushState({}, '', '/?lang=es');
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
@@ -695,6 +765,21 @@ function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
     headers: { 'content-type': 'application/json' },
+  });
+}
+
+function mockOperationsShellFetch() {
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.endsWith('/health')) return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
+    if (url.includes('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull')) return jsonResponse(freshSyncPullFixture);
+    if (url.endsWith('/incidents/incident-zc-demo/work-centers')) return jsonResponse({ workCenters: [] });
+    if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) return jsonResponse({ resourceReports: [] });
+    if (url.endsWith('/incidents/incident-zc-demo/dispatch-tasks')) return jsonResponse({ dispatchTasks: [] });
+    if (url.endsWith('/incidents/incident-zc-demo/sos')) {
+      return jsonResponse({ sosAlerts: [], fanout: { total: 0, queued: 0, pending: 0, failed: 0, cancelled: 0 } });
+    }
+    return new Response('not found', { status: 404 });
   });
 }
 
