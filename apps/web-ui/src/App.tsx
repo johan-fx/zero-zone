@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from 'react';
+import { type FormEvent, lazy, Suspense, useEffect, useState } from 'react';
 
 import type {
   DispatchTask,
@@ -37,7 +37,6 @@ import {
   type WebTelemetryAction,
 } from './telemetry';
 import { I18nProvider, LanguageSelector, useI18n } from './i18n';
-import { OperationsMapPanel } from './features/operations-map/OperationsMapPanel';
 import {
   activationStateTone,
   confidenceTone,
@@ -52,6 +51,12 @@ import {
 import type { StatusTone } from '@zona-cero/ui';
 import { Card, MetaRow, SectionHeader, StatusBadge } from '@zona-cero/ui/web';
 import './styles.css';
+
+const OperationsMapPanel = lazy(() =>
+  import('./features/operations-map/OperationsMapPanel').then((module) => ({
+    default: module.OperationsMapPanel,
+  })),
+);
 
 type HealthState =
   | { status: 'loading' }
@@ -409,7 +414,9 @@ function OperationsPanel() {
       {route === 'map' ? (
         <section className="status-card" aria-labelledby="map-title" aria-live="polite">
           <HubBackLink onNavigate={navigate} />
-          <OperationsMapPanel />
+          <Suspense fallback={<p>Loading operational map…</p>}>
+            <OperationsMapPanel />
+          </Suspense>
         </section>
       ) : null}
 
