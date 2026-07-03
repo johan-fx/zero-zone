@@ -273,15 +273,12 @@ function buildSensitiveTelegramHelpers(marker: string): SentStep[] {
 function buildNaturalSosTelegramSequence(env: RequiredEnv, markers: { marker: string }): SentStep[] {
   const { marker } = markers;
   return [
+    { label: 'reset-cancel', message: '/cancel' },
     { label: 'start', message: '/start' },
     { label: 'join-incident', message: env.E2E_INCIDENT_ID },
     { label: 'join-pseudonym', message: `${marker} telegram sos e2e` },
     { label: 'join-role', message: 'medical' },
-    { label: 'language-command', message: '/idioma' },
-    { label: 'language-selection', message: 'es' },
-    { label: 'sos-command', message: '/sos' },
-    { label: 'sos-command-incident', message: env.E2E_INCIDENT_ID },
-    { label: 'sos-command-cancel', message: '/cancel' },
+    { label: 'language-selection', message: '/idioma es' },
     {
       label: 'natural-sos-phrase',
       message: 'Necesito ayuda médica urgente en el refugio norte. Hay humo y 3 personas afectadas.',

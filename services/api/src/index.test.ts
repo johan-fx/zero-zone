@@ -1161,6 +1161,38 @@ describe('api worker', () => {
     }
   });
 
+  it('derives ephemeral SOS facts when the classifier routes SOS without extracted facts', async () => {
+    const classifier = enableTelegramIntentClassifier(
+      vi.fn().mockResolvedValue({
+        intent: 'sos',
+        confidence: 0.94,
+        extractedFacts: {},
+      }),
+    );
+    const telegramUserId = 25215;
+    const rawMessage = 'necesito ayuda médica urgente en el refugio norte, somos 3 personas afectadas y hay humo';
+
+    const result = await postTelegramMessage(telegramUserId, rawMessage, 'SosFallback', 'es');
+
+    expect(result).toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining('Elige un incidente antes de iniciar SOS'),
+    });
+    expect(result.responseText).toContain('Resumen seguro detectado');
+    expect(result.responseText).toContain('Ubicación aproximada: refugio norte');
+    expect(result.responseText).toContain('Necesidad médica: ayuda médica urgente');
+    expect(result.responseText).toContain('Personas afectadas: 3');
+    expect(result.responseText).toContain('Riesgo: humo');
+    expect(classifier).toHaveBeenCalledTimes(1);
+
+    const state = await (env as Env).DB.prepare('SELECT step, state_json AS stateJson FROM telegram_conversation_states WHERE state_key = ?')
+      .bind(`flow:sos:chat:${telegramUserId}:from:${telegramUserId}`)
+      .first<{ step: string; stateJson: string }>();
+    expect(state).toMatchObject({ step: 'awaitingIncident' });
+    expect(state?.stateJson).not.toMatch(/ayuda médica urgente|refugio norte|humo|medicalNeed|hazardHint|locationHint|peopleCount/i);
+  });
+
   it('routes SOS safely when extracted facts are invalid without sensitive prefill', async () => {
     const classifier = enableTelegramIntentClassifier(
       vi.fn().mockResolvedValue({

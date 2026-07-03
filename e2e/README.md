@@ -62,10 +62,10 @@ The test sends a safe sequence to the bot: `/start` incident join, language sele
 To target only the natural SOS coverage in staging:
 
 ```bash
-pnpm e2e:staging:telegram -- --grep "natural sos"
+pnpm e2e:staging:telegram --grep "natural sos"
 ```
 
-The natural SOS scenario first exercises the command path (`/sos`, incident selection, `/cancel`) to prove cancellation before confirmation does not submit. It then sends a natural Spanish SOS phrase like `Necesito ayuda médica urgente en el refugio norte. Hay humo y 3 personas afectadas.`, selects the incident, verifies that a weak `confirm` reply is rejected with an exact `CONFIRM SOS` requirement, and only then sends `CONFIRM SOS`. The bot should show the localized safe summary from normalized facts only in the initial natural-message reply. Those extracted details are not persisted in Telegram SOS conversation state, are not repeated after incident selection, and the textual location hint must not become an exact SOS payload location.
+The natural SOS scenario resets any pending bot flow, joins the demo incident, sets Spanish with `/idioma es`, sends a natural Spanish SOS phrase like `Necesito ayuda médica urgente en el refugio norte. Hay humo y 3 personas afectadas.`, selects the incident, verifies that a weak `confirm` reply is rejected with an exact `CONFIRM SOS` requirement, and only then sends `CONFIRM SOS`. The bot should show the localized safe summary from normalized facts only in the initial natural-message reply. Those extracted details are not persisted in Telegram SOS conversation state, are not repeated after incident selection, and the textual location hint must not become an exact SOS payload location.
 
 ## Sensitive helpers
 

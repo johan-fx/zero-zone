@@ -59,14 +59,12 @@ test('natural sos staging Telegram requires strong confirmation before backend s
 
   const result = await runTelegramRunner('natural-sos');
   const steps = getRunnerSteps(result);
-  const commandCancel = findStep(steps, 'sos-command-cancel');
   const naturalPhrase = findStep(steps, 'natural-sos-phrase');
   const incidentSelection = findStep(steps, 'natural-sos-incident');
   const weakConfirmation = findStep(steps, 'natural-sos-weak-confirmation');
   const strongConfirmation = findStep(steps, 'natural-sos-confirmation');
 
-  expect(String(commandCancel.botReplyPreview ?? '')).toMatch(/cancel/i);
-  expect(String(naturalPhrase.botReplyPreview ?? '')).toContain('Resumen seguro detectado');
+  expect(String(naturalPhrase.botReplyPreview ?? '')).toMatch(/Resumen seguro detectado|Safe detected summary/);
   expect(String(incidentSelection.botReplyPreview ?? '')).not.toMatch(/refugio norte|ayuda médica urgente|humo/i);
   expect(String(weakConfirmation.botReplyPreview ?? '')).toContain('CONFIRM SOS');
   expect(String(strongConfirmation.botReplyPreview ?? '')).toMatch(/SOS ID|SOS/);

@@ -3932,7 +3932,7 @@ async function routeClassifiedTelegramIntent(
   }
 
   emitTelegramIntentRouterTelemetry('accepted', `classification:${classification.intent}`, classification.confidence);
-  return routeAcceptedTelegramIntent(db, update, classification, stateKeys, preferredLocale, telemetry);
+  return routeAcceptedTelegramIntent(db, update, classification, stateKeys, preferredLocale, text, telemetry);
 }
 
 async function routeAcceptedTelegramIntent(
@@ -3941,9 +3941,10 @@ async function routeAcceptedTelegramIntent(
   classification: TelegramIntentClassification & { intent: AcceptedTelegramIntent },
   stateKeys: TelegramConversationStateKeys,
   preferredLocale: SupportedLocale,
+  originalText: string,
   telemetry?: ChannelTelemetryPort,
 ): Promise<string> {
-  const flowContext = buildTelegramAcceptedIntentFlowContext(classification, preferredLocale);
+  const flowContext = buildTelegramAcceptedIntentFlowContext(classification, preferredLocale, originalText);
 
   switch (classification.intent) {
     case 'resource':
@@ -4023,6 +4024,7 @@ function isActionableTelegramIntentClassification(
 function buildTelegramAcceptedIntentFlowContext(
   classification: TelegramIntentClassification & { intent: AcceptedTelegramIntent },
   locale: SupportedLocale,
+  originalText = '',
 ): TelegramAcceptedIntentFlowContext {
   switch (classification.intent) {
     case 'resource': {
@@ -4044,7 +4046,7 @@ function buildTelegramAcceptedIntentFlowContext(
       return { sourceIntent: 'family_reunification', preferredLocale: locale, facts, prefill: facts ?? {}, confidence: classification.confidence };
     }
     case 'sos': {
-      const facts = parseTelegramSosIntentFacts(classification);
+      const facts = parseTelegramSosIntentFacts(classification) ?? deriveTelegramSosIntentFactsFromText(originalText);
       return { sourceIntent: 'sos', preferredLocale: locale, facts, prefill: facts ?? {}, confidence: classification.confidence };
     }
     case 'dispatch': {
@@ -4097,7 +4099,77 @@ function parseTelegramFamilyReunificationIntentFacts(
 function parseTelegramSosIntentFacts(classification: TelegramIntentClassification): TelegramSosIntentFacts | null {
   if (classification.intent !== 'sos') return null;
   const parsed = TelegramSosIntentFactsSchema.safeParse(classification.extractedFacts);
-  return parsed.success ? parsed.data : null;
+  return parsed.success && hasMeaningfulTelegramSosIntentFacts(parsed.data) ? parsed.data : null;
+}
+
+function hasMeaningfulTelegramSosIntentFacts(facts: TelegramSosIntentFacts): boolean {
+  return facts.severity !== 'other' || Boolean(facts.locationHint || facts.medicalNeed || facts.peopleCount || facts.hazardHint);
+}
+
+function deriveTelegramSosIntentFactsFromText(text: string): TelegramSosIntentFacts | null {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return null;
+
+  const facts: Partial<TelegramSosIntentFacts> = {};
+  if (/\b(m[eé]dic|ambulancia|herid|injur|medical)\w*/i.test(normalized)) facts.severity = 'medical';
+  else if (/\b(atrapad|trapped)\w*/i.test(normalized)) facts.severity = 'trapped';
+  else if (/\b(seguridad|security|violencia|violence)\w*/i.test(normalized)) facts.severity = 'security';
+  else if (/\b(urgente|emergencia|peligro|danger|urgent|emergency)\b/i.test(normalized)) facts.severity = 'critical';
+
+  const locationHint = extractTelegramSosLocationHint(text);
+  if (locationHint) facts.locationHint = locationHint;
+
+  const peopleCount = extractTelegramSosPeopleCount(normalized);
+  if (peopleCount !== undefined) facts.peopleCount = peopleCount;
+
+  const hazardHint = extractTelegramSosHazardHint(normalized);
+  if (hazardHint) facts.hazardHint = hazardHint;
+
+  if (facts.severity === 'medical' && /\bayuda m[eé]dica urgente\b/i.test(text)) {
+    facts.medicalNeed = 'ayuda médica urgente';
+  } else if (facts.severity === 'medical') {
+    facts.medicalNeed = normalized.includes('medical help') ? 'medical help' : 'ayuda médica';
+  }
+
+  const parsed = TelegramSosIntentFactsSchema.safeParse(facts);
+  return parsed.success && hasMeaningfulTelegramSosIntentFacts(parsed.data) ? parsed.data : null;
+}
+
+function extractTelegramSosLocationHint(text: string): string | undefined {
+  const match = text.match(/\b(?:en|at)\s+(?:el|la|los|las|the)?\s*([^.,;]+?)(?=\s+(?:hay|somos|con|with)\b|[.,;]|$)/i);
+  const candidate = match?.[1]?.trim();
+  if (!candidate || candidate.length > 160) return undefined;
+  if (/^\/|https?:|@|\+?\d{6,}/.test(candidate)) return undefined;
+  return candidate;
+}
+
+function extractTelegramSosPeopleCount(text: string): number | undefined {
+  const digitMatch = text.match(/\b([1-9]\d{0,3})\s+(?:persona|personas|people|affected|afectad)/i);
+  if (digitMatch) return Number(digitMatch[1]);
+
+  const words: Record<string, number> = {
+    una: 1,
+    uno: 1,
+    dos: 2,
+    tres: 3,
+    cuatro: 4,
+    cinco: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+  };
+  const wordMatch = text.match(/\b(una|uno|dos|tres|cuatro|cinco|six|seven|eight|nine|ten)\s+(?:persona|personas|people|affected|afectad)/i);
+  return wordMatch ? words[wordMatch[1].toLowerCase()] : undefined;
+}
+
+function extractTelegramSosHazardHint(text: string): string | undefined {
+  if (/\bhumo|smoke\b/i.test(text)) return 'humo';
+  if (/\bfuego|fire\b/i.test(text)) return 'fuego';
+  if (/\binundaci[oó]n|flood/i.test(text)) return 'inundación';
+  if (/\bcolapso|collapse/i.test(text)) return 'colapso';
+  return undefined;
 }
 
 function parseTelegramDispatchIntentFacts(
