@@ -5,6 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CountryListResponse, OperationalMapResponse } from '@zona-cero/contracts';
 import { OperationsMapPanel } from '../OperationsMapPanel';
 
+const leafletMapMock = vi.hoisted(() => ({
+  fitBounds: vi.fn(),
+  invalidateSize: vi.fn(),
+}));
+
 vi.mock('react-leaflet', () => ({
   MapContainer: ({ children, className }: { children: ReactNode; className?: string }) => (
     <div data-testid="leaflet-map" className={className}>{children}</div>
@@ -12,8 +17,14 @@ vi.mock('react-leaflet', () => ({
   TileLayer: ({ attribution }: { attribution: string }) => (
     <div data-testid="tile-layer" dangerouslySetInnerHTML={{ __html: attribution }} />
   ),
-  CircleMarker: ({ children }: { children: ReactNode }) => <div data-testid="map-marker">{children}</div>,
+  Marker: ({ children, icon }: { children: ReactNode; icon: { options?: { html?: string; className?: string } } }) => (
+    <div data-testid="map-marker" className={icon.options?.className}>
+      <span data-testid="map-marker-html" dangerouslySetInnerHTML={{ __html: icon.options?.html ?? '' }} />
+      {children}
+    </div>
+  ),
   Popup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  useMap: () => leafletMapMock,
 }));
 
 const countriesFixture: CountryListResponse = {
@@ -81,6 +92,8 @@ const portugalEmptyMapFixture: OperationalMapResponse = {
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  leafletMapMock.fitBounds.mockClear();
+  leafletMapMock.invalidateSize.mockClear();
 });
 
 afterEach(() => {
@@ -110,8 +123,21 @@ describe('OperationsMapPanel', () => {
     expect(screen.getByText('1 SOS alerts')).toBeInTheDocument();
     expect(screen.getByText('2 without location')).toBeInTheDocument();
     expect(screen.getByText('Map data © OpenStreetMap contributors')).toBeVisible();
+    await waitFor(() => expect(leafletMapMock.invalidateSize).toHaveBeenCalled());
+    expect(leafletMapMock.fitBounds).toHaveBeenCalled();
     expect(within(screen.getByRole('list')).getByText('North triage point')).toBeInTheDocument();
     expect(within(screen.getByRole('list')).getByText('SOS sos-mobile-critical-1')).toBeInTheDocument();
+
+    const markerLabels = screen.getAllByTestId('map-marker');
+    expect(markerLabels).toHaveLength(3);
+    expect(markerLabels[0]).toHaveTextContent('Active');
+    expect(markerLabels[0].innerHTML).toContain('operations-map-marker--active');
+    expect(markerLabels[1]).toHaveTextContent('North triage point');
+    expect(markerLabels[1].innerHTML).toContain('operations-map-marker--selected-center');
+    expect(markerLabels[1].innerHTML).toContain('operations-map-marker--selected');
+    expect(markerLabels[2]).toHaveTextContent('SOS');
+    expect(markerLabels[2].innerHTML).toContain('operations-map-marker--sos');
+    expect(markerLabels[2].innerHTML).toContain('data-marker-variant="sos"');
   });
 
   it('renders global and country empty states without calling tiles', async () => {
