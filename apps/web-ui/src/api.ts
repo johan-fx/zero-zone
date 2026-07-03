@@ -4,8 +4,10 @@ import {
   DispatchTaskResponseSchema,
   FamilyReunificationSearchRequestSchema,
   FamilyReunificationSearchResponseSchema,
+  CountryListResponseSchema,
   HealthResponseSchema,
   PrivateWebLinkConsumeRequestSchema,
+  OperationalMapResponseSchema,
   PrivateWebLinkConsumeResponseSchema,
   PrivateWebLinkValidateRequestSchema,
   PrivateWebLinkValidateResponseSchema,
@@ -23,7 +25,9 @@ import {
   type DispatchTaskResponse,
   type FamilyReunificationSearchRequest,
   type FamilyReunificationSearchResponse,
+  type CountryListResponse,
   type HealthResponse,
+  type OperationalMapResponse,
   type PrivateWebLinkConsumeRequest,
   type PrivateWebLinkConsumeResponse,
   type PrivateWebLinkValidateRequest,
@@ -68,6 +72,32 @@ export async function fetchApiHealth(
   }
 
   return HealthResponseSchema.parse(await response.json());
+}
+
+export async function fetchMapCountries(
+  fetcher: Fetcher = fetch,
+): Promise<CountryListResponse> {
+  const response = await fetcher(`${getApiBaseUrl()}/map/countries`);
+
+  if (!response.ok) {
+    throw new Error(`Map countries failed with status ${response.status}`);
+  }
+
+  return CountryListResponseSchema.parse(await response.json());
+}
+
+export async function fetchOperationalMap(
+  countryCode: string,
+  fetcher: Fetcher = fetch,
+): Promise<OperationalMapResponse> {
+  const params = new URLSearchParams({ countryCode });
+  const response = await fetcher(`${getApiBaseUrl()}/map?${params.toString()}`);
+
+  if (!response.ok) {
+    throw new Error(`Operational map failed with status ${response.status}`);
+  }
+
+  return OperationalMapResponseSchema.parse(await response.json());
 }
 
 export async function fetchWorkCenters(

@@ -764,6 +764,84 @@ export const IncidentSummarySchema = z.object({
 });
 export type IncidentSummary = z.infer<typeof IncidentSummarySchema>;
 
+export const GeoPointSchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+}).strict();
+export type GeoPoint = z.infer<typeof GeoPointSchema>;
+
+export const MapBoundsSchema = z.object({
+  northEast: GeoPointSchema,
+  southWest: GeoPointSchema,
+}).strict();
+export type MapBounds = z.infer<typeof MapBoundsSchema>;
+
+export const CountryOptionSchema = z.object({
+  countryCode: z.string().length(2),
+  countryName: z.string().min(1),
+  incidentCount: z.number().int().nonnegative(),
+  markerCount: z.number().int().nonnegative(),
+}).strict();
+export type CountryOption = z.infer<typeof CountryOptionSchema>;
+
+export const IncidentMapSummarySchema = z.object({
+  incidentId: z.string().min(1),
+  name: z.string().min(1),
+  status: z.enum(['active', 'closed']),
+  startsAt: z.string().min(1),
+  locationName: z.string().min(1),
+  countryCode: z.string().length(2),
+  countryName: z.string().min(1),
+  location: GeoPointSchema,
+}).strict();
+export type IncidentMapSummary = z.infer<typeof IncidentMapSummarySchema>;
+
+export const MapWorkCenterMarkerSchema = z.object({
+  markerId: z.string().min(1),
+  type: z.literal('work_center'),
+  workCenterId: z.string().min(1),
+  incidentId: z.string().min(1),
+  name: z.string().min(1),
+  priority: WorkCenterPrioritySchema,
+  status: WorkCenterStatusSchema,
+  location: GeoPointSchema,
+  updatedAt: z.string().min(1),
+}).strict();
+export type MapWorkCenterMarker = z.infer<typeof MapWorkCenterMarkerSchema>;
+
+export const MapSosMarkerSchema = z.object({
+  markerId: z.string().min(1),
+  type: z.literal('sos'),
+  sosAlertId: z.string().min(1),
+  incidentId: z.string().min(1),
+  status: SosAlertStatusSchema,
+  severity: SosSeveritySchema,
+  location: GeoPointSchema,
+  createdAt: z.string().min(1),
+}).strict();
+export type MapSosMarker = z.infer<typeof MapSosMarkerSchema>;
+
+export const OperationalMapResponseSchema = z.object({
+  countryCode: z.string().length(2),
+  countryName: z.string().min(1),
+  bounds: MapBoundsSchema.optional(),
+  incidents: z.array(IncidentMapSummarySchema),
+  workCenters: z.array(MapWorkCenterMarkerSchema),
+  sosAlerts: z.array(MapSosMarkerSchema),
+  counts: z.object({
+    incidents: z.number().int().nonnegative(),
+    workCenters: z.number().int().nonnegative(),
+    sosAlerts: z.number().int().nonnegative(),
+    withoutLocation: z.number().int().nonnegative(),
+  }).strict(),
+}).strict();
+export type OperationalMapResponse = z.infer<typeof OperationalMapResponseSchema>;
+
+export const CountryListResponseSchema = z.object({
+  countries: z.array(CountryOptionSchema),
+}).strict();
+export type CountryListResponse = z.infer<typeof CountryListResponseSchema>;
+
 export const IncidentListResponseSchema = z.object({
   incidents: z.array(IncidentSummarySchema),
 });

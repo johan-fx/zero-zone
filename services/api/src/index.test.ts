@@ -19,7 +19,9 @@ import {
 import {
   DispatchTaskListResponseSchema,
   DispatchTaskResponseSchema,
+  CountryListResponseSchema,
   IncidentJoinResponseSchema,
+  OperationalMapResponseSchema,
   OperationalEventSchema,
   FamilyReunificationSearchResponseSchema,
   PrivateWebLinkConsumeResponseSchema,
@@ -208,6 +210,65 @@ describe('api worker', () => {
     const response = await request('/health');
 
     await expect(response.json()).resolves.toEqual({ service: 'zona-cero-api', ok: true, version: '0.0.0-boilerplate' });
+  });
+
+  it('serves operational map countries with public-safe markers', async () => {
+    const countries = CountryListResponseSchema.parse(await (await request('/map/countries')).json());
+    expect(countries.countries[0]).toMatchObject({ countryCode: 'ES', countryName: 'Spain', incidentCount: 1, markerCount: 1 });
+
+    const invalid = await request('/map?countryCode=Spain');
+    expect(invalid.status).toBe(400);
+
+    await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(telegramIncidentJoinRequestFixture),
+    });
+
+    const noLocationCenter = await request('/incidents/incident-zc-demo/work-centers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...telegramWorkCenterCreateRequestFixture, payload: { ...telegramWorkCenterCreateRequestFixture.payload, name: 'No location center', location: undefined } }),
+    });
+    expect(noLocationCenter.status).toBe(200);
+
+    const locatedCenter = await request('/incidents/incident-zc-demo/work-centers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ...telegramWorkCenterCreateRequestFixture,
+        payload: { ...telegramWorkCenterCreateRequestFixture.payload, location: { latitude: 41.3849, longitude: 2.1749 } },
+      }),
+    });
+    expect(locatedCenter.status).toBe(200);
+
+    const noLocationSos = await request('/incidents/incident-zc-demo/sos', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ channel: 'web-ui', externalId: 'web-user-1001', payload: { severity: 'medical', reportedAt: '2026-06-30T11:05:00.000Z' } }),
+    });
+    expect(noLocationSos.status).toBe(200);
+
+    const locatedSos = await request('/incidents/incident-zc-demo/sos', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(telegramSosCreateRequestFixture),
+    });
+    expect(locatedSos.status).toBe(200);
+
+    const map = OperationalMapResponseSchema.parse(await (await request('/map?countryCode=es')).json());
+    expect(map.incidents).toHaveLength(1);
+    expect(map.workCenters).toHaveLength(1);
+    expect(map.sosAlerts).toEqual([]);
+    expect(map.counts.sosAlerts).toBe(2);
+    expect(map.counts.withoutLocation).toBe(2);
+    expect(map.incidents[0]?.location).toEqual({ latitude: 41.39, longitude: 2.17 });
+    expect(map.workCenters[0]?.location).toEqual({ latitude: 41.38, longitude: 2.17 });
+    expect(JSON.stringify(map)).not.toContain('sos:');
+    expect(JSON.stringify(map)).not.toContain('sosAlertId');
+
+    const unknown = await request('/map?countryCode=ZZ');
+    expect(unknown.status).toBe(404);
   });
 
   it('accepts contract-valid sync push operations', async () => {

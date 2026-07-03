@@ -6,6 +6,8 @@ import {
   IncidentConfigResponseSchema,
   IncidentJoinResponseSchema,
   IncidentListResponseSchema,
+  CountryListResponseSchema,
+  OperationalMapResponseSchema,
   SosAlertCreateResponseSchema,
   SosAlertStatusResponseSchema,
   SyncPullResponseSchema,
@@ -53,6 +55,40 @@ describe('api contract integration', () => {
     );
     expect(join.channelIdentity.channel).toBe('telegram');
     expect(join.channelIdentity.preferredLocale).toBe('en');
+  });
+
+  it('returns operational map country and marker payloads accepted by shared contracts', async () => {
+    const countries = CountryListResponseSchema.parse(await (await request('/map/countries')).json());
+    expect(countries.countries[0]).toMatchObject({ countryCode: 'ES', countryName: 'Spain', incidentCount: 1 });
+
+    const initialMap = OperationalMapResponseSchema.parse(await (await request('/map?countryCode=ES')).json());
+    expect(initialMap.incidents[0]).toMatchObject({ incidentId: 'incident-zc-demo', countryCode: 'ES' });
+    expect(initialMap.workCenters).toHaveLength(0);
+    expect(initialMap.sosAlerts).toHaveLength(0);
+    expect(initialMap.counts.withoutLocation).toBe(0);
+
+    await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(telegramIncidentJoinRequestFixture),
+    });
+
+    await request('/incidents/incident-zc-demo/work-centers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(telegramWorkCenterCreateRequestFixture),
+    });
+    await request('/incidents/incident-zc-demo/sos', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(telegramSosCreateRequestFixture),
+    });
+
+    const populatedMap = OperationalMapResponseSchema.parse(await (await request('/map?countryCode=es')).json());
+    expect(populatedMap.countryCode).toBe('ES');
+    expect(populatedMap.workCenters[0]).toMatchObject({ type: 'work_center', name: 'North triage point' });
+    expect(populatedMap.sosAlerts).toEqual([]);
+    expect(populatedMap.counts.sosAlerts).toBe(1);
   });
 
   it('returns work center payloads accepted by shared contracts', async () => {

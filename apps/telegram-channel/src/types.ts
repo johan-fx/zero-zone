@@ -48,9 +48,16 @@ export type TelegramTelemetryScope =
   | 'telegram.sos'
   | 'telegram.private_link';
 
+export type TelegramNativeLocation = {
+  latitude: number;
+  longitude: number;
+  horizontal_accuracy?: number;
+};
+
 export type TelegramUpdateLike = {
   message?: {
     text?: string;
+    location?: TelegramNativeLocation;
     chat?: { id?: number | string; type?: string };
     from?: { id?: number | string; first_name?: string; language_code?: string };
   };
@@ -181,7 +188,7 @@ export type TelegramFamilyReunificationState =
   | { step: 'linked'; response: PrivateWebLinkIssueResponse }
   | { step: 'cancelled' };
 
-export type TelegramWorkCenterPrefill = Partial<Pick<WorkCenterCreatePayload, 'name' | 'description' | 'priority' | 'initialNeed' | 'surplus'>>;
+export type TelegramWorkCenterPrefill = Partial<Pick<WorkCenterCreatePayload, 'name' | 'description' | 'priority' | 'initialNeed' | 'surplus' | 'location'>>;
 
 export type TelegramWorkCenterReportState =
   | { step: 'idle' }

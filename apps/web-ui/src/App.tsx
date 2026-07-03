@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from 'react';
+import { type FormEvent, lazy, Suspense, useEffect, useState } from 'react';
 
 import type {
   DispatchTask,
@@ -52,6 +52,12 @@ import type { StatusTone } from '@zona-cero/ui';
 import { Card, MetaRow, SectionHeader, StatusBadge } from '@zona-cero/ui/web';
 import './styles.css';
 
+const OperationsMapPanel = lazy(() =>
+  import('./features/operations-map/OperationsMapPanel').then((module) => ({
+    default: module.OperationsMapPanel,
+  })),
+);
+
 type HealthState =
   | { status: 'loading' }
   | { status: 'ready'; health: HealthResponse }
@@ -93,9 +99,9 @@ type FamilyReunificationForm = {
   lastKnownAreaLabel: string;
 };
 
-type HubRoute = 'hub' | 'work-centers' | 'resources' | 'sos' | 'dispatch';
+type HubRoute = 'hub' | 'map' | 'work-centers' | 'resources' | 'sos' | 'dispatch';
 
-const hubRoutes: readonly HubRoute[] = ['hub', 'work-centers', 'resources', 'sos', 'dispatch'];
+const hubRoutes: readonly HubRoute[] = ['hub', 'map', 'work-centers', 'resources', 'sos', 'dispatch'];
 
 function isHubRoute(value: string): value is HubRoute {
   return (hubRoutes as readonly string[]).includes(value);
@@ -405,6 +411,15 @@ function OperationsPanel() {
         />
       ) : null}
 
+      {route === 'map' ? (
+        <section className="status-card" aria-label="Operational map" aria-live="polite">
+          <HubBackLink onNavigate={navigate} />
+          <Suspense fallback={<p>Loading operational map…</p>}>
+            <OperationsMapPanel />
+          </Suspense>
+        </section>
+      ) : null}
+
       {route === 'work-centers' ? (
         <section className="status-card" aria-labelledby="work-centers-title" aria-live="polite">
           <HubBackLink onNavigate={navigate} />
@@ -482,6 +497,7 @@ function OperationsPanel() {
 
 const hubNavTabs: { route: HubRoute; label: string }[] = [
   { route: 'hub', label: 'Hub' },
+  { route: 'map', label: 'Map' },
   { route: 'work-centers', label: 'Work centers' },
   { route: 'resources', label: 'Resources' },
   { route: 'dispatch', label: 'Dispatch tasks' },
@@ -566,6 +582,7 @@ function HubGrid({
 }) {
   const { t } = useI18n();
   const workCenters = summarizeWorkCenters(workCenterState);
+  const map = { tone: 'info' as StatusTone, countLabel: 'Country map' };
   const resources = summarizeResources(resourceState);
   const dispatch = summarizeDispatch(dispatchState);
   const sos = summarizeSos(sosState);
@@ -573,6 +590,14 @@ function HubGrid({
 
   return (
     <section className="hub-grid" aria-label="Operational areas overview">
+      <HubTileButton
+        title="Map"
+        description="Country-filtered operational geography with incidents, work centers, and SOS alerts."
+        tone={map.tone}
+        countLabel={map.countLabel}
+        openLabel={openLabel}
+        onOpen={() => onNavigate('map')}
+      />
       <HubTileButton
         title="Work centers"
         description={t('web.hub.tile.work_centers.description')}
