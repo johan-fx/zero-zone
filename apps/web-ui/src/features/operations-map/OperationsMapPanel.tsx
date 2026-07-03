@@ -66,7 +66,7 @@ export function OperationsMapPanel() {
   const selectedCountry = countries.find((country) => country.countryCode === selectedCountryCode);
 
   return (
-    <div className="operations-map-panel">
+    <div className="operations-map-panel" role="region" aria-labelledby="map-title" data-testid="operations-map-panel">
       <div className="operations-map-panel__toolbar">
         <SectionHeader
           eyebrow="Operational map"

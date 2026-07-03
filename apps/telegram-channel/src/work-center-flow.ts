@@ -1,13 +1,13 @@
 import { formatMessage, type SupportedLocale } from '@zona-cero/i18n';
 
-import { WorkCenterConnectedCreateRequestSchema, type TelegramWorkCenterIntentFacts, type WorkCenterConnectedCreateRequest } from '@zona-cero/contracts';
+import { WorkCenterConnectedCreateRequestSchema, type TelegramWorkCenterIntentFacts, type WorkCenterConnectedCreateRequest, type WorkCenterLocation } from '@zona-cero/contracts';
 
 import { formatIncidentList, selectIncident } from './incident-selection';
 import { isCancellation, isConfirmation } from './parsing';
 import { resolveTelegramLocale } from './locale';
 import { getTelegramDisplayName, getTelegramExternalUserId, resolveTelegramCommand } from './telegram-update';
 import { withTelegramFlowTelemetry } from './telemetry';
-import type { TelegramFlowContext, TelegramUpdateLike, TelegramWorkCenterPrefill, TelegramWorkCenterReportFlowResult, TelegramWorkCenterReportPorts, TelegramWorkCenterReportState } from './types';
+import type { TelegramFlowContext, TelegramNativeLocation, TelegramUpdateLike, TelegramWorkCenterPrefill, TelegramWorkCenterReportFlowResult, TelegramWorkCenterReportPorts, TelegramWorkCenterReportState } from './types';
 import { formatWorkCenterReportError, formatWorkCenterReportSuccess, getTelegramChannelLimitation } from './work-center-helpers';
 
 type TelegramWorkCenterFlowContext = Extract<TelegramFlowContext, { sourceIntent: 'workcenter' }>;
@@ -30,7 +30,9 @@ export async function handleTelegramWorkCenterReportFlow(
       const text = update.message?.text?.trim() ?? '';
       const command = resolveTelegramCommand(update);
       const locale = resolveTelegramLocale(update, flowContext?.preferredLocale);
-      const prefill = state.step === 'awaitingIncident' || state.step === 'awaitingName' ? state.prefill : buildSafeWorkCenterPrefill(flowContext);
+      const nativeLocation = parseTelegramNativeLocation(update.message?.location);
+      const contextPrefill = state.step === 'awaitingIncident' || state.step === 'awaitingName' ? state.prefill : buildSafeWorkCenterPrefill(flowContext);
+      const prefill = mergeWorkCenterPrefill(contextPrefill, nativeLocation);
 
       if (command === '/cancel') {
         return { state: { step: 'cancelled' }, responseText: workCenterCopy(locale, 'cancelled') };
@@ -41,6 +43,13 @@ export async function handleTelegramWorkCenterReportFlow(
       }
 
       if (state.step === 'awaitingIncident') {
+        if (nativeLocation && !text) {
+          return {
+            state: { ...state, prefill },
+            responseText: `Location saved for this work center. Choose an incident before continuing:\n${formatIncidentList(state.incidents)}`,
+          };
+        }
+
         const incident = selectIncident(state.incidents, text);
         if (!incident) {
           return {
@@ -78,10 +87,13 @@ export async function handleTelegramWorkCenterReportFlow(
 
       if (state.step === 'awaitingName') {
         if (!text || text.startsWith('/')) {
-          return { state, responseText: workCenterCopy(locale, 'nameRequired') };
+          return {
+            state: nativeLocation ? { ...state, prefill } : state,
+            responseText: nativeLocation ? workCenterCopy(locale, 'locationSavedNameRequired') : workCenterCopy(locale, 'nameRequired'),
+          };
         }
 
-        const request = buildWorkCenterRequest(state.externalUserId, state.displayName, { ...state.prefill, name: text });
+        const request = buildWorkCenterRequest(state.externalUserId, state.displayName, { ...prefill, name: text });
 
         if (!request) {
           return { state, responseText: workCenterCopy(locale, 'invalid') };
@@ -105,6 +117,16 @@ export async function handleTelegramWorkCenterReportFlow(
         }
 
         if (!isConfirmation(text)) {
+          if (nativeLocation) {
+            const request = buildWorkCenterRequest(state.externalUserId, state.displayName, { ...state.request.payload, location: nativeLocation });
+            if (request) {
+              return {
+                state: { ...state, request },
+                responseText: formatWorkCenterReportConfirmation(locale, state.incident.name, request),
+              };
+            }
+          }
+
           const correctedName = parseNameCorrection(text);
           if (correctedName) {
             const request = buildWorkCenterRequest(state.externalUserId, state.displayName, { ...state.request.payload, name: correctedName });
@@ -165,6 +187,11 @@ async function startWorkCenterIncidentSelection(
 
 }
 
+function mergeWorkCenterPrefill(prefill: TelegramWorkCenterPrefill | undefined, location: WorkCenterLocation | null): TelegramWorkCenterPrefill | undefined {
+  if (!location) return prefill;
+  return { ...prefill, location };
+}
+
 function buildSafeWorkCenterPrefill(flowContext?: TelegramWorkCenterFlowContext): TelegramWorkCenterPrefill | undefined {
   const source = flowContext?.prefill ?? {};
   const prefill: TelegramWorkCenterPrefill = {};
@@ -195,8 +222,8 @@ function buildWorkCenterRequest(
 
 function formatWorkCenterReportConfirmation(locale: SupportedLocale, incidentName: string, request: WorkCenterConnectedCreateRequest): string {
   const labels = locale === 'es'
-    ? { title: 'Confirma el reporte de puesto de trabajo:', incident: 'Incidente', name: 'Nombre', description: 'Ubicación aproximada', priority: 'Prioridad', initialNeed: 'Necesidad inicial', surplus: 'Sobrante', confirm: 'Responde sí para enviar, escribe "nombre: nuevo nombre" para corregir, o /cancel para detener.' }
-    : { title: 'Confirm work center report:', incident: 'Incident', name: 'Name', description: 'Location hint', priority: 'Priority', initialNeed: 'Initial need', surplus: 'Surplus', confirm: 'Reply yes to submit, type "name: new name" to correct, or /cancel to stop.' };
+    ? { title: 'Confirma el reporte de puesto de trabajo:', incident: 'Incidente', name: 'Nombre', description: 'Ubicación aproximada', coordinates: 'Coordenadas aproximadas', priority: 'Prioridad', initialNeed: 'Necesidad inicial', surplus: 'Sobrante', confirm: 'Responde sí para enviar, escribe "nombre: nuevo nombre" para corregir, o /cancel para detener.' }
+    : { title: 'Confirm work center report:', incident: 'Incident', name: 'Name', description: 'Location hint', coordinates: 'Approximate coordinates', priority: 'Priority', initialNeed: 'Initial need', surplus: 'Surplus', confirm: 'Reply yes to submit, type "name: new name" to correct, or /cancel to stop.' };
 
   const payload = request.payload;
   return [
@@ -204,11 +231,24 @@ function formatWorkCenterReportConfirmation(locale: SupportedLocale, incidentNam
     `${labels.incident}: ${incidentName}`,
     `${labels.name}: ${payload.name}`,
     payload.description ? `${labels.description}: ${payload.description.replace(/^Location hint: /, '')}` : null,
+    payload.location ? `${labels.coordinates}: ${formatApproximateCoordinates(payload.location)}` : null,
     `${labels.priority}: ${payload.priority}`,
     payload.initialNeed ? `${labels.initialNeed}: ${payload.initialNeed}` : null,
     payload.surplus ? `${labels.surplus}: ${payload.surplus}` : null,
     labels.confirm,
   ].filter(Boolean).join('\n');
+}
+
+function parseTelegramNativeLocation(location: TelegramNativeLocation | undefined): WorkCenterLocation | null {
+  if (!location || typeof location.latitude !== 'number' || typeof location.longitude !== 'number') return null;
+  if (!Number.isFinite(location.latitude) || !Number.isFinite(location.longitude)) return null;
+  if (location.latitude < -90 || location.latitude > 90 || location.longitude < -180 || location.longitude > 180) return null;
+
+  return { latitude: location.latitude, longitude: location.longitude };
+}
+
+function formatApproximateCoordinates(location: WorkCenterLocation): string {
+  return `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}`;
 }
 
 function parseNameCorrection(text: string): string | null {
@@ -225,13 +265,14 @@ function isWorkCenterPriority(value: unknown): value is NonNullable<TelegramWork
   return value === 'low' || value === 'medium' || value === 'high' || value === 'critical';
 }
 
-function workCenterCopy(locale: SupportedLocale, key: 'cancelled' | 'namePrompt' | 'nameMissingWithPrefill' | 'nameRequired' | 'invalid' | 'confirmationRequired' | 'startPrompt'): string {
+function workCenterCopy(locale: SupportedLocale, key: 'cancelled' | 'namePrompt' | 'nameMissingWithPrefill' | 'nameRequired' | 'locationSavedNameRequired' | 'invalid' | 'confirmationRequired' | 'startPrompt'): string {
   const copy = {
     en: {
       cancelled: 'Work center report cancelled. Send /workcenter to begin again.',
       namePrompt: 'Send the work center name. Use /cancel to stop.',
       nameMissingWithPrefill: 'I have the details. Send only the work center name, or /cancel to stop.',
       nameRequired: 'Work center name is required. Send a visible name, or /cancel to stop.',
+      locationSavedNameRequired: 'Location saved. Send a visible work center name, or /cancel to stop.',
       invalid: 'Invalid work center report. Send a non-empty work center name, or /cancel to stop.',
       confirmationRequired: 'Reply yes to submit the work center report, no to cancel, type "name: new name" to correct, or /cancel to stop.',
       startPrompt: 'Send /workcenter to begin the work center report flow.',
@@ -241,6 +282,7 @@ function workCenterCopy(locale: SupportedLocale, key: 'cancelled' | 'namePrompt'
       namePrompt: 'Envía el nombre del puesto de trabajo. Usa /cancel para detener.',
       nameMissingWithPrefill: 'Ya tengo los detalles. Envía solo el nombre del puesto de trabajo, o /cancel para detener.',
       nameRequired: 'El nombre del puesto de trabajo es obligatorio. Envía un nombre visible, o /cancel para detener.',
+      locationSavedNameRequired: 'Ubicación guardada. Envía un nombre visible del puesto de trabajo, o /cancel para detener.',
       invalid: 'Reporte de puesto de trabajo inválido. Envía un nombre no vacío, o /cancel para detener.',
       confirmationRequired: 'Responde sí para enviar el reporte, no para cancelar, escribe "nombre: nuevo nombre" para corregir, o /cancel para detener.',
       startPrompt: 'Envía /workcenter para iniciar el reporte de puesto de trabajo.',

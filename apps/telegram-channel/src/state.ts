@@ -13,6 +13,7 @@ import {
   SosAlertCreateResponseSchema,
   SosConnectedCreateRequestSchema,
   WorkCenterConnectedCreateRequestSchema,
+  WorkCenterLocationSchema,
   WorkCenterPrioritySchema,
   WorkCenterCreateResponseSchema,
   type IncidentSummary,
@@ -435,15 +436,18 @@ function parseTelegramWorkCenterReportStateValue(value: unknown): TelegramWorkCe
 
 function parseWorkCenterPrefill(value: unknown): TelegramWorkCenterPrefill | null {
   if (value === undefined) return null;
-  if (!isRecord(value) || !hasOnlyKeys(value, ['name', 'description', 'priority', 'initialNeed', 'surplus'])) return null;
+  if (!isRecord(value) || !hasOnlyKeys(value, ['name', 'description', 'priority', 'initialNeed', 'surplus', 'location'])) return null;
 
   const priority = value.priority === undefined ? undefined : WorkCenterPrioritySchema.safeParse(value.priority);
   if (priority && !priority.success) return null;
+  const location = value.location === undefined ? undefined : WorkCenterLocationSchema.safeParse(value.location);
+  if (location && !location.success) return null;
 
   const prefill: TelegramWorkCenterPrefill = {};
   if (isNonEmptyString(value.name)) prefill.name = value.name;
   if (isNonEmptyString(value.description)) prefill.description = value.description;
   if (priority?.success) prefill.priority = priority.data;
+  if (location?.success) prefill.location = location.data;
   if (isNonEmptyString(value.initialNeed)) prefill.initialNeed = value.initialNeed;
   if (isNonEmptyString(value.surplus)) prefill.surplus = value.surplus;
 

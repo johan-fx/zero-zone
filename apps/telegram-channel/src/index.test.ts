@@ -17,6 +17,8 @@ import {
   ResourceReportConnectedCreateRequestSchema,
   SosConnectedCreateRequestSchema,
   WorkCenterConnectedCreateRequestSchema,
+  type WorkCenterConnectedCreateRequest,
+  type WorkCenterCreateResponse,
   type DispatchTask,
   type DispatchTaskResponse,
   type ResourceReportCreateResponse,
@@ -68,6 +70,14 @@ import {
 const telegramUserUpdate = (text: string, languageCode = 'en') => ({
   message: {
     text,
+    from: { id: 1001, first_name: 'Field', language_code: languageCode },
+    chat: { id: 1001, type: 'private' },
+  },
+});
+
+const telegramUserLocationUpdate = (latitude: number, longitude: number, languageCode = 'en') => ({
+  message: {
+    location: { latitude, longitude, horizontal_accuracy: 35 },
     from: { id: 1001, first_name: 'Field', language_code: languageCode },
     chat: { id: 1001, type: 'private' },
   },
@@ -718,6 +728,53 @@ describe('telegram channel flows', () => {
         priority: 'medium',
       },
     });
+  });
+
+  it('adds Telegram native location to the confirmed work center payload', async () => {
+    const nativeLocation = { latitude: 41.3851, longitude: 2.1734 };
+    const createWorkCenter = vi.fn().mockImplementation(async (_incidentId: string, request: WorkCenterConnectedCreateRequest): Promise<WorkCenterCreateResponse> => ({
+      ...workCenterCreateResponseHappyFixture,
+      workCenter: {
+        ...workCenterCreateResponseHappyFixture.workCenter,
+        location: request.payload.location,
+      },
+    }));
+    const ports = createWorkCenterPorts({ createWorkCenter });
+
+    let state: TelegramWorkCenterReportState = { step: 'idle' };
+    let result = await handleTelegramWorkCenterReportFlow(state, telegramUserUpdate('/workcenter'), ports);
+    state = result.state;
+    result = await handleTelegramWorkCenterReportFlow(state, telegramUserUpdate('1'), ports);
+    state = result.state;
+    result = await handleTelegramWorkCenterReportFlow(state, telegramUserUpdate(validWorkCenterCreatePayloadFixture.name), ports);
+    state = result.state;
+
+    result = await handleTelegramWorkCenterReportFlow(state, telegramUserLocationUpdate(nativeLocation.latitude, nativeLocation.longitude), ports);
+
+    expect(result.state).toMatchObject({
+      step: 'awaitingConfirmation',
+      request: { payload: expect.objectContaining({ location: nativeLocation }) },
+    });
+    expect(result.responseText).toContain('Approximate coordinates: 41.38510, 2.17340');
+    state = result.state;
+
+    result = await handleTelegramWorkCenterReportFlow(state, telegramUserUpdate('yes'), ports);
+
+    expect(result.state).toMatchObject({
+      step: 'reported',
+      response: { workCenter: expect.objectContaining({ location: nativeLocation }) },
+    });
+    expect(createWorkCenter).toHaveBeenCalledWith('incident-zc-demo', {
+      channel: 'telegram',
+      externalId: '1001',
+      displayName: 'Field',
+      payload: {
+        name: 'North triage point',
+        priority: 'medium',
+        location: nativeLocation,
+      },
+    });
+    expect(WorkCenterConnectedCreateRequestSchema.parse(createWorkCenter.mock.calls[0]?.[1]).payload.location).toEqual(nativeLocation);
   });
 
   it('prefills a natural-language work center report and requires explicit confirmation before creation', async () => {

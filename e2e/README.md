@@ -88,3 +88,13 @@ Additional helpers for `/sos` and `/reunificacion` exist in the default full run
 ```bash
 pnpm tsx e2e/telegram/staging-telegram-runner.ts run --include-sensitive-flows
 ```
+
+# Local operational map E2E
+
+The local operational map E2E runs against the default Playwright web servers: local API on `http://127.0.0.1:8787` and Web UI on `http://127.0.0.1:5173` with `VITE_API_BASE_URL` pointing at the API.
+
+```bash
+pnpm exec playwright test e2e/operational-map.spec.ts
+```
+
+The test drives the local Telegram webhook by joining the incident as `logistics`, creating a work center through `/workcenter`, sending a native Telegram `message.location`, waiting for `/map?countryCode=ES`, opening `/#/map`, verifying accessible map content, and writing `test-results/operational-map-dashboard.png`.
