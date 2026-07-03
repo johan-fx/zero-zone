@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -14,7 +15,16 @@ import {
 } from '../../../packages/testing/src';
 import { App } from './App';
 
-
+vi.mock('react-leaflet', () => ({
+  MapContainer: ({ children, className }: { children: ReactNode; className?: string }) => (
+    <div data-testid="leaflet-map" className={className}>{children}</div>
+  ),
+  TileLayer: ({ attribution }: { attribution: string }) => (
+    <div data-testid="tile-layer" dangerouslySetInnerHTML={{ __html: attribution }} />
+  ),
+  CircleMarker: ({ children }: { children: ReactNode }) => <div data-testid="map-marker">{children}</div>,
+  Popup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
 
 const freshSyncPullFixture: SyncPullResponse = {
   operations: [],

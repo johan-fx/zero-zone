@@ -1,10 +1,14 @@
-INSERT INTO incidents (incident_id, name, status, starts_at, location_name)
-VALUES ('incident-zc-demo', 'Zona Cero Demo Incident', 'active', '2026-06-30T09:00:00.000Z', 'Operations Base')
+INSERT INTO incidents (incident_id, name, status, starts_at, location_name, country_code, country_name, latitude, longitude)
+VALUES ('incident-zc-demo', 'Zona Cero Demo Incident', 'active', '2026-06-30T09:00:00.000Z', 'Operations Base', 'ES', 'Spain', 41.3874, 2.1686)
 ON CONFLICT(incident_id) DO UPDATE SET
   name = excluded.name,
   status = excluded.status,
   starts_at = excluded.starts_at,
-  location_name = excluded.location_name;
+  location_name = excluded.location_name,
+  country_code = excluded.country_code,
+  country_name = excluded.country_name,
+  latitude = excluded.latitude,
+  longitude = excluded.longitude;
 
 
 INSERT INTO channel_identities (channel_identity_id, channel, external_id, display_name)

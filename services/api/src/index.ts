@@ -21,6 +21,8 @@ import {
   type DispatchTaskStatus,
   IncidentJoinResponseSchema,
   IncidentListResponseSchema,
+  CountryListResponseSchema,
+  OperationalMapResponseSchema,
   OperationalEventSchema,
   PendingSignedOperationSchema,
   PrivateWebLinkConsumeRequestSchema,
@@ -36,6 +38,11 @@ import {
   type IncidentJoinResponse,
   type IncidentRole,
   type IncidentSummary,
+  type CountryOption,
+  type IncidentMapSummary,
+  type MapBounds,
+  type MapWorkCenterMarker,
+  type OperationalMapResponse,
   resolveSupportedLocale,
   type SupportedLocale,
   type OperationalEvent,
@@ -189,6 +196,24 @@ app.get('/incidents', async (c) => {
   const results = await listIncidents(c.env.DB);
 
   return c.json(IncidentListResponseSchema.parse({ incidents: results }));
+});
+
+app.get('/map/countries', async (c) => {
+  return c.json(CountryListResponseSchema.parse({ countries: await listMapCountries(c.env.DB) }));
+});
+
+app.get('/map', async (c) => {
+  const countryCode = normalizeCountryCode(c.req.query('countryCode'));
+  if (!countryCode) {
+    return c.json({ error: 'invalid_payload', issues: [{ message: 'countryCode must be an ISO 3166-1 alpha-2 code' }] }, 400);
+  }
+
+  const response = await getOperationalMap(c.env.DB, countryCode);
+  if (!response) {
+    return c.json({ error: 'country_not_found' }, 404);
+  }
+
+  return c.json(OperationalMapResponseSchema.parse(response));
 });
 
 app.get('/incidents/:incidentId/config', async (c) => {
@@ -1072,6 +1097,206 @@ type SosAlertRow = {
   cancelledAt: string | null;
   cancelReason: string | null;
 };
+
+type MapIncidentRow = {
+  incidentId: string;
+  name: string;
+  status: IncidentSummary['status'];
+  startsAt: string;
+  locationName: string;
+  countryCode: string;
+  countryName: string;
+  latitude: number | null;
+  longitude: number | null;
+};
+
+type CountryOptionRow = {
+  countryCode: string;
+  countryName: string;
+  incidentCount: number;
+  markerCount: number;
+};
+
+function normalizeCountryCode(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(normalized) ? normalized : null;
+}
+
+async function listMapCountries(db: D1Database): Promise<CountryOption[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT i.country_code AS countryCode, i.country_name AS countryName, COUNT(DISTINCT i.incident_id) AS incidentCount,
+        (
+          COUNT(DISTINCT CASE WHEN i.latitude IS NOT NULL AND i.longitude IS NOT NULL THEN i.incident_id END)
+          + COUNT(DISTINCT CASE WHEN wc.latitude IS NOT NULL AND wc.longitude IS NOT NULL THEN wc.work_center_id END)
+        ) AS markerCount
+       FROM incidents i
+       LEFT JOIN work_centers wc ON wc.incident_id = i.incident_id
+       WHERE i.country_code IS NOT NULL AND i.country_name IS NOT NULL
+       GROUP BY i.country_code, i.country_name
+       ORDER BY i.country_name ASC`,
+    )
+    .all<CountryOptionRow>();
+
+  return results.map((row) => ({
+    countryCode: row.countryCode,
+    countryName: row.countryName,
+    incidentCount: Number(row.incidentCount),
+    markerCount: Number(row.markerCount),
+  }));
+}
+
+async function getOperationalMap(db: D1Database, countryCode: string): Promise<OperationalMapResponse | null> {
+  const incidents = await listMapIncidents(db, countryCode);
+  const countryName = incidents[0]?.countryName ?? (await findCountryName(db, countryCode));
+
+  if (!countryName) {
+    return null;
+  }
+
+  const incidentIds = await listCountryIncidentIds(db, countryCode);
+  const workCenters = incidentIds.length > 0 ? await listMapWorkCenterMarkers(db, incidentIds) : [];
+  const sosAlertCount = await countMapSosAlerts(db, countryCode);
+  const withoutLocation = await countMapItemsWithoutLocation(db, countryCode);
+  // Public map payloads intentionally reduce location precision for operational privacy.
+  const publicIncidents = incidents.map((incident) => ({ ...incident, location: toPublicMapLocation(incident.location) }));
+  const publicWorkCenters = workCenters.map((marker) => ({ ...marker, location: toPublicMapLocation(marker.location) }));
+  const points = [...publicIncidents.map((incident) => incident.location), ...publicWorkCenters.map((marker) => marker.location)];
+
+  return OperationalMapResponseSchema.parse({
+    countryCode,
+    countryName,
+    ...(points.length > 0 ? { bounds: calculateMapBounds(points) } : {}),
+    incidents: publicIncidents,
+    workCenters: publicWorkCenters,
+    sosAlerts: [],
+    counts: {
+      incidents: incidents.length,
+      workCenters: workCenters.length,
+      sosAlerts: sosAlertCount,
+      withoutLocation,
+    },
+  });
+}
+
+async function findCountryName(db: D1Database, countryCode: string): Promise<string | null> {
+  const row = await db
+    .prepare('SELECT country_name AS countryName FROM incidents WHERE country_code = ? AND country_name IS NOT NULL LIMIT 1')
+    .bind(countryCode)
+    .first<{ countryName: string }>();
+  return row?.countryName ?? null;
+}
+
+async function listCountryIncidentIds(db: D1Database, countryCode: string): Promise<string[]> {
+  const { results } = await db
+    .prepare('SELECT incident_id AS incidentId FROM incidents WHERE country_code = ? ORDER BY starts_at DESC')
+    .bind(countryCode)
+    .all<{ incidentId: string }>();
+  return results.map((row) => row.incidentId);
+}
+
+async function listMapIncidents(db: D1Database, countryCode: string): Promise<IncidentMapSummary[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT incident_id AS incidentId, name, status, starts_at AS startsAt, location_name AS locationName,
+        country_code AS countryCode, country_name AS countryName, latitude, longitude
+       FROM incidents
+       WHERE country_code = ? AND country_name IS NOT NULL AND latitude IS NOT NULL AND longitude IS NOT NULL
+       ORDER BY starts_at DESC`,
+    )
+    .bind(countryCode)
+    .all<MapIncidentRow>();
+
+  return results.map((row) => ({
+    incidentId: row.incidentId,
+    name: row.name,
+    status: row.status,
+    startsAt: row.startsAt,
+    locationName: row.locationName,
+    countryCode: row.countryCode,
+    countryName: row.countryName,
+    location: { latitude: Number(row.latitude), longitude: Number(row.longitude) },
+  }));
+}
+
+async function listMapWorkCenterMarkers(db: D1Database, incidentIds: string[]): Promise<MapWorkCenterMarker[]> {
+  const placeholders = incidentIds.map(() => '?').join(', ');
+  const { results } = await db
+    .prepare(
+      `SELECT work_center_id AS workCenterId, incident_id AS incidentId, name, priority, status,
+        latitude, longitude, updated_at AS updatedAt
+       FROM work_centers
+       WHERE incident_id IN (${placeholders}) AND latitude IS NOT NULL AND longitude IS NOT NULL
+       ORDER BY updated_at DESC`,
+    )
+    .bind(...incidentIds)
+    .all<Pick<WorkCenterRow, 'workCenterId' | 'incidentId' | 'name' | 'priority' | 'status' | 'latitude' | 'longitude' | 'updatedAt'>>();
+
+  return results.map((row) => ({
+    markerId: `work_center:${row.workCenterId}`,
+    type: 'work_center',
+    workCenterId: row.workCenterId,
+    incidentId: row.incidentId,
+    name: row.name,
+    priority: row.priority,
+    status: row.status,
+    location: { latitude: Number(row.latitude), longitude: Number(row.longitude) },
+    updatedAt: row.updatedAt,
+  }));
+}
+
+async function countMapSosAlerts(db: D1Database, countryCode: string): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(DISTINCT sa.sos_alert_id) AS sosAlertCount
+       FROM incidents i
+       INNER JOIN sos_alerts sa ON sa.incident_id = i.incident_id
+       WHERE i.country_code = ?`,
+    )
+    .bind(countryCode)
+    .first<{ sosAlertCount: number | null }>();
+
+  return Number(row?.sosAlertCount ?? 0);
+}
+
+async function countMapItemsWithoutLocation(db: D1Database, countryCode: string): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT
+        COUNT(DISTINCT CASE WHEN i.latitude IS NULL OR i.longitude IS NULL THEN i.incident_id END)
+        + COUNT(DISTINCT CASE WHEN wc.latitude IS NULL OR wc.longitude IS NULL THEN wc.work_center_id END)
+        + COUNT(DISTINCT CASE WHEN sa.latitude IS NULL OR sa.longitude IS NULL THEN sa.sos_alert_id END) AS withoutLocation
+       FROM incidents i
+       LEFT JOIN work_centers wc ON wc.incident_id = i.incident_id
+       LEFT JOIN sos_alerts sa ON sa.incident_id = i.incident_id
+       WHERE i.country_code = ?`,
+    )
+    .bind(countryCode)
+    .first<{ withoutLocation: number | null }>();
+
+  return Number(row?.withoutLocation ?? 0);
+}
+
+function toPublicMapLocation(point: { latitude: number; longitude: number }): { latitude: number; longitude: number } {
+  return { latitude: roundCoordinate(point.latitude), longitude: roundCoordinate(point.longitude) };
+}
+
+function roundCoordinate(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function calculateMapBounds(points: Array<{ latitude: number; longitude: number }>): MapBounds {
+  const latitudes = points.map((point) => point.latitude);
+  const longitudes = points.map((point) => point.longitude);
+  return {
+    northEast: { latitude: Math.max(...latitudes), longitude: Math.max(...longitudes) },
+    southWest: { latitude: Math.min(...latitudes), longitude: Math.min(...longitudes) },
+  };
+}
 
 function parseSyncPushBody(body: unknown): SyncPushBodyParseResult {
   if (!body || typeof body !== 'object' || !Array.isArray((body as { operations?: unknown }).operations)) {

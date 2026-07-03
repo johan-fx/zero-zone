@@ -14,17 +14,20 @@
     "deploy:staging": "pnpm build:staging && pnpm --filter @zona-cero/api exec wrangler pages deploy ../../apps/web-ui/dist --project-name zona-cero-web-ui-staging --branch staging"
   },
   "dependencies": {
-    "@zona-cero/contracts": "workspace:*",
-    "@zona-cero/ui": "workspace:*",
     "@vitejs/plugin-react": "latest",
-    "vite": "latest",
+    "@zona-cero/contracts": "workspace:*",
+    "@zona-cero/i18n": "workspace:*",
+    "@zona-cero/ui": "workspace:*",
+    "leaflet": "^1.9.4",
     "react": "19.2.3",
     "react-dom": "19.2.3",
-    "@zona-cero/i18n": "workspace:*"
+    "react-leaflet": "^5.0.0",
+    "vite": "latest"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "latest",
     "@testing-library/react": "latest",
+    "@types/leaflet": "^1.9.21",
     "@types/react": "~19.2.2",
     "@types/react-dom": "latest",
     "jsdom": "latest",

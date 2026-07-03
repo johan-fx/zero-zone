@@ -11,6 +11,13 @@ import {
   IncidentJoinRequestSchema,
   IncidentJoinResponseSchema,
   IncidentListResponseSchema,
+  CountryListResponseSchema,
+  GeoPointSchema,
+  IncidentMapSummarySchema,
+  MapBoundsSchema,
+  MapSosMarkerSchema,
+  MapWorkCenterMarkerSchema,
+  OperationalMapResponseSchema,
   IncidentRoleSchema,
   OperationInputSchema,
   OperationalEventSchema,
@@ -195,6 +202,58 @@ describe('contracts package', () => {
     expect(SignedOperationSchema.safeParse({ ...signedOperationFixture, signature: '' }).success).toBe(false);
     expect(SignedOperationSchema.safeParse({ ...signedOperationFixture, entityType: 'sos' }).success).toBe(false);
     expect(OperationRejectedSchema.parse({ status: 'rejected', code: 'invalid_signature', opId: 'op-1' }).code).toBe('invalid_signature');
+  });
+
+  it('validates operational map contracts without widening incident summaries', () => {
+    const location = GeoPointSchema.parse({ latitude: 41.3874, longitude: 2.1686 });
+    expect(GeoPointSchema.safeParse({ ...location, altitude: 12 }).success).toBe(false);
+
+    const incident = IncidentMapSummarySchema.parse({
+      incidentId: 'incident-zc-demo',
+      name: 'Zona Cero Demo Incident',
+      status: 'active',
+      startsAt: '2026-06-30T09:00:00.000Z',
+      locationName: 'Operations Base',
+      countryCode: 'ES',
+      countryName: 'Spain',
+      location,
+    });
+
+    const workCenter = MapWorkCenterMarkerSchema.parse({
+      markerId: 'work_center:center-north-triage',
+      type: 'work_center',
+      workCenterId: 'center-north-triage',
+      incidentId: incident.incidentId,
+      name: 'North triage point',
+      priority: 'high',
+      status: 'reported',
+      location: { latitude: 41.38, longitude: 2.17 },
+      updatedAt: '2026-06-30T10:00:00.000Z',
+    });
+
+    const sos = MapSosMarkerSchema.parse({
+      markerId: 'sos:sos-mobile-critical-1',
+      type: 'sos',
+      sosAlertId: 'sos-mobile-critical-1',
+      incidentId: incident.incidentId,
+      status: 'open',
+      severity: 'critical',
+      location: { latitude: 41.381, longitude: 2.171 },
+      createdAt: '2026-06-30T10:15:00.000Z',
+    });
+
+    expect(OperationalMapResponseSchema.parse({
+      countryCode: 'ES',
+      countryName: 'Spain',
+      bounds: MapBoundsSchema.parse({ northEast: { latitude: 41.3874, longitude: 2.171 }, southWest: { latitude: 41.38, longitude: 2.1686 } }),
+      incidents: [incident],
+      workCenters: [workCenter],
+      sosAlerts: [sos],
+      counts: { incidents: 1, workCenters: 1, sosAlerts: 1, withoutLocation: 0 },
+    }).counts).toEqual({ incidents: 1, workCenters: 1, sosAlerts: 1, withoutLocation: 0 });
+
+    expect(CountryListResponseSchema.parse({ countries: [{ countryCode: 'ES', countryName: 'Spain', incidentCount: 1, markerCount: 3 }] }).countries[0]?.countryCode).toBe('ES');
+    expect(IncidentListResponseSchema.safeParse({ incidents: [{ ...incident, countryCode: 'ES' }] }).success).toBe(true);
   });
 
   it('validates sync push responses with accepted and rejected operation results', () => {

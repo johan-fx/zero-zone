@@ -7,6 +7,7 @@ import privateWebLinksMigration from '../migrations/0006_private_web_links.sql?r
 import syncHardeningMigration from '../migrations/0007_sync_hardening.sql?raw';
 import operationalObservabilityMigration from '../migrations/0008_operational_observability.sql?raw';
 import channelIdentityPreferredLocaleMigration from '../migrations/0009_channel_identity_preferred_locale.sql?raw';
+import incidentGeographyMigration from '../migrations/0010_incident_geography.sql?raw';
 import incidentDemoSeed from '../seeds/incident-zc-demo.sql?raw';
 
 export async function resetApiTestDatabase(db: D1Database): Promise<void> {
@@ -19,6 +20,7 @@ export async function resetApiTestDatabase(db: D1Database): Promise<void> {
   await execSqlStatements(db, syncHardeningMigration);
   await execSqlStatements(db, operationalObservabilityMigration);
   await execSqlStatements(db, channelIdentityPreferredLocaleMigration);
+  await execSqlStatements(db, incidentGeographyMigration);
   await execSqlStatements(
     db,
     `
@@ -57,8 +59,11 @@ async function execSqlStatements(db: D1Database, sql: string): Promise<void> {
     try {
       await db.exec(normalized);
     } catch (error) {
-      if (normalized.includes('ADD COLUMN preferred_locale') && error instanceof Error && error.message.includes('duplicate column name')) {
-        continue;
+      if (error instanceof Error && error.message.includes('duplicate column name')) {
+        const duplicateSafeColumns = ['ADD COLUMN preferred_locale', 'ADD COLUMN country_code', 'ADD COLUMN country_name', 'ADD COLUMN latitude', 'ADD COLUMN longitude'];
+        if (duplicateSafeColumns.some((column) => normalized.includes(column))) {
+          continue;
+        }
       }
       throw error;
     }
