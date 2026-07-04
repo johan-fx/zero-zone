@@ -27,6 +27,26 @@ import {
   workCenterListHappyFixture,
 } from "../../../packages/testing/src";
 import { App } from "./App";
+vi.mock("./features/operations-map/OperationsMapPanel", () => ({
+  OperationsMapPanel: ({
+    styleName,
+    copy,
+  }: {
+    styleName: string;
+    copy?: { eyebrow: string; title: string; summary?: string };
+  }) => (
+    <div
+      data-testid="mock-operations-map-panel"
+      data-style-name={styleName}
+      data-title={copy?.title ?? "Map overview"}
+    >
+      Map panel: {copy?.eyebrow ?? "Operational map"} /{" "}
+      {copy?.title ?? "Map overview"}
+      {copy?.summary ? <p>{copy.summary}</p> : null}
+    </div>
+  ),
+}));
+
 import {
   millisecondsUntilNextThemeBoundary,
   readStoredThemeOverride,
@@ -364,12 +384,33 @@ describe("web ui work center shell", () => {
       screen.getByRole("button", { name: /Abrir SOS/ }),
     ).toBeInTheDocument();
 
+    expect(screen.queryByRole("button", { name: "Mapa" })).not.toBeInTheDocument();
+
     fireEvent.click(screen.getByRole("button", { name: "Puntos de ayuda" }));
     await waitFor(() =>
       expect(screen.getAllByText("North triage point").length).toBeGreaterThan(
         0,
       ),
     );
+
+    const helpSection = screen
+      .getByRole("heading", { name: "Puntos de ayuda" })
+      .closest("section")!;
+    expect(
+      within(helpSection).getByText(/mapa público por país/i),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        within(helpSection).getByTestId("mock-operations-map-panel"),
+      ).toHaveAttribute("data-title", "Mapa de ayuda por país"),
+    );
+    const helpText = helpSection.textContent ?? "";
+    expect(helpText.indexOf("Map panel: Mapa público por país")).toBeLessThan(
+      helpText.indexOf("Lista"),
+    );
+    expect(
+      within(helpSection).getByRole("region", { name: "Lista y detalle" }),
+    ).toBeInTheDocument();
 
     expect(screen.getByText("41.3800, 2.1700")).toBeInTheDocument();
     expect(
@@ -432,6 +473,47 @@ describe("web ui work center shell", () => {
     expect(
       screen.getByRole("button", { name: /Buscar punto/ }),
     ).toBeInTheDocument();
+  });
+
+  it("passes English civil map copy and exposes the help-points list as a named region", async () => {
+    window.localStorage.setItem("zona-cero-locale", "en");
+    mockOperationsShellFetch();
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Help points" }));
+
+    const helpSection = screen
+      .getByRole("heading", { name: "Help points" })
+      .closest("section")!;
+
+    await waitFor(() =>
+      expect(
+        within(helpSection).getByTestId("mock-operations-map-panel"),
+      ).toHaveAttribute("data-title", "Country help map"),
+    );
+    expect(
+      within(helpSection).getByText(/public country-level information/i),
+    ).toBeInTheDocument();
+    expect(
+      within(helpSection).getByRole("region", { name: "List and detail" }),
+    ).toBeInTheDocument();
+    expect(
+      within(helpSection).queryByText("Mapa de ayuda por país"),
+    ).not.toBeInTheDocument();
+  });
+
+
+  it("keeps the operational map route hidden from navigation but directly reachable", async () => {
+    window.history.pushState({}, "", "/#/map");
+    mockOperationsShellFetch();
+
+    render(<App />);
+
+    expect(screen.queryByRole("button", { name: "Mapa" })).not.toBeInTheDocument();
+    expect(
+      await screen.findByTestId("mock-operations-map-panel"),
+    ).toHaveAttribute("data-title", "Map overview");
   });
 
   it("requires explicit confirmation before cancelling a dispatch task", async () => {

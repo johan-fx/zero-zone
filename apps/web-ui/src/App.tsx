@@ -56,6 +56,7 @@ import {
 } from "./telemetry";
 import { I18nProvider, LanguageSelector, useI18n } from "./i18n";
 import { type AppThemeOverride, useAppThemeMode } from "./themeMode";
+import type { OperationsMapPanelCopy } from "./features/operations-map/OperationsMapPanel";
 
 type AppThemeController = ReturnType<typeof useAppThemeMode>;
 import {
@@ -78,6 +79,11 @@ const OperationsMapPanel = lazy(() =>
     default: module.OperationsMapPanel,
   })),
 );
+
+type Translate = ReturnType<typeof useI18n>["t"];
+type CivilOperationsMapMarker = Parameters<
+  OperationsMapPanelCopy["markerMetadata"]
+>[0];
 
 type HealthState =
   | { status: "loading" }
@@ -223,6 +229,123 @@ const defaultWebExternalId = "web-user-1001";
 const defaultWebDisplayName = "Field Web";
 const strongSosConfirmation = "CONFIRM SOS";
 
+function createCivilOperationsMapCopy(t: Translate): OperationsMapPanelCopy {
+  return {
+    eyebrow: t("web.map.civil.eyebrow"),
+    title: t("web.map.civil.title"),
+    summary: t("web.map.civil.summary"),
+    markerCountLabel: (count) =>
+      t("web.map.civil.marker_count", { count }),
+    loadingCountries: t("web.map.civil.loading_countries"),
+    emptyCountries: t("web.map.civil.empty_countries"),
+    loadingMap: t("web.map.civil.loading_map"),
+    countsAriaLabel: t("web.map.civil.counts_aria"),
+    incidentsLabel: (count) => t("web.map.civil.incidents", { count }),
+    workCentersLabel: (count) =>
+      t("web.map.civil.work_centers", { count }),
+    sosAlertsLabel: (count) => t("web.map.civil.sos_alerts", { count }),
+    withoutLocationLabel: (count) =>
+      t("web.map.civil.without_location", { count }),
+    emptyMapItems: (countryName) =>
+      t("web.map.civil.empty_items", { countryName }),
+    listTitle: t("web.map.civil.list_title"),
+    mapAriaLabel: (countryName) =>
+      t("web.map.civil.map_aria", { countryName }),
+    markerLabel: (marker) => civilMarkerKindLabel(t, marker),
+    markerMetadata: (marker) =>
+      `${civilMarkerKindLabel(t, marker)} · ${civilMarkerStatusLabel(
+        t,
+        marker.status,
+      )}`,
+    markerDetail: (marker) => civilMarkerDetail(t, marker),
+  };
+}
+
+function civilMarkerKindLabel(
+  t: Translate,
+  marker: CivilOperationsMapMarker,
+): string {
+  switch (marker.kind) {
+    case "incident":
+      return t("web.map.civil.kind.incident");
+    case "work_center":
+      return t("web.map.civil.kind.work_center");
+    case "sos":
+      return t("web.map.civil.kind.sos");
+  }
+}
+
+function civilMarkerStatusLabel(t: Translate, status: string): string {
+  switch (status.toLowerCase()) {
+    case "active":
+      return t("web.map.civil.status.active");
+    case "reported":
+      return t("web.map.civil.status.reported");
+    case "open":
+      return t("web.map.civil.status.open");
+    case "resolved":
+    case "closed":
+      return t("web.map.civil.status.closed");
+    default:
+      return t("web.map.civil.status.followup");
+  }
+}
+
+function civilMarkerDetail(
+  t: Translate,
+  marker: CivilOperationsMapMarker,
+): string {
+  if (marker.kind === "work_center") {
+    return t("web.map.civil.detail.work_center", {
+      priority: civilPriorityLabel(t, marker.priority),
+    });
+  }
+
+  if (marker.kind === "sos") {
+    return t("web.map.civil.detail.sos", {
+      severity: civilSeverityLabel(t, marker.severity),
+    });
+  }
+
+  return marker.detail;
+}
+
+function civilPriorityLabel(
+  t: Translate,
+  priority: string | undefined,
+): string {
+  switch (priority?.toLowerCase()) {
+    case "critical":
+      return t("web.map.civil.priority.critical");
+    case "high":
+      return t("web.map.civil.priority.high");
+    case "medium":
+      return t("web.map.civil.priority.medium");
+    case "low":
+      return t("web.map.civil.priority.low");
+    default:
+      return t("web.map.civil.priority.unknown");
+  }
+}
+
+function civilSeverityLabel(
+  t: Translate,
+  severity: string | undefined,
+): string {
+  switch (severity?.toLowerCase()) {
+    case "critical":
+      return t("web.map.civil.severity.critical");
+    case "high":
+      return t("web.map.civil.severity.high");
+    case "medium":
+      return t("web.map.civil.severity.medium");
+    case "low":
+      return t("web.map.civil.severity.low");
+    default:
+      return t("web.map.civil.severity.unknown");
+  }
+}
+
 function reportWebTelemetry(
   action: WebTelemetryAction,
   result: "accepted" | "rejected" | "bypassed",
@@ -329,6 +452,7 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
     string | null
   >(null);
   const [route, navigate] = useHubRoute();
+  const civilOperationsMapCopy = createCivilOperationsMapCopy(t);
 
   useEffect(() => {
     let active = true;
@@ -612,16 +736,32 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
               ) : null
             }
           />
+          <p className="summary">{t("web.help.summary")}</p>
 
-          {workCenterState.status === "loading" ? (
-            <p>{t("web.help.loading")}</p>
-          ) : null}
-          {workCenterState.status === "error" ? (
-            <p role="alert">{workCenterState.message}</p>
-          ) : null}
-          {workCenterState.status === "ready" ? (
-            <WorkCenterOnlineView state={workCenterState} />
-          ) : null}
+          <div className="help-points-map-first">
+            <Suspense fallback={<p>{t("web.map.loading")}</p>}>
+              <OperationsMapPanel
+                styleName={theme.resolvedMode}
+                copy={civilOperationsMapCopy}
+              />
+            </Suspense>
+          </div>
+
+          <section
+            className="help-points-list"
+            aria-labelledby="help-points-list-title"
+          >
+            <h3 id="help-points-list-title">{t("web.help.list.title")}</h3>
+            {workCenterState.status === "loading" ? (
+              <p>{t("web.help.loading")}</p>
+            ) : null}
+            {workCenterState.status === "error" ? (
+              <p role="alert">{workCenterState.message}</p>
+            ) : null}
+            {workCenterState.status === "ready" ? (
+              <WorkCenterOnlineView state={workCenterState} />
+            ) : null}
+          </section>
         </section>
       ) : null}
 
@@ -800,7 +940,6 @@ const hubNavTabs: {
   { route: "home", labelKey: "web.nav.home", Icon: Home },
   { route: "volunteer", labelKey: "web.nav.volunteer", Icon: HandHeart },
   { route: "help-points", labelKey: "web.nav.help_points", Icon: MapPin },
-  { route: "map", labelKey: "web.nav.map", Icon: MapPin },
   {
     route: "resource-report",
     labelKey: "web.nav.resource_report",
@@ -1792,10 +1931,10 @@ function WorkCenterOnlineView({
       </div>
 
       <div>
-        <h3>Mapa simple</h3>
+        <h3>Ubicaciones en texto</h3>
         <ol
           className="map-lite"
-          aria-label="Ubicación aproximada de puntos de ayuda"
+          aria-label="Lista textual de ubicaciones aproximadas de puntos de ayuda"
         >
           {state.workCenters.map((workCenter) => (
             <li key={workCenter.workCenterId}>

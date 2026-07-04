@@ -82,6 +82,21 @@ dl {
   margin: 0;
 }
 
+
+.help-points-map-first {
+  border: var(--zc-border-width) solid var(--zc-color-border);
+  border-radius: var(--zc-radius-card);
+  background: var(--zc-color-surface-muted);
+  margin: 1rem 0;
+  padding: 1rem;
+}
+
+.help-points-list {
+  border-top: var(--zc-border-width) solid var(--zc-color-border);
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
 .work-center-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -453,10 +468,16 @@ dd {
 
 .operations-map-panel__toolbar {
   align-items: end;
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: 1rem;
-  justify-content: space-between;
+  grid-template-columns: minmax(0, 1fr) minmax(14rem, 18rem);
+}
+
+.operations-map-panel__summary {
+  color: var(--zc-color-text-muted);
+  grid-column: 1 / -1;
+  line-height: 1.6;
+  margin-bottom: 0;
 }
 
 .country-filter {
@@ -929,6 +950,10 @@ dd {
 }
 
 @media (max-width: 720px) {
+  .operations-map-panel__toolbar {
+    grid-template-columns: 1fr;
+  }
+
   .shell {
     gap: 1rem;
     padding: 1rem;
