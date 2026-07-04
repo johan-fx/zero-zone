@@ -2044,7 +2044,7 @@ function WorkCenterOnlineView({
                     <h4>{displayName.label}</h4>
                     <StatePill
                       tone={activationStateTone(workCenter.activationState)}
-                      label={describeWorkCenterAvailability(workCenter)}
+                      label={describeWorkCenterAvailability(workCenter, t)}
                       Icon={CircleDot}
                     />
                   </div>
@@ -2053,7 +2053,7 @@ function WorkCenterOnlineView({
                   ) : null}
                   <p>
                     {workCenter.centerType ?? t("web.help.center_type.default")} ·{" "}
-                    {t("web.help.priority.label")} {describePriority(workCenter.priority)}
+                    {t("web.help.priority.label")} {describePriority(workCenter.priority, t)}
                   </p>
                 </Card>
               </li>
@@ -2243,18 +2243,25 @@ function confirmDispatchCancellation(task: DispatchTask): boolean {
   );
 }
 
-function describeWorkCenterAvailability(workCenter: WorkCenterSummary): string {
-  if (workCenter.activationState === "active") return "Recibiendo ayuda";
+function describeWorkCenterAvailability(
+  workCenter: WorkCenterSummary,
+  t: Translate,
+): string {
+  if (workCenter.activationState === "active")
+    return t("web.help.activation.active");
   if (workCenter.activationState === "needs_review")
-    return "Revisar antes de ir";
-  return "Pendiente de confirmar";
+    return t("web.help.activation.needs_review");
+  return t("web.help.activation.pending");
 }
 
-function describePriority(priority: WorkCenterSummary["priority"]): string {
-  if (priority === "critical") return "muy alta";
-  if (priority === "high") return "alta";
-  if (priority === "medium") return "media";
-  return "baja";
+function describePriority(
+  priority: WorkCenterSummary["priority"],
+  t: Translate,
+): string {
+  if (priority === "critical") return t("web.help.priority.critical");
+  if (priority === "high") return t("web.help.priority.high");
+  if (priority === "medium") return t("web.help.priority.medium");
+  return t("web.help.priority.low");
 }
 
 function describeUrgency(
@@ -2278,39 +2285,57 @@ function describeDispatchStatus(
   return t("web.dispatch.status.pending");
 }
 
-function describeWorkCenterStatus(status: WorkCenterSummary["status"]): string {
-  if (status === "inactive") return "Sin actividad reciente";
-  if (status === "archived") return "Archivado";
-  return "Reportado";
+function describeWorkCenterStatus(
+  status: WorkCenterSummary["status"],
+  t: Translate,
+): string {
+  if (status === "inactive") return t("web.help.work_center.status.inactive");
+  if (status === "archived") return t("web.help.work_center.status.archived");
+  return t("web.help.work_center.status.reported");
 }
 
-function describeFreshness(freshness: WorkCenterSummary["freshness"]): string {
-  if (freshness === "fresh") return "Reciente";
-  if (freshness === "stale") return "Puede estar desactualizado";
-  return "Sin confirmar";
+function describeFreshness(
+  freshness: WorkCenterSummary["freshness"],
+  t: Translate,
+): string {
+  if (freshness === "fresh") return t("web.help.freshness.fresh");
+  if (freshness === "stale") return t("web.help.freshness.stale");
+  return t("web.help.freshness.unconfirmed");
 }
 
-function describeConfidence(confidence: WorkCenterSummary["confidence"]): string {
-  if (confidence === "high") return "Alta";
-  if (confidence === "medium") return "Media";
-  return "Baja";
+function describeConfidence(
+  confidence: WorkCenterSummary["confidence"],
+  t: Translate,
+): string {
+  if (confidence === "high") return t("web.help.confidence.high");
+  if (confidence === "medium") return t("web.help.confidence.medium");
+  return t("web.help.confidence.low");
 }
 
-function describeRisk(risk: WorkCenterSummary["risk"]): string {
-  if (risk === "high") return "Alta";
-  if (risk === "medium") return "Media";
-  return "Baja";
+function describeRisk(
+  risk: WorkCenterSummary["risk"],
+  t: Translate,
+): string {
+  if (risk === "high") return t("web.help.risk.high");
+  if (risk === "medium") return t("web.help.risk.medium");
+  return t("web.help.risk.low");
 }
 
-function describeSignalSummary(workCenter: WorkCenterDetail): string {
-  return `${workCenter.signalCount} avisos · ${workCenter.corroboratingSignalCount} coinciden`;
+function describeSignalSummary(
+  workCenter: WorkCenterDetail,
+  t: Translate,
+): string {
+  return t("web.help.detail.signals.summary", {
+    signalCount: workCenter.signalCount,
+    corroboratingSignalCount: workCenter.corroboratingSignalCount,
+  });
 }
 
-function describeSignalType(signalType: string): string {
-  if (signalType === "creator_report") return "Aviso inicial";
-  if (signalType === "corroboration") return "Aviso coincidente";
-  if (signalType === "status_update") return "Actualización";
-  return "Aviso";
+function describeSignalType(signalType: string, t: Translate): string {
+  if (signalType === "creator_report") return t("web.help.signal.creator_report");
+  if (signalType === "corroboration") return t("web.help.signal.corroboration");
+  if (signalType === "status_update") return t("web.help.signal.status_update");
+  return t("web.help.signal.default");
 }
 
 function describeSourceChannel(
@@ -2359,7 +2384,7 @@ function WorkCenterDetailCard({
         <h4>{displayName.label}</h4>
         <StatusBadge
           tone={activationStateTone(workCenter.activationState)}
-          label={describeWorkCenterAvailability(workCenter)}
+          label={describeWorkCenterAvailability(workCenter, t)}
         />
       </div>
       {!displayName.hasPublicName ? (
@@ -2367,20 +2392,20 @@ function WorkCenterDetailCard({
       ) : null}
       <StatusStrip workCenter={workCenter} />
       <dl>
-        <dt>Descripción</dt>
-        <dd>{workCenter.description ?? "Sin descripción disponible"}</dd>
-        <dt>Hace falta</dt>
-        <dd>{workCenter.initialNeed ?? "No se informó una necesidad inicial"}</dd>
-        <dt>Sobra</dt>
-        <dd>{workCenter.surplus ?? "No se informó sobrante"}</dd>
-        <dt>Avisos recibidos</dt>
-        <dd>{describeSignalSummary(workCenter)}</dd>
+        <dt>{t("web.help.detail.description.label")}</dt>
+        <dd>{workCenter.description ?? t("web.help.detail.description.default")}</dd>
+        <dt>{t("web.help.detail.initial_need.label")}</dt>
+        <dd>{workCenter.initialNeed ?? t("web.help.detail.initial_need.default")}</dd>
+        <dt>{t("web.help.detail.surplus.label")}</dt>
+        <dd>{workCenter.surplus ?? t("web.help.detail.surplus.default")}</dd>
+        <dt>{t("web.help.detail.signals.label")}</dt>
+        <dd>{describeSignalSummary(workCenter, t)}</dd>
       </dl>
-      <ul className="signal-list" aria-label="Últimos avisos recibidos">
+      <ul className="signal-list" aria-label={t("web.help.detail.latest_signals.aria")}>
         {workCenter.latestSignals.map((signal) => (
           <li key={signal.signalId}>
             {t("web.work_center.signal.source", {
-              signalType: describeSignalType(signal.signalType),
+              signalType: describeSignalType(signal.signalType, t),
               source: describeSourceChannel(signal.sourceChannel, t),
             })}
           </li>
@@ -2404,32 +2429,32 @@ function StatusStrip({
       items={[
         {
           key: "status",
-          label: "Situación",
-          value: describeWorkCenterStatus(workCenter.status),
+          label: t("web.help.status.label"),
+          value: describeWorkCenterStatus(workCenter.status, t),
           tone: workCenterStatusTone(workCenter.status),
         },
         {
           key: "activation",
-          label: "Uso",
-          value: describeWorkCenterAvailability(workCenter),
+          label: t("web.help.activation.label"),
+          value: describeWorkCenterAvailability(workCenter, t),
           tone: activationStateTone(workCenter.activationState),
         },
         {
           key: "freshness",
-          label: "Actualización",
-          value: describeFreshness(workCenter.freshness),
+          label: t("web.help.freshness.label"),
+          value: describeFreshness(workCenter.freshness, t),
           tone: freshnessTone(workCenter.freshness),
         },
         {
           key: "confidence",
-          label: "Confianza",
-          value: describeConfidence(workCenter.confidence),
+          label: t("web.help.confidence.label"),
+          value: describeConfidence(workCenter.confidence, t),
           tone: confidenceTone(workCenter.confidence),
         },
         {
           key: "risk",
-          label: "Precaución",
-          value: describeRisk(workCenter.risk),
+          label: t("web.help.risk.label"),
+          value: describeRisk(workCenter.risk, t),
           tone: riskTone(workCenter.risk),
         },
       ]}

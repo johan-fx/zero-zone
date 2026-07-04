@@ -325,14 +325,23 @@ describe("web ui work center shell", () => {
         return jsonResponse(freshSyncPullFixture);
       }
       if (url.endsWith("/incidents/incident-zc-demo/work-centers")) {
-        return jsonResponse(workCenterListHappyFixture);
+        return jsonResponse({
+          workCenters: [
+            { ...workCenterListHappyFixture.workCenters[0]!, priority: "medium" },
+          ],
+        });
       }
       if (
         url.endsWith(
           "/incidents/incident-zc-demo/work-centers/center-north-triage",
         )
       ) {
-        return jsonResponse(workCenterDetailHappyFixture);
+        return jsonResponse({
+          workCenter: {
+            ...workCenterDetailHappyFixture.workCenter,
+            priority: "medium",
+          },
+        });
       }
       if (url.endsWith("/incidents/incident-zc-demo/resource-reports")) {
         return jsonResponse(resourceReportListFixture);
@@ -413,6 +422,12 @@ describe("web ui work center shell", () => {
     ).toBeInTheDocument();
 
     expect(screen.getByText("Coordenadas públicas: 41.3800, 2.1700")).toBeInTheDocument();
+    expect(helpSection).toHaveTextContent("Prioridad media");
+    expect(screen.getByText("Descripción")).toBeInTheDocument();
+    expect(screen.getByText("Hace falta")).toBeInTheDocument();
+    expect(screen.getByText("Sobra")).toBeInTheDocument();
+    expect(screen.getByText("Avisos recibidos")).toBeInTheDocument();
+    expect(screen.getByLabelText("Últimos avisos recibidos")).toBeInTheDocument();
     expect(
       screen.getByText(/Triage and water distribution/),
     ).toBeInTheDocument();
@@ -475,9 +490,9 @@ describe("web ui work center shell", () => {
     ).toBeInTheDocument();
   });
 
-  it("passes English civil map copy and exposes the help-points list as a named region", async () => {
+  it("localizes help-point cards and detail in English without Spanish leftovers", async () => {
     window.localStorage.setItem("zona-cero-locale", "en");
-    mockOperationsShellFetch();
+    mockOperationsFullFetch();
 
     render(<App />);
 
@@ -498,9 +513,38 @@ describe("web ui work center shell", () => {
     expect(
       within(helpSection).getByRole("region", { name: "List and detail" }),
     ).toBeInTheDocument();
-    expect(
-      within(helpSection).queryByText("Mapa de ayuda por país"),
-    ).not.toBeInTheDocument();
+    await waitFor(() => expect(helpSection).toHaveTextContent("Priority medium"));
+
+    const status = within(helpSection).getAllByLabelText(
+      "Volunteer status for North triage point",
+    )[0];
+    expect(within(status).getByText("Situation")).toBeInTheDocument();
+    expect(within(status).getByText("Reported")).toBeInTheDocument();
+    expect(within(status).getByText("Pending confirmation")).toBeInTheDocument();
+    expect(within(status).getByText("Update")).toBeInTheDocument();
+    expect(within(status).getByText("Caution")).toBeInTheDocument();
+
+    expect(within(helpSection).getByText("Description")).toBeInTheDocument();
+    expect(within(helpSection).getByText("Needed")).toBeInTheDocument();
+    expect(within(helpSection).getByText("Surplus")).toBeInTheDocument();
+    expect(within(helpSection).getByText("Reports received")).toBeInTheDocument();
+    expect(within(helpSection).getByLabelText("Latest reports received")).toBeInTheDocument();
+    expect(within(helpSection).getByText("Initial report by Telegram")).toBeInTheDocument();
+
+    const forbiddenSpanish = [
+      "Pendiente de confirmar",
+      "Situación",
+      "Actualización",
+      "Precaución",
+      "Descripción",
+      "Hace falta",
+      "Sobra",
+      "Avisos recibidos",
+      "Priority media",
+    ];
+    for (const copy of forbiddenSpanish) {
+      expect(helpSection).not.toHaveTextContent(copy);
+    }
   });
 
   it("summarizes public map locations and hides technical help point names", async () => {
@@ -1599,6 +1643,46 @@ function mockOperationsShellFetch() {
         fanout: { total: 0, queued: 0, pending: 0, failed: 0, cancelled: 0 },
       });
     }
+    return new Response("not found", { status: 404 });
+  });
+}
+
+function mockOperationsFullFetch() {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.endsWith("/health"))
+      return jsonResponse({
+        service: "zona-cero-api",
+        ok: true,
+        version: "test",
+      });
+    if (
+      url.includes("/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull")
+    )
+      return jsonResponse(freshSyncPullFixture);
+    if (url.endsWith("/incidents/incident-zc-demo/work-centers"))
+      return jsonResponse({
+        workCenters: [
+          { ...workCenterListHappyFixture.workCenters[0]!, priority: "medium" },
+        ],
+      });
+    if (
+      url.endsWith(
+        "/incidents/incident-zc-demo/work-centers/center-north-triage",
+      )
+    )
+      return jsonResponse({
+        workCenter: {
+          ...workCenterDetailHappyFixture.workCenter,
+          priority: "medium",
+        },
+      });
+    if (url.endsWith("/incidents/incident-zc-demo/resource-reports"))
+      return jsonResponse(resourceReportListFixture);
+    if (url.endsWith("/incidents/incident-zc-demo/dispatch-tasks"))
+      return jsonResponse(dispatchTaskListFixture);
+    if (url.endsWith("/incidents/incident-zc-demo/sos"))
+      return jsonResponse(sosStatusFixture);
     return new Response("not found", { status: 404 });
   });
 }
