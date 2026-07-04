@@ -65,7 +65,11 @@ describe('telegram intent classifier', () => {
     expect(messages[0]?.content).toContain('"necesito ayuda médica urgente en el refugio norte, somos 3 y hay humo" => intent sos');
     expect(messages[0]?.content).toContain('facts only; never create an SOS, geocode, output coordinates, copy raw user text, or include PII');
     expect(messages[0]?.content).toContain('"hay dos personas atrapadas en la escalera este" => intent sos');
-    expect(messages[0]?.content).toContain('"equipo en camino al almacén" => intent dispatch');
+    expect(messages[0]?.content).toContain('"coordina 2 ambulancias al refugio norte" => intent dispatch');
+    expect(messages[0]?.content).toContain('"create a water delivery for north gate, 10 boxes" => intent dispatch');
+    expect(messages[0]?.content).toContain('"marca la entrega del almacén como en camino" => intent dispatch');
+    expect(messages[0]?.content).toContain('never create, update, assign, resolve, rank, or mutate dispatch tasks from LLM output');
+    expect(messages[0]?.content).toContain('statusCandidate and legacy status must be exactly one canonical dispatch status');
     expect(messages[0]?.content).toContain('"quiero unirme al incidente demo como voluntario" => intent incident_join');
     expect(messages[0]?.content).toContain('Do not include actions to execute, raw user text, phone numbers, exact coordinates, names, or other PII');
     expect(messages[0]?.content).toContain('"puedo llevar comida" => intent resource');
@@ -88,11 +92,12 @@ describe('telegram intent classifier', () => {
                 enum: expect.arrayContaining(['capacity', 'status_update', 'request_join']),
               }),
               status: expect.objectContaining({ enum: expect.arrayContaining(['active', 'en_route']) }),
+              statusCandidate: expect.objectContaining({ enum: ['pending', 'accepted', 'en_route', 'delivered', 'cancelled'] }),
               name: expect.objectContaining({ type: 'string' }),
               priority: expect.objectContaining({ enum: ['low', 'medium', 'high', 'critical'] }),
               initialNeed: expect.objectContaining({ type: 'string' }),
               surplus: expect.objectContaining({ type: 'string' }),
-              action: expect.objectContaining({ enum: ['search', 'report', 'info', 'unknown'] }),
+              action: expect.objectContaining({ enum: expect.arrayContaining(['search', 'report', 'info', 'create', 'update', 'coordinate', 'unknown']) }),
               relationshipHint: expect.objectContaining({ enum: ['parent', 'child', 'sibling', 'partner', 'relative', 'guardian', 'unknown'] }),
               urgencyHint: expect.objectContaining({ enum: ['urgent', 'normal', 'unknown'] }),
               severity: expect.objectContaining({ enum: ['critical', 'medical', 'security', 'trapped', 'other'] }),
@@ -100,6 +105,7 @@ describe('telegram intent classifier', () => {
               peopleCount: expect.objectContaining({ type: 'integer' }),
               hazardHint: expect.objectContaining({ type: 'string' }),
               destinationHint: expect.objectContaining({ type: 'string' }),
+              taskHint: expect.objectContaining({ type: 'string' }),
               incidentHint: expect.objectContaining({ type: 'string' }),
               roleHint: expect.objectContaining({ enum: ['volunteer', 'coordinator', 'logistics', 'medical'] }),
             },
@@ -204,6 +210,142 @@ describe('telegram intent classifier', () => {
         peopleCount: 3,
         hazardHint: 'humo',
       },
+    });
+  });
+
+  it('preserves typed dispatch create and coordination candidate facts without treating them as commands', async () => {
+    const ai = createAi({
+      response: {
+        intent: 'dispatch',
+        confidence: 0.94,
+        reason: 'The user is coordinating a logistics dispatch.',
+        extractedFacts: {
+          signal: 'logistics_request',
+          action: 'coordinate',
+          category: 'ambulances',
+          quantityApprox: '2',
+          destinationHint: 'north shelter',
+        },
+      },
+    });
+
+    await expect(classifyTelegramIntent({ ai, text: 'Coordinate 2 ambulances to north shelter' })).resolves.toMatchObject({
+      intent: 'dispatch',
+      confidence: 0.94,
+      extractedFacts: {
+        signal: 'logistics_request',
+        action: 'coordinate',
+        category: 'ambulances',
+        quantityApprox: '2',
+        destinationHint: 'north shelter',
+      },
+    });
+  });
+
+  it('preserves typed dispatch status update candidates only for canonical statuses', async () => {
+    const ai = createAi({
+      response: {
+        intent: 'dispatch',
+        confidence: 0.95,
+        reason: 'The user is updating an existing dispatch task.',
+        extractedFacts: {
+          signal: 'status_update',
+          action: 'update',
+          taskHint: 'north gate delivery',
+          statusCandidate: 'delivered',
+          status: 'delivered',
+        },
+      },
+    });
+
+    await expect(classifyTelegramIntent({ ai, text: 'Mark north gate delivery delivered' })).resolves.toMatchObject({
+      intent: 'dispatch',
+      confidence: 0.95,
+      extractedFacts: {
+        signal: 'status_update',
+        action: 'update',
+        taskHint: 'north gate delivery',
+        statusCandidate: 'delivered',
+        status: 'delivered',
+      },
+    });
+  });
+
+  it('deterministically routes clear Spanish dispatch status updates before Workers AI', async () => {
+    const ai = createAi({
+      response: {
+        intent: 'unknown',
+        confidence: 0,
+        extractedFacts: {},
+      },
+    });
+
+    await expect(
+      classifyTelegramIntent({
+        ai,
+        text: 'El equipo de despacho está en camino para la tarea de agua hacia el centro norte.',
+      }),
+    ).resolves.toMatchObject({
+      intent: 'dispatch',
+      confidence: 0.92,
+      extractedFacts: {
+        signal: 'status_update',
+        action: 'update',
+        statusCandidate: 'en_route',
+        status: 'en_route',
+        category: 'agua',
+        destinationHint: 'centro norte',
+        taskHint: 'tarea de agua',
+      },
+    });
+    expect(ai.run).not.toHaveBeenCalled();
+  });
+
+  it('does not deterministically capture generic resource messages as dispatch', async () => {
+    const ai = createAi({
+      response: {
+        intent: 'resource',
+        confidence: 0.91,
+        reason: 'The user is offering water.',
+        extractedFacts: {
+          resourceDirection: 'offer',
+          resourceType: 'water',
+          resourceLabel: 'agua',
+        },
+      },
+    });
+
+    await expect(classifyTelegramIntent({ ai, text: 'tengo agua' })).resolves.toMatchObject({
+      intent: 'resource',
+      confidence: 0.91,
+      extractedFacts: {
+        resourceDirection: 'offer',
+        resourceType: 'water',
+        resourceLabel: 'agua',
+      },
+    });
+    expect(ai.run).toHaveBeenCalled();
+  });
+
+  it('rejects dispatch status candidates outside the canonical contract', async () => {
+    const ai = createAi({
+      response: {
+        intent: 'dispatch',
+        confidence: 0.96,
+        reason: 'The user is updating a dispatch task.',
+        extractedFacts: {
+          signal: 'status_update',
+          action: 'update',
+          taskHint: 'north gate delivery',
+          statusCandidate: 'done',
+        },
+      },
+    });
+
+    await expect(classifyTelegramIntent({ ai, text: 'Mark north gate delivery done' })).resolves.toMatchObject({
+      intent: 'unknown',
+      confidence: 0,
+      extractedFacts: {},
     });
   });
 

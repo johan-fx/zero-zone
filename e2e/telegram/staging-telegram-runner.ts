@@ -26,7 +26,7 @@ type RunnerOptions = {
   waitMs?: number;
 };
 
-type RunnerScenario = 'full' | 'natural-sos' | 'family-reunification';
+type RunnerScenario = 'full' | 'natural-sos' | 'family-reunification' | 'dispatch';
 
 type SentStep = {
   label: string;
@@ -35,18 +35,59 @@ type SentStep = {
   botReplyPreview?: string;
 };
 
+type TelegramStep = SentStep & {
+  expectedReplyPattern?: RegExp;
+  settleAfterMs?: number;
+};
+
 type RunnerResult = {
   marker: string;
   commandWorkCenterMarker: string;
   naturalWorkCenterMarker: string;
   naturalSosMarker: string;
   familyReunificationMarker: string;
+  dispatchMarker: string;
+  dispatchTaskId?: string;
   preConfirmationMarkerVisible?: boolean;
   botUsername: string;
   incidentId: string;
   cellId: string;
   dryRun: boolean;
   sentSteps: SentStep[];
+};
+
+type DispatchEventCreatePayload = {
+  category: string;
+  quantityApprox: string;
+  status?: 'pending';
+  notes?: string;
+};
+
+type PendingSyncOperation = {
+  version: 1;
+  actorKeyId: string;
+  deviceId: string;
+  incidentId: string;
+  cellId: string;
+  entityId: string;
+  entityType: 'dispatch_event';
+  opType: 'dispatch_event.create';
+  payload: DispatchEventCreatePayload;
+  hlc: string;
+  createdAtDevice: string;
+  opId: string;
+  signature: string;
+  syncState: 'pending';
+};
+
+type SyncPushResult = {
+  opId?: string;
+  status: 'accepted' | 'rejected';
+  code?: string;
+};
+
+type SyncPushResponseBody = {
+  results: SyncPushResult[];
 };
 
 const requiredEnvKeys = [
@@ -76,15 +117,19 @@ export async function runTelegramStagingFlow(options: RunnerOptions = {}): Promi
   const naturalWorkCenterMarker = `${marker}-natural-wc`;
   const naturalSosMarker = `${marker}-natural-sos`;
   const familyReunificationMarker = `${marker}-family-reunification`;
+  const dispatchMarker = `${marker}-dispatch`;
   const scenario = options.scenario ?? 'full';
-  const resultMarker = scenario === 'natural-sos' ? naturalSosMarker : scenario === 'family-reunification' ? familyReunificationMarker : naturalWorkCenterMarker;
+  const dispatchTaskId = scenario === 'dispatch' ? buildDispatchTaskId(marker) : undefined;
+  const resultMarker = scenario === 'natural-sos' ? naturalSosMarker : scenario === 'family-reunification' ? familyReunificationMarker : scenario === 'dispatch' ? dispatchMarker : naturalWorkCenterMarker;
   const safeSteps = scenario === 'natural-sos'
     ? buildNaturalSosTelegramSequence(env, { marker })
     : scenario === 'family-reunification'
       ? buildFamilyReunificationTelegramSequence(env)
-      : buildSafeTelegramSequence(env, { marker, commandWorkCenterMarker, naturalWorkCenterMarker });
+      : scenario === 'dispatch'
+        ? buildDispatchTelegramSequence(env, { marker })
+        : buildSafeTelegramSequence(env, { marker, commandWorkCenterMarker, naturalWorkCenterMarker });
   const sensitiveSteps = scenario === 'full' ? buildSensitiveTelegramHelpers(marker).map((step) => ({ ...step, skipped: !options.includeSensitiveFlows })) : [];
-  const steps = [...safeSteps, ...sensitiveSteps];
+  const steps: TelegramStep[] = [...safeSteps, ...sensitiveSteps];
 
   if (options.dryRun) {
     return {
@@ -93,12 +138,18 @@ export async function runTelegramStagingFlow(options: RunnerOptions = {}): Promi
       naturalWorkCenterMarker,
       naturalSosMarker,
       familyReunificationMarker,
+      dispatchMarker,
+      ...(dispatchTaskId ? { dispatchTaskId } : {}),
       botUsername: env.TELEGRAM_E2E_BOT_USERNAME,
       incidentId: env.E2E_INCIDENT_ID,
       cellId: env.E2E_CELL_ID,
       dryRun: true,
-      sentSteps: steps.map((step) => ({ ...step, botReplyPreview: undefined })),
+      sentSteps: steps.map(toSentStep),
     };
+  }
+
+  if (scenario === 'dispatch') {
+    await ensureDispatchTaskForStagingFlow(env, { marker, dispatchMarker });
   }
 
   const client = await createTelegramClient(env, { requireInteractiveAuth: false });
@@ -117,8 +168,11 @@ export async function runTelegramStagingFlow(options: RunnerOptions = {}): Promi
         preConfirmationMarkerVisible = await findMarkerInStagingApi(naturalWorkCenterMarker, env);
       }
 
-      const botReplyPreview = await sendMessageAndReadReply(client, bot, step.message, options.waitMs ?? 8_000);
-      sentSteps.push({ ...step, botReplyPreview });
+      const botReplyPreview = await sendMessageAndReadReply(client, bot, step.message, options.waitMs ?? 8_000, step.expectedReplyPattern);
+      sentSteps.push(toSentStep({ ...step, botReplyPreview }));
+      if (step.settleAfterMs) {
+        await new Promise((resolve) => setTimeout(resolve, step.settleAfterMs));
+      }
     }
 
     await persistSession(env, client);
@@ -132,6 +186,8 @@ export async function runTelegramStagingFlow(options: RunnerOptions = {}): Promi
     naturalWorkCenterMarker,
     naturalSosMarker,
     familyReunificationMarker,
+    dispatchMarker,
+    ...(dispatchTaskId ? { dispatchTaskId } : {}),
     preConfirmationMarkerVisible,
     botUsername: env.TELEGRAM_E2E_BOT_USERNAME,
     incidentId: env.E2E_INCIDENT_ID,
@@ -156,6 +212,75 @@ export async function findMarkerInStagingApi(marker: string, env: Pick<RequiredE
   }
 
   return false;
+}
+
+async function ensureDispatchTaskForStagingFlow(env: RequiredEnv, markers: { marker: string; dispatchMarker: string }): Promise<void> {
+  const baseUrl = env.E2E_API_BASE_URL.replace(/\/$/, '');
+  const dispatchTaskId = buildDispatchTaskId(markers.marker);
+  const createdAt = new Date().toISOString();
+  const payload: DispatchEventCreatePayload = {
+    category: `agua ${markers.marker}`,
+    quantityApprox: `1 staging dispatch task ${markers.marker}`,
+    notes: `Telegram dispatch E2E setup ${markers.dispatchMarker}`,
+    status: 'pending',
+  };
+  const operation = createE2eDispatchTaskOperation({
+    actorKeyId: 'e2e-telegram-staging',
+    deviceId: 'e2e-telegram-runner',
+    incidentId: env.E2E_INCIDENT_ID,
+    cellId: env.E2E_CELL_ID,
+    entityId: dispatchTaskId,
+    opType: 'dispatch_event.create',
+    payload,
+    hlc: `${createdAt}:e2e-telegram-staging`,
+    createdAtDevice: createdAt,
+  });
+  const response = await fetch(`${baseUrl}/incidents/${encodeURIComponent(env.E2E_INCIDENT_ID)}/cells/${encodeURIComponent(env.E2E_CELL_ID)}/sync/push`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ operations: [operation], cursor: null }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to create dispatch E2E task via sync push: ${response.status} ${await response.text()}`);
+  }
+
+  const body = (await response.json()) as SyncPushResponseBody;
+  const result = body.results.find((candidate) => candidate.opId === operation.opId);
+  if (!result || result.status !== 'accepted') {
+    throw new Error(`Dispatch E2E task setup was not accepted: ${JSON.stringify(result ?? body.results)}`);
+  }
+
+  const visible = await findDispatchTaskInStagingApi(baseUrl, env.E2E_INCIDENT_ID, dispatchTaskId);
+  if (!visible) {
+    throw new Error(`Dispatch E2E task setup did not appear in staging API: ${dispatchTaskId}`);
+  }
+}
+
+function createE2eDispatchTaskOperation(input: Omit<PendingSyncOperation, 'version' | 'opId' | 'entityType' | 'signature' | 'syncState'>): PendingSyncOperation {
+  return {
+    ...input,
+    version: 1,
+    opId: `op_${slugForE2eId(input.entityId)}`,
+    entityType: 'dispatch_event',
+    signature: `e2e-signature:${input.actorKeyId}:${input.entityId}`,
+    syncState: 'pending',
+  };
+}
+
+function buildDispatchTaskId(marker: string): string {
+  return `dt_e2e_${slugForE2eId(marker)}`;
+}
+
+function slugForE2eId(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80);
+}
+
+async function findDispatchTaskInStagingApi(apiBaseUrl: string, incidentId: string, dispatchTaskId: string): Promise<boolean> {
+  const response = await fetch(`${apiBaseUrl}/incidents/${encodeURIComponent(incidentId)}/dispatch-tasks`);
+  if (!response.ok) return false;
+  const body = await response.text();
+  return body.includes(dispatchTaskId);
 }
 
 function readRunnerEnv(options: { allowPlaceholders?: boolean } = {}): RequiredEnv {
@@ -230,7 +355,7 @@ async function persistSession(env: RequiredEnv, client: TelegramClient): Promise
   await writeFile(env.TELEGRAM_E2E_SESSION_FILE, `${session}\n`, { mode: 0o600 });
 }
 
-function buildSafeTelegramSequence(env: RequiredEnv, markers: { marker: string; commandWorkCenterMarker: string; naturalWorkCenterMarker: string }): SentStep[] {
+function buildSafeTelegramSequence(env: RequiredEnv, markers: { marker: string; commandWorkCenterMarker: string; naturalWorkCenterMarker: string }): TelegramStep[] {
   const { marker, commandWorkCenterMarker, naturalWorkCenterMarker } = markers;
   return [
     { label: 'start', message: '/start' },
@@ -268,7 +393,7 @@ function buildSafeTelegramSequence(env: RequiredEnv, markers: { marker: string; 
   ];
 }
 
-function buildSensitiveTelegramHelpers(marker: string): SentStep[] {
+function buildSensitiveTelegramHelpers(marker: string): TelegramStep[] {
   return [
     { label: 'sos-helper-opt-in', message: `/sos drill ${marker}` },
     { label: 'natural-sos-helper-opt-in', message: 'Necesito ayuda médica urgente en el refugio norte. Hay humo y 3 personas afectadas.' },
@@ -276,7 +401,7 @@ function buildSensitiveTelegramHelpers(marker: string): SentStep[] {
   ];
 }
 
-function buildNaturalSosTelegramSequence(env: RequiredEnv, markers: { marker: string }): SentStep[] {
+function buildNaturalSosTelegramSequence(env: RequiredEnv, markers: { marker: string }): TelegramStep[] {
   const { marker } = markers;
   return [
     { label: 'reset-cancel', message: '/cancel' },
@@ -295,7 +420,7 @@ function buildNaturalSosTelegramSequence(env: RequiredEnv, markers: { marker: st
   ];
 }
 
-function buildFamilyReunificationTelegramSequence(env: RequiredEnv): SentStep[] {
+function buildFamilyReunificationTelegramSequence(env: RequiredEnv): TelegramStep[] {
   return [
     { label: 'reset-cancel', message: '/cancel' },
     { label: 'language-selection', message: '/idioma es' },
@@ -309,22 +434,56 @@ function buildFamilyReunificationTelegramSequence(env: RequiredEnv): SentStep[] 
   ];
 }
 
-async function sendMessageAndReadReply(client: TelegramClient, entity: any, message: string, waitMs: number): Promise<string | undefined> {
+function buildDispatchTelegramSequence(env: RequiredEnv, markers: { marker: string }): TelegramStep[] {
+  const { marker } = markers;
+  return [
+    { label: 'reset-cancel', message: '/cancel' },
+    { label: 'language-selection', message: '/idioma es' },
+    { label: 'dispatch-command', message: '/dispatch' },
+    { label: 'dispatch-command-incident', message: env.E2E_INCIDENT_ID },
+    { label: 'dispatch-command-task', message: '1' },
+    { label: 'dispatch-command-status', message: 'en_route', expectedReplyPattern: /Confirm dispatch task update|Confirma|Reply yes to update/i },
+    { label: 'dispatch-command-cancel', message: 'no', expectedReplyPattern: /cancelled|cancelada|cancelado/i },
+    {
+      label: 'dispatch-command-isolation-reset',
+      message: '/cancel',
+      expectedReplyPattern: /cancelled|cancelada|cancelado|No active|No hay/i,
+      settleAfterMs: 2_000,
+    },
+    {
+      label: 'dispatch-natural-phrase',
+      message: `El equipo de despacho está en camino para la tarea de agua ${marker} hacia el centro norte.`,
+      expectedReplyPattern: /Choose an incident|Elige un incidente|Choose a dispatch task|tarea de despacho/i,
+    },
+    { label: 'dispatch-natural-incident', message: env.E2E_INCIDENT_ID },
+    { label: 'dispatch-natural-task', message: '1' },
+    { label: 'dispatch-natural-cancel', message: 'no', expectedReplyPattern: /cancelled|cancelada|cancelado/i },
+  ];
+}
+
+async function sendMessageAndReadReply(client: TelegramClient, entity: any, message: string, waitMs: number, expectedReplyPattern?: RegExp): Promise<string | undefined> {
   const lastSeenId = await readLatestIncomingMessageId(client, entity);
   await client.sendMessage(entity, { message });
 
   const deadline = Date.now() + waitMs;
+  let latestReply: string | undefined;
   while (Date.now() < deadline) {
     const messages = (await client.getMessages(entity, { limit: 5 })) as unknown[];
-    const reply = messages
+    const replies = messages
       .map(asTelegramMessage)
-      .find((candidate) => !candidate.out && candidate.id > lastSeenId && candidate.message.trim().length > 0);
+      .filter((candidate) => !candidate.out && candidate.id > lastSeenId && candidate.message.trim().length > 0)
+      .sort((a, b) => a.id - b.id);
 
-    if (reply) return preview(reply.message);
+    for (const reply of replies) {
+      latestReply = preview(reply.message);
+      if (!expectedReplyPattern || expectedReplyPattern.test(reply.message)) {
+        return latestReply;
+      }
+    }
     await new Promise((resolve) => setTimeout(resolve, 750));
   }
 
-  return undefined;
+  return latestReply;
 }
 
 async function readLatestIncomingMessageId(client: TelegramClient, entity: any): Promise<number> {
@@ -343,6 +502,15 @@ function asTelegramMessage(value: unknown): { id: number; out: boolean; message:
 
 function preview(value: string): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, 180);
+}
+
+function toSentStep(step: TelegramStep): SentStep {
+  return {
+    label: step.label,
+    message: step.message,
+    ...(step.skipped ? { skipped: true } : {}),
+    ...(step.botReplyPreview ? { botReplyPreview: step.botReplyPreview } : {}),
+  };
 }
 
 async function main(): Promise<void> {
@@ -369,7 +537,7 @@ async function main(): Promise<void> {
   }
 
   if (command === 'help' || command === '--help' || command === '-h') {
-    console.log('Usage: tsx e2e/telegram/staging-telegram-runner.ts <auth|dry-run|run> [--scenario full|natural-sos|family-reunification] [--include-sensitive-flows] [--json]');
+    console.log('Usage: tsx e2e/telegram/staging-telegram-runner.ts <auth|dry-run|run> [--scenario full|natural-sos|family-reunification|dispatch] [--include-sensitive-flows] [--json]');
     return;
   }
 
@@ -380,7 +548,7 @@ function readScenarioArg(argv: string[]): RunnerScenario {
   const index = argv.indexOf('--scenario');
   const value = index >= 0 ? argv[index + 1] : undefined;
   if (value === undefined) return 'full';
-  if (value === 'full' || value === 'natural-sos' || value === 'family-reunification') return value;
+  if (value === 'full' || value === 'natural-sos' || value === 'family-reunification' || value === 'dispatch') return value;
   throw new Error(`Unknown Telegram E2E scenario: ${value}`);
 }
 

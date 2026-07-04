@@ -4,6 +4,7 @@ import {
   DispatchTaskConnectedUpdateRequestSchema,
   DispatchTaskListResponseSchema,
   DispatchTaskResponseSchema,
+  DispatchTaskStatusSchema,
   IncidentConfigResponseSchema,
   IncidentJoinResponseSchema,
   IncidentSummarySchema,
@@ -30,6 +31,7 @@ import {
 } from './parsing';
 import type {
   TelegramDispatchTaskState,
+  TelegramDispatchTaskPrefill,
   TelegramFamilyReunificationState,
   TelegramIncidentJoinState,
   TelegramResourceNeedRecommendation,
@@ -537,22 +539,44 @@ function parseTelegramResourceReportStateValue(value: unknown): TelegramResource
   return null;
 }
 
+function parseDispatchTaskPrefill(value: unknown): TelegramDispatchTaskPrefill | null | false {
+  if (value === undefined) return null;
+  if (!isRecord(value) || !hasOnlyKeys(value, ['taskHint', 'category', 'quantityApprox', 'destinationHint', 'status', 'statusCandidate'])) return false;
+
+  const status = value.status === undefined ? undefined : DispatchTaskStatusSchema.safeParse(value.status);
+  if (status && !status.success) return false;
+  const statusCandidate = value.statusCandidate === undefined ? undefined : DispatchTaskStatusSchema.safeParse(value.statusCandidate);
+  if (statusCandidate && !statusCandidate.success) return false;
+
+  const prefill: TelegramDispatchTaskPrefill = {};
+  if (isNonEmptyString(value.taskHint)) prefill.taskHint = value.taskHint;
+  if (isNonEmptyString(value.category)) prefill.category = value.category;
+  if (isNonEmptyString(value.quantityApprox)) prefill.quantityApprox = value.quantityApprox;
+  if (isNonEmptyString(value.destinationHint)) prefill.destinationHint = value.destinationHint;
+  if (status?.success) prefill.status = status.data;
+  if (statusCandidate?.success) prefill.statusCandidate = statusCandidate.data;
+
+  return Object.keys(prefill).length > 0 ? prefill : null;
+}
+
 function parseTelegramDispatchTaskStateValue(value: unknown): TelegramDispatchTaskState | null {
   if (!isRecord(value) || typeof value.step !== 'string') return null;
   if (value.step === 'idle') return hasOnlyKeys(value, ['step']) ? { step: 'idle' } : null;
   if (value.step === 'cancelled') return hasOnlyKeys(value, ['step']) ? { step: 'cancelled' } : null;
 
   if (value.step === 'awaitingIncident') {
-    if (!hasOnlyKeys(value, ['step', 'incidents', 'externalUserId']) || !isNonEmptyString(value.externalUserId) || !Array.isArray(value.incidents)) return null;
+    const prefill = parseDispatchTaskPrefill(value.prefill);
+    if (!hasOnlyKeys(value, ['step', 'incidents', 'externalUserId', 'prefill']) || !isNonEmptyString(value.externalUserId) || !Array.isArray(value.incidents) || prefill === false) return null;
     const incidents = parseIncidentArray(value.incidents);
-    return incidents ? { step: 'awaitingIncident', incidents, externalUserId: value.externalUserId } : null;
+    return incidents ? { step: 'awaitingIncident', incidents, externalUserId: value.externalUserId, ...(prefill ? { prefill } : {}) } : null;
   }
 
   const incident = 'incident' in value ? IncidentSummarySchema.safeParse(value.incident) : null;
   if (value.step === 'awaitingTask') {
     const tasks = DispatchTaskListResponseSchema.safeParse({ dispatchTasks: value.tasks });
-    if (!hasOnlyKeys(value, ['step', 'incident', 'tasks', 'externalUserId']) || !isNonEmptyString(value.externalUserId) || !incident?.success || !tasks.success) return null;
-    return { step: 'awaitingTask', incident: incident.data, tasks: tasks.data.dispatchTasks, externalUserId: value.externalUserId };
+    const prefill = parseDispatchTaskPrefill(value.prefill);
+    if (!hasOnlyKeys(value, ['step', 'incident', 'tasks', 'externalUserId', 'prefill']) || !isNonEmptyString(value.externalUserId) || !incident?.success || !tasks.success || prefill === false) return null;
+    return { step: 'awaitingTask', incident: incident.data, tasks: tasks.data.dispatchTasks, externalUserId: value.externalUserId, ...(prefill ? { prefill } : {}) };
   }
 
   if (value.step === 'awaitingStatus') {

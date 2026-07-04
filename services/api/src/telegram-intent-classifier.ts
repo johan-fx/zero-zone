@@ -1,6 +1,8 @@
 import {
+  TelegramDispatchIntentFactsSchema,
   TelegramFamilyReunificationIntentFactsSchema,
   TelegramIntentClassificationSchema,
+  telegramDispatchActions,
   telegramDispatchFactSignals,
   telegramFamilyReunificationActions,
   telegramFamilyReunificationRelationshipHints,
@@ -20,6 +22,11 @@ import {
 
 export const DEFAULT_TELEGRAM_INTENT_MODEL = '@cf/meta/llama-3.1-8b-instruct-fast';
 export const DEFAULT_TELEGRAM_INTENT_CONFIDENCE_THRESHOLD = 0.75;
+
+const telegramIntentActionValues = [
+  ...telegramFamilyReunificationActions.filter((action) => action !== 'unknown'),
+  ...telegramDispatchActions,
+] as const;
 
 const TELEGRAM_INTENT_RESPONSE_SCHEMA = {
   type: 'object',
@@ -82,6 +89,11 @@ const TELEGRAM_INTENT_RESPONSE_SCHEMA = {
           enum: [...workCenterStatuses, ...dispatchTaskStatuses],
           description: 'For workcenter or dispatch only: normalized status when explicitly stated.',
         },
+        statusCandidate: {
+          type: 'string',
+          enum: dispatchTaskStatuses,
+          description: 'For dispatch only: candidate task status when explicitly stated; must be one canonical dispatch status.',
+        },
         name: {
           type: 'string',
           maxLength: 120,
@@ -104,8 +116,8 @@ const TELEGRAM_INTENT_RESPONSE_SCHEMA = {
         },
         action: {
           type: 'string',
-          enum: telegramFamilyReunificationActions,
-          description: 'For family_reunification only: route intent as search, report, info, or unknown. Never include names, locations, descriptions, or contact details.',
+          enum: telegramIntentActionValues,
+          description: 'For family_reunification route as search/report/info/unknown; for dispatch route as create/update/coordinate/unknown. Candidate only, never an operation.',
         },
         relationshipHint: {
           type: 'string',
@@ -142,6 +154,11 @@ const TELEGRAM_INTENT_RESPONSE_SCHEMA = {
           type: 'string',
           maxLength: 120,
           description: 'For dispatch only: short destination or area hint if stated.',
+        },
+        taskHint: {
+          type: 'string',
+          maxLength: 160,
+          description: 'For dispatch only: short task label or persisted-task matching hint if stated. Never output free text as an ID.',
         },
         incidentHint: {
           type: 'string',
@@ -212,6 +229,9 @@ export async function classifyTelegramIntent({
     return createSafeIntentClassification('unknown', 0, 'Empty Telegram message.');
   }
 
+  const deterministicDispatchClassification = createDeterministicDispatchClassification(trimmedText);
+  if (deterministicDispatchClassification) return deterministicDispatchClassification;
+
   try {
     const response = await ai.run(model, {
       messages: [
@@ -242,6 +262,9 @@ export async function classifyTelegramIntent({
     if (!parsedClassification.success) {
       return createSafeIntentClassification('unknown', 0, 'Workers AI returned an invalid Telegram intent schema.');
     }
+    if (!hasValidIntentSpecificFacts(parsedClassification.data)) {
+      return createSafeIntentClassification('unknown', 0, 'Workers AI returned invalid intent-specific Telegram facts.');
+    }
 
     if (parsedClassification.data.confidence < confidenceThreshold && parsedClassification.data.intent !== 'unknown') {
       return createSafeIntentClassification('ambiguous', parsedClassification.data.confidence, 'Classification below confidence threshold.', {
@@ -255,6 +278,104 @@ export async function classifyTelegramIntent({
   }
 }
 
+function createDeterministicDispatchClassification(text: string): TelegramIntentClassification | null {
+  const normalizedText = normalizeOperationalText(text);
+  const routeCue = findDispatchRouteCue(normalizedText);
+  if (!routeCue) return null;
+
+  const status = findDispatchStatusCandidate(normalizedText);
+  const action = status ? 'update' : findDispatchAction(normalizedText);
+  const destinationHint = findDispatchDestinationHint(normalizedText);
+  const category = findDispatchCategory(normalizedText);
+  const taskHint = findDispatchTaskHint(normalizedText);
+
+  const hasClearCreateOrCoordinationCue = (action === 'create' || action === 'coordinate') && Boolean(category || destinationHint);
+  if (!status && !hasClearCreateOrCoordinationCue) return null;
+
+  const parsedFacts = TelegramDispatchIntentFactsSchema.safeParse({
+    signal: status ? (status === 'cancelled' ? 'cancel' : 'status_update') : findDispatchSignal(normalizedText, action),
+    action,
+    ...(status ? { statusCandidate: status, status } : {}),
+    ...(category ? { category } : {}),
+    ...(destinationHint ? { destinationHint } : {}),
+    ...(taskHint ? { taskHint } : {}),
+  });
+
+  if (!parsedFacts.success) return null;
+
+  return createSafeIntentClassification('dispatch', status ? 0.92 : 0.86, 'Deterministic dispatch routing cue detected.', parsedFacts.data);
+}
+
+function normalizeOperationalText(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function findDispatchRouteCue(text: string): boolean {
+  return /\b(?:dispatch|despacho|logistica|logistico|logistica|tarea|entrega|mision|reparto)\b/.test(text);
+}
+
+function findDispatchStatusCandidate(text: string): (typeof dispatchTaskStatuses)[number] | undefined {
+  if (/\b(?:en camino|on the way|en ruta|enroute|en-route)\b/.test(text)) return 'en_route';
+  if (/\b(?:accepted|aceptad[oa]s?|asignad[oa]s?)\b/.test(text)) return 'accepted';
+  if (/\b(?:delivered|entregad[oa]s?)\b/.test(text)) return 'delivered';
+  if (/\b(?:cancelled|canceled|cancelad[oa]s?|anulad[oa]s?)\b/.test(text)) return 'cancelled';
+  if (/\b(?:pending|pendiente)s?\b/.test(text)) return 'pending';
+  return undefined;
+}
+
+function findDispatchAction(text: string): 'create' | 'update' | 'coordinate' | 'unknown' {
+  if (/\b(?:crea|crear|create|new|nueva|nuevo|abre|abrir)\b/.test(text)) return 'create';
+  if (/\b(?:actualiza|actualizar|marca|marcar|mark|update|cambia|cambiar)\b/.test(text)) return 'update';
+  if (/\b(?:coordina|coordinar|coordinate|asigna|asignar|assign|despacha|despachar)\b/.test(text)) return 'coordinate';
+  return 'unknown';
+}
+
+function findDispatchSignal(text: string, action: 'create' | 'update' | 'coordinate' | 'unknown'): 'assignment' | 'logistics_request' | 'unknown' {
+  if (action === 'create' || /\b(?:asigna|asignar|assign)\b/.test(text)) return 'assignment';
+  if (action === 'coordinate' || /\b(?:logistica|logistico|despacho|entrega|reparto)\b/.test(text)) return 'logistics_request';
+  return 'unknown';
+}
+
+function findDispatchCategory(text: string): string | undefined {
+  const categoryPatterns: Array<[RegExp, string]> = [
+    [/\bagua|water\b/, 'agua'],
+    [/\bcomida|alimentos?|food\b/, 'comida'],
+    [/\bmedicin[ao]s?|medicamentos?|medicine\b/, 'medicina'],
+    [/\bambulancias?|ambulances?\b/, 'ambulancia'],
+    [/\bmantas?|blankets?\b/, 'mantas'],
+    [/\bcombustible|fuel\b/, 'combustible'],
+    [/\btransporte|transport\b/, 'transporte'],
+  ];
+
+  return categoryPatterns.find(([pattern]) => pattern.test(text))?.[1];
+}
+
+function findDispatchDestinationHint(text: string): string | undefined {
+  const destinationMatch = text.match(/\b(?:hacia|destino(?: a)?|al|a la|a el)\s+(?:el\s+|la\s+)?([a-z0-9][a-z0-9 -]{2,80})/);
+  if (!destinationMatch?.[1]) return undefined;
+
+  return cleanDispatchHint(destinationMatch[1].replace(/\b(?:para|con|como|estado|status)\b.*$/, ''));
+}
+
+function findDispatchTaskHint(text: string): string | undefined {
+  const taskMatch =
+    text.match(/\b((?:tarea|entrega|mision|reparto)\s+(?:de|del|de la|para)?\s*[a-z0-9 -]{1,80})/) ??
+    text.match(/\b((?:despacho|dispatch)\s+(?:de|del|de la|para)?\s*[a-z0-9 -]{1,80})/);
+  if (!taskMatch?.[1]) return undefined;
+
+  return cleanDispatchHint(taskMatch[1].replace(/\b(?:hacia|destino|al|a la|a el|con|como|esta|status)\b.*$/, ''));
+}
+
+function cleanDispatchHint(value: string): string | undefined {
+  const cleaned = value.replace(/[^a-z0-9 -]/g, ' ').replace(/\s+/g, ' ').trim();
+  return cleaned.length > 0 ? cleaned.slice(0, 120) : undefined;
+}
+
 function buildTelegramIntentSystemPrompt(): string {
   return [
     'You classify Spanish Telegram disaster-response messages for routing only. You never execute business operations.',
@@ -264,7 +385,7 @@ function buildTelegramIntentSystemPrompt(): string {
     'Map missing child, missing person, lost family member, found child/person, or search/reunification requests to family_reunification.',
     'Map volunteer center, medical post, shelter, supply hub, triage point, status, capacity, damage, location, availability, needs, or surplus to workcenter.',
     'Map immediate danger, injury, trapped person, urgent help, or life-safety emergency to sos.',
-    'Map task assignment, task status, logistics dispatch, or mission updates to dispatch.',
+    'Map creating, coordinating, assigning, updating, or cancelling dispatch/logistics tasks or mission updates to dispatch.',
     'Map joining/selecting an incident or onboarding into an incident to incident_join.',
     'Use ambiguous when more than one operational intent is plausible. Use unknown when no operational route is clear.',
     'Extract facts only when clear. Facts are candidates for backend validation and user confirmation, not commands.',
@@ -279,7 +400,12 @@ function buildTelegramIntentSystemPrompt(): string {
     'For sos: severity, locationHint, medicalNeed, peopleCount, hazardHint. These are candidate facts only; never create an SOS, geocode, output coordinates, copy raw user text, or include PII.',
     'SOS examples ES: "necesito ayuda médica urgente en el refugio norte, somos 3 y hay humo" => intent sos, severity medical, locationHint "refugio norte", medicalNeed "ayuda médica urgente", peopleCount 3, hazardHint "humo".',
     'SOS examples ES: "hay dos personas atrapadas en la escalera este" => intent sos, severity trapped, peopleCount 2, locationHint "escalera este". Example EN: "urgent medical help at east stairs" => intent sos, severity medical, medicalNeed "urgent medical help", locationHint "east stairs".',
-    'For dispatch: signal, status, destinationHint. Example ES: "equipo en camino al almacén" => intent dispatch, signal status_update, status en_route, destinationHint "almacén". Example EN: "deliver supplies to north gate" => intent dispatch, signal logistics_request, destinationHint "north gate".',
+    'For dispatch: signal, action, category, quantityApprox, destinationHint, taskHint, statusCandidate, and legacy status. These are candidates only; never create, update, assign, resolve, rank, or mutate dispatch tasks from LLM output.',
+    'Dispatch action semantics: create for new dispatch task candidates, update for status changes to existing tasks, coordinate for assignment/logistics coordination, unknown when unclear.',
+    'Dispatch statusCandidate and legacy status must be exactly one canonical dispatch status: pending, accepted, en_route, delivered, or cancelled. If the text says "done", "finished", or another non-canonical status, do not invent a status.',
+    'Dispatch examples ES: "coordina 2 ambulancias al refugio norte" => intent dispatch, signal logistics_request, action coordinate, category "ambulancias", quantityApprox "2", destinationHint "refugio norte".',
+    'Dispatch examples EN: "create a water delivery for north gate, 10 boxes" => intent dispatch, signal assignment, action create, category "water", quantityApprox "10 boxes", destinationHint "north gate".',
+    'Dispatch update examples ES: "marca la entrega del almacén como en camino" => intent dispatch, signal status_update, action update, taskHint "entrega del almacén", statusCandidate en_route. Example EN: "mark north gate delivery delivered" => intent dispatch, signal status_update, action update, taskHint "north gate delivery", statusCandidate delivered.',
     'For incident_join: signal, incidentHint, roleHint. Example ES: "quiero unirme al incidente demo como voluntario" => intent incident_join, signal request_join, incidentHint "demo", roleHint volunteer. Example EN: "switch me to incident north" => intent incident_join, signal change_incident, incidentHint "north".',
     'Resource directions: "tengo", "puedo llevar", "me sobra", "tenemos para entregar" => offer; "necesito", "necesitamos", "hace falta" => need.',
     'Resource examples: "tengo agua potable, dónde la necesitan?" => intent resource, resourceDirection offer, resourceType water, resourceLabel "agua potable", implicitQuestion where_needed.',
@@ -313,6 +439,11 @@ function sanitizeTelegramFamilyReunificationFacts(value: unknown): TelegramInten
   if (isStringIn(source.urgencyHint, telegramFamilyReunificationUrgencyHints)) sanitized.urgencyHint = source.urgencyHint;
 
   return TelegramFamilyReunificationIntentFactsSchema.parse(sanitized);
+}
+
+function hasValidIntentSpecificFacts(classification: TelegramIntentClassification): boolean {
+  if (classification.intent !== 'dispatch') return true;
+  return TelegramDispatchIntentFactsSchema.safeParse(classification.extractedFacts).success;
 }
 
 function isStringIn<const T extends readonly string[]>(value: unknown, allowed: T): value is T[number] {

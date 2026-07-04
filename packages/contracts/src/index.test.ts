@@ -97,6 +97,7 @@ import {
   sosAlertStatuses,
   sosFanoutJobStatuses,
   sosSeverities,
+  telegramDispatchActions,
   telegramIntents,
   telegramAcceptedIntents,
   telegramDispatchFactSignals,
@@ -807,6 +808,7 @@ describe('contracts package', () => {
     expect(telegramFamilyReunificationActions).toContain('search');
     expect(telegramFamilyReunificationRelationshipHints).toContain('parent');
     expect(telegramFamilyReunificationUrgencyHints).toContain('urgent');
+    expect(telegramDispatchActions).toEqual(['create', 'update', 'coordinate', 'unknown']);
     expect(telegramDispatchFactSignals).toContain('status_update');
     expect(telegramIncidentJoinFactSignals).toContain('request_join');
 
@@ -875,13 +877,38 @@ describe('contracts package', () => {
     expect(TelegramSosIntentFactsSchema.safeParse({ severity: 'medical', location: 'refugio norte' }).success).toBe(false);
     expect(TelegramSosIntentFactsSchema.safeParse({ severity: 'medical', phone: '+34000000000' }).success).toBe(false);
 
-    expect(TelegramDispatchIntentFactsSchema.parse({ signal: 'status_update', status: 'en_route', destinationHint: 'warehouse' })).toEqual({
+    expect(
+      TelegramDispatchIntentFactsSchema.parse({
+        signal: 'status_update',
+        action: 'update',
+        category: 'water',
+        quantityApprox: '10 boxes',
+        taskHint: 'north gate delivery',
+        status: 'en_route',
+        statusCandidate: 'en_route',
+        destinationHint: 'warehouse',
+      }),
+    ).toEqual({
       signal: 'status_update',
+      action: 'update',
+      category: 'water',
+      quantityApprox: '10 boxes',
+      taskHint: 'north gate delivery',
       status: 'en_route',
+      statusCandidate: 'en_route',
       destinationHint: 'warehouse',
     });
-    expect(TelegramDispatchIntentFactsSchema.parse({})).toEqual({ signal: 'unknown' });
+    expect(TelegramDispatchIntentFactsSchema.parse({})).toEqual({ signal: 'unknown', action: 'unknown' });
+    expect(TelegramDispatchIntentFactsSchema.parse({ action: 'coordinate', category: 'ambulance', quantityApprox: '2 units' })).toMatchObject({
+      signal: 'unknown',
+      action: 'coordinate',
+      category: 'ambulance',
+      quantityApprox: '2 units',
+    });
     expect(TelegramDispatchIntentFactsSchema.safeParse({ signal: 'status_update', status: 'done' }).success).toBe(false);
+    expect(TelegramDispatchIntentFactsSchema.safeParse({ signal: 'status_update', statusCandidate: 'done' }).success).toBe(false);
+    expect(TelegramDispatchIntentFactsSchema.safeParse({ action: 'delete', category: 'water' }).success).toBe(false);
+    expect(TelegramDispatchIntentFactsSchema.safeParse({ action: 'create', dispatchTaskId: 'dt-free-text' }).success).toBe(false);
 
     expect(TelegramIncidentJoinIntentFactsSchema.parse({ signal: 'request_join', incidentHint: 'incident-zc-demo', roleHint: 'volunteer' })).toEqual({
       signal: 'request_join',

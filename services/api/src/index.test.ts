@@ -1189,6 +1189,103 @@ describe('api worker', () => {
     expect(classifier).toHaveBeenCalledTimes(1);
   });
 
+  it('routes natural dispatch coordination candidates without creating dispatch tasks automatically', async () => {
+    const classifier = enableTelegramIntentClassifier(
+      vi.fn().mockResolvedValue({
+        intent: 'dispatch',
+        confidence: 0.94,
+        extractedFacts: {
+          signal: 'logistics_request',
+          action: 'coordinate',
+          category: 'ambulances',
+          quantityApprox: '2',
+          destinationHint: 'north shelter',
+        },
+      }),
+    );
+    const telegramUserId = 25217;
+    const beforeTasks = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM dispatch_tasks').first<{ count: number }>();
+
+    await expect(postTelegramMessage(telegramUserId, 'coordina 2 ambulancias al refugio norte', 'DispatchCreate', 'es')).resolves.toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining('Choose an incident before updating dispatch tasks'),
+    });
+    expect(classifier).toHaveBeenCalledTimes(1);
+
+    const afterTasks = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM dispatch_tasks').first<{ count: number }>();
+    expect(afterTasks?.count).toBe(beforeTasks?.count);
+  });
+
+  it('routes natural dispatch status candidates without mutating persisted tasks until confirmation', async () => {
+    const telegramUserId = 25218;
+    await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...telegramIncidentJoinRequestFixture, externalId: String(telegramUserId), displayName: 'Dispatch Natural' }),
+    });
+    const create = await request('/incidents/incident-zc-demo/dispatch-tasks', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        channel: 'telegram',
+        externalId: String(telegramUserId),
+        payload: { category: 'water', quantityApprox: '10 boxes', notes: 'North gate delivery' },
+      }),
+    });
+    const task = DispatchTaskResponseSchema.parse(await create.json()).dispatchTask;
+    const classifier = enableTelegramIntentClassifier(
+      vi.fn().mockResolvedValue({
+        intent: 'dispatch',
+        confidence: 0.95,
+        extractedFacts: {
+          signal: 'status_update',
+          action: 'update',
+          taskHint: 'North gate delivery',
+          statusCandidate: 'delivered',
+        },
+      }),
+    );
+
+    await expect(postTelegramMessage(telegramUserId, 'mark North gate delivery delivered', 'DispatchUpdate', 'en')).resolves.toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining('Choose an incident before updating dispatch tasks'),
+    });
+    expect(classifier).toHaveBeenCalledTimes(1);
+
+    const persisted = DispatchTaskListResponseSchema.parse(await (await request('/incidents/incident-zc-demo/dispatch-tasks')).json());
+    expect(persisted.dispatchTasks.find((item) => item.dispatchTaskId === task.dispatchTaskId)).toMatchObject({ status: 'pending' });
+  });
+
+  it('rejects invalid natural dispatch status candidates without starting a mutation flow', async () => {
+    const classifier = enableTelegramIntentClassifier(
+      vi.fn().mockResolvedValue({
+        intent: 'dispatch',
+        confidence: 0.96,
+        extractedFacts: {
+          signal: 'status_update',
+          action: 'update',
+          taskHint: 'north gate delivery',
+          statusCandidate: 'done',
+        },
+      }),
+    );
+    const telegramUserId = 25219;
+
+    await expect(postTelegramMessage(telegramUserId, 'mark north gate delivery done', 'DispatchInvalid', 'en')).resolves.toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining('I’m not sure which operation you need'),
+    });
+    expect(classifier).toHaveBeenCalledTimes(1);
+
+    const state = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM telegram_conversation_states WHERE state_key = ?')
+      .bind(`flow:dispatch:chat:${telegramUserId}:from:${telegramUserId}`)
+      .first<{ count: number }>();
+    expect(state?.count).toBe(0);
+  });
+
   it('routes natural SOS messages to SOS context without creating alerts or persisting sensitive facts', async () => {
     const classifier = enableTelegramIntentClassifier(
       vi.fn().mockResolvedValue({

@@ -1,11 +1,11 @@
 import { DispatchTaskConnectedUpdateRequestSchema } from '@zona-cero/contracts';
 
 import { formatIncidentList, selectIncident } from './incident-selection';
-import { formatDispatchTaskError, formatDispatchTaskList, formatDispatchTaskSuccess, normalizeDispatchStatusText, selectDispatchTask } from './dispatch-helpers';
+import { formatDispatchTaskError, formatDispatchTaskList, formatDispatchTaskSuccess, normalizeDispatchStatusText, orderDispatchTaskCandidates, selectDispatchTask } from './dispatch-helpers';
 import { isCancellation, isConfirmation, parseDispatchStatus } from './parsing';
 import { getTelegramExternalUserId, resolveTelegramCommand } from './telegram-update';
 import { withTelegramFlowTelemetry } from './telemetry';
-import type { TelegramDispatchTaskFlowResult, TelegramDispatchTaskPorts, TelegramDispatchTaskState, TelegramFlowContext, TelegramUpdateLike } from './types';
+import type { TelegramDispatchTaskFlowResult, TelegramDispatchTaskPorts, TelegramDispatchTaskPrefill, TelegramDispatchTaskState, TelegramFlowContext, TelegramUpdateLike } from './types';
 
 export async function handleTelegramDispatchTaskFlow(
   state: TelegramDispatchTaskState,
@@ -13,9 +13,9 @@ export async function handleTelegramDispatchTaskFlow(
   ports: TelegramDispatchTaskPorts,
   flowContext?: Extract<TelegramFlowContext, { sourceIntent: 'dispatch' }>,
 ): Promise<TelegramDispatchTaskFlowResult> {
-  void flowContext;
   const startedAt = Date.now();
   const previousStep = state.step;
+  const contextPrefill = createDispatchTaskPrefill(flowContext);
 
   return withTelegramFlowTelemetry(
     ports,
@@ -27,37 +27,38 @@ export async function handleTelegramDispatchTaskFlow(
       const command = resolveTelegramCommand(update);
 
       if (command === '/cancel') return { state: { step: 'cancelled' }, responseText: 'Dispatch task update cancelled. Send /dispatch to begin again.' };
-      if (command === '/dispatch' || state.step === 'idle' || state.step === 'cancelled' || state.step === 'updated') return startDispatchIncidentSelection(update, ports);
+      if (command === '/dispatch' || state.step === 'idle' || state.step === 'cancelled' || state.step === 'updated') return startDispatchIncidentSelection(update, ports, contextPrefill);
 
       if (state.step === 'awaitingIncident') {
+        const prefill = mergeDispatchTaskPrefill(state.prefill, contextPrefill);
         const incident = selectIncident(state.incidents, text);
         if (!incident) return { state, responseText: `Incident not found. Reply with a number or incident id from the list.
       ${formatIncidentList(state.incidents)}` };
         try {
           const { dispatchTasks } = await ports.listDispatchTasks(incident.incidentId);
           if (dispatchTasks.length === 0) return { state: { step: 'idle' }, responseText: 'No dispatch tasks are available for this incident.' };
-          return { state: { step: 'awaitingTask', incident, tasks: dispatchTasks, externalUserId: state.externalUserId }, responseText: `Choose a dispatch task:
-      ${formatDispatchTaskList(dispatchTasks)}` };
+          const orderedTasks = orderDispatchTaskCandidates(dispatchTasks, prefill);
+          return { state: { step: 'awaitingTask', incident, tasks: orderedTasks, externalUserId: state.externalUserId, ...(prefill ? { prefill } : {}) }, responseText: `Choose a dispatch task:
+      ${formatDispatchTaskList(orderedTasks)}` };
         } catch {
           return { state, responseText: 'Could not load dispatch tasks from the backend. Please try again later.' };
         }
       }
 
       if (state.step === 'awaitingTask') {
+        const prefill = mergeDispatchTaskPrefill(state.prefill, contextPrefill);
         const task = selectDispatchTask(state.tasks, text);
         if (!task) return { state, responseText: `Dispatch task not found. Reply with a number or task id.
       ${formatDispatchTaskList(state.tasks)}` };
+        const statusCandidate = getUsableStatusCandidate(prefill);
+        if (statusCandidate) return confirmDispatchTaskStatus(state.incident, task, state.externalUserId, statusCandidate);
         return { state: { step: 'awaitingStatus', incident: state.incident, task, externalUserId: state.externalUserId }, responseText: 'Reply with the new status: accepted, en_route, delivered, or cancelled.' };
       }
 
       if (state.step === 'awaitingStatus') {
-        const status = parseDispatchStatus(normalizeDispatchStatusText(text));
+        const status = getUsableStatusCandidate(contextPrefill) ?? parseDispatchStatus(normalizeDispatchStatusText(text));
         if (!status || status === 'pending') return { state, responseText: 'Invalid status. Reply accepted, en_route, delivered, or cancelled.' };
-        const request = DispatchTaskConnectedUpdateRequestSchema.parse({ channel: 'telegram', externalId: state.externalUserId, status });
-        return { state: { step: 'awaitingConfirmation', incident: state.incident, task: state.task, externalUserId: state.externalUserId, request }, responseText: `Confirm dispatch task update:
-      Task: ${state.task.dispatchTaskId}
-      Status: ${status}
-      Reply yes to submit, or /cancel to stop.` };
+        return confirmDispatchTaskStatus(state.incident, state.task, state.externalUserId, status);
       }
 
       if (state.step === 'awaitingConfirmation') {
@@ -76,16 +77,65 @@ export async function handleTelegramDispatchTaskFlow(
   );
 }
 
-async function startDispatchIncidentSelection(update: TelegramUpdateLike, ports: TelegramDispatchTaskPorts): Promise<TelegramDispatchTaskFlowResult> {
+async function startDispatchIncidentSelection(
+  update: TelegramUpdateLike,
+  ports: TelegramDispatchTaskPorts,
+  prefill?: TelegramDispatchTaskPrefill,
+): Promise<TelegramDispatchTaskFlowResult> {
   const externalUserId = getTelegramExternalUserId(update);
   if (!externalUserId) return { state: { step: 'idle' }, responseText: 'Telegram user id is required to update dispatch tasks.' };
 
   try {
     const { incidents } = await ports.listIncidents();
     if (incidents.length === 0) return { state: { step: 'idle' }, responseText: 'No active incidents are available right now.' };
-    return { state: { step: 'awaitingIncident', incidents, externalUserId }, responseText: `Choose an incident before updating dispatch tasks:
+    return { state: { step: 'awaitingIncident', incidents, externalUserId, ...(prefill ? { prefill } : {}) }, responseText: `Choose an incident before updating dispatch tasks:
 ${formatIncidentList(incidents)}` };
   } catch {
     return { state: { step: 'idle' }, responseText: 'Could not load incidents from the backend. Please try again later.' };
   }
+}
+
+function confirmDispatchTaskStatus(
+  incident: Extract<TelegramDispatchTaskState, { step: 'awaitingStatus' }>['incident'],
+  task: Extract<TelegramDispatchTaskState, { step: 'awaitingStatus' }>['task'],
+  externalUserId: string,
+  status: Exclude<ReturnType<typeof parseDispatchStatus>, null | 'pending'>,
+): TelegramDispatchTaskFlowResult {
+  const request = DispatchTaskConnectedUpdateRequestSchema.parse({ channel: 'telegram', externalId: externalUserId, status });
+  return {
+    state: { step: 'awaitingConfirmation', incident, task, externalUserId, request },
+    responseText: `Confirm dispatch task update:
+      Task: ${task.dispatchTaskId}
+      Status: ${status}
+      Reply yes to submit, or /cancel to stop.`,
+  };
+}
+
+function createDispatchTaskPrefill(flowContext?: Extract<TelegramFlowContext, { sourceIntent: 'dispatch' }>): TelegramDispatchTaskPrefill | undefined {
+  if (!flowContext) return undefined;
+  return sanitizeDispatchTaskPrefill({ ...(flowContext.facts ?? {}), ...flowContext.prefill });
+}
+
+function mergeDispatchTaskPrefill(
+  current: TelegramDispatchTaskPrefill | undefined,
+  incoming: TelegramDispatchTaskPrefill | undefined,
+): TelegramDispatchTaskPrefill | undefined {
+  return sanitizeDispatchTaskPrefill({ ...(current ?? {}), ...(incoming ?? {}) });
+}
+
+function sanitizeDispatchTaskPrefill(value: TelegramDispatchTaskPrefill): TelegramDispatchTaskPrefill | undefined {
+  const prefill: TelegramDispatchTaskPrefill = {};
+  if (value.taskHint) prefill.taskHint = value.taskHint;
+  if (value.category) prefill.category = value.category;
+  if (value.quantityApprox) prefill.quantityApprox = value.quantityApprox;
+  if (value.destinationHint) prefill.destinationHint = value.destinationHint;
+  if (value.status) prefill.status = value.status;
+  if (value.statusCandidate) prefill.statusCandidate = value.statusCandidate;
+  return Object.keys(prefill).length > 0 ? prefill : undefined;
+}
+
+function getUsableStatusCandidate(prefill?: TelegramDispatchTaskPrefill): Exclude<ReturnType<typeof parseDispatchStatus>, null | 'pending'> | null {
+  const candidate = prefill?.statusCandidate ?? prefill?.status;
+  const status = parseDispatchStatus(candidate);
+  return status && status !== 'pending' ? status : null;
 }

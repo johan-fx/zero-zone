@@ -185,6 +185,32 @@ describe('operation materializer', () => {
     ]);
   });
 
+  it('does not materialize Telegram dispatch candidate facts or free task ids', async () => {
+    const dispatchCreate = await op('dispatch_event.create', 'dispatch-1', {
+      category: 'Water',
+      quantityApprox: '12 boxes',
+      dispatchTaskId: 'llm-free-task-id',
+      statusCandidate: 'accepted',
+      status: 'done',
+      facts: { statusCandidate: 'accepted' },
+    });
+
+    const views = materializeOperations([dispatchCreate]);
+
+    expect(views.dispatchEvents).toEqual([
+      expect.objectContaining({
+        dispatchEventId: 'dispatch-1',
+        dispatchTaskId: 'dispatch-1',
+        category: 'Water',
+        quantityApprox: '12 boxes',
+        status: 'pending',
+      }),
+    ]);
+    expect(views.dispatchEvents[0]).not.toHaveProperty('statusCandidate');
+    expect(views.dispatchEvents[0]).not.toHaveProperty('facts');
+    expect(JSON.stringify(views.dispatchEvents[0])).not.toContain('llm-free-task-id');
+  });
+
   it('materializes SOS create with local-first sync state and approximate last-known location', async () => {
     const sosCreate = await op('sos.create', 'sos-2', {
       severity: 'medical',
