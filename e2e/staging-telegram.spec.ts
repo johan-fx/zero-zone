@@ -123,6 +123,31 @@ test('dispatch staging Telegram handles command and natural language without upd
   expect(String(naturalCancel.botReplyPreview ?? '')).toMatch(/cancelled|cancelada|cancelado/i);
 });
 
+test('incident join staging Telegram handles command and natural language with candidate-only hints', async ({ request }) => {
+  const apiBaseUrl = requiredEnv('E2E_API_BASE_URL').replace(/\/$/, '');
+
+  await ensureTelegramSessionExists();
+
+  const health = await request.get(`${apiBaseUrl}/health`);
+  await expect(health).toBeOK();
+
+  const result = await runTelegramRunner('incident-join');
+  const steps = getRunnerSteps(result);
+  const commandStart = findStep(steps, 'incident-join-command-start');
+  const commandRole = findStep(steps, 'incident-join-command-role');
+  const naturalPhrase = findStep(steps, 'incident-join-natural-phrase');
+  const naturalPseudonymConfirmation = findStep(steps, 'incident-join-natural-pseudonym-confirmation');
+  const naturalRoleConfirmation = findStep(steps, 'incident-join-natural-role-confirmation');
+
+  expect(String(commandStart.botReplyPreview ?? '')).toMatch(/Choose an incident|Elige un incidente/i);
+  expect(String(commandRole.botReplyPreview ?? '')).toMatch(/Joined|Te uniste/i);
+  expect(String(naturalPhrase.botReplyPreview ?? '')).toMatch(/Detected pseudonym|seudónimo/i);
+  expect(String(naturalPseudonymConfirmation.botReplyPreview ?? '')).toMatch(/Suggested role|Rol sugerido/i);
+  expect(String(naturalPseudonymConfirmation.botReplyPreview ?? '')).toMatch(/only a candidate|solo un candidato/i);
+  expect(String(naturalPseudonymConfirmation.botReplyPreview ?? '')).toMatch(/backend will validate|backend validará/i);
+  expect(String(naturalRoleConfirmation.botReplyPreview ?? '')).toMatch(/Joined|Te uniste/i);
+});
+
 async function ensureTelegramSessionExists(): Promise<void> {
   const sessionFile = requiredEnv('TELEGRAM_E2E_SESSION_FILE');
   try {
@@ -132,7 +157,7 @@ async function ensureTelegramSessionExists(): Promise<void> {
   }
 }
 
-async function runTelegramRunner(scenario: 'full' | 'natural-sos' | 'family-reunification' | 'dispatch' = 'full'): Promise<RunnerResult & { marker: string; preConfirmationMarkerVisible?: boolean }> {
+async function runTelegramRunner(scenario: 'full' | 'natural-sos' | 'family-reunification' | 'dispatch' | 'incident-join' = 'full'): Promise<RunnerResult & { marker: string; preConfirmationMarkerVisible?: boolean }> {
   const args = ['tsx', 'e2e/telegram/staging-telegram-runner.ts', 'run', '--json'];
   if (scenario !== 'full') args.push('--scenario', scenario);
 

@@ -24,4 +24,11 @@ describe('@zona-cero/i18n', () => {
     expect(resolveLocaleFromCandidates([null, 'en-US', 'es'])).toBe('en');
     expect(resolveLocaleFromCandidates([null, 'ca'])).toBe('es');
   });
+
+  it('formats incident join candidate-only safety copy in both locales', () => {
+    expect(formatMessage('en', 'telegram.join.role.candidate', { desiredRole: 'medical', roleList: '1. volunteer' })).toContain('only a candidate');
+    expect(formatMessage('en', 'telegram.join.role.candidate', { desiredRole: 'medical', roleList: '1. volunteer' })).toContain('backend will validate');
+    expect(formatMessage('es', 'telegram.join.role.candidate', { desiredRole: 'medical', roleList: '1. volunteer' })).toContain('solo un candidato');
+    expect(formatMessage('es', 'telegram.join.role.candidate', { desiredRole: 'medical', roleList: '1. volunteer' })).toContain('backend validará');
+  });
 });

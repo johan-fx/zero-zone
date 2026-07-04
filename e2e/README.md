@@ -57,6 +57,12 @@ To inspect only the family reunification scenario without secrets or Telegram ac
 pnpm e2e:telegram:dry-run:family-reunification
 ```
 
+To inspect only the incident join command + natural-language onboarding scenario without secrets or Telegram access:
+
+```bash
+pnpm e2e:telegram:dry-run:incident-join
+```
+
 ## Run the real staging test
 
 ```bash
@@ -80,6 +86,14 @@ pnpm e2e:staging:telegram --grep "family reunification"
 ```
 
 The family reunification scenario resets any pending bot flow, sets Spanish with `/idioma es`, covers `/reunificacion`, selects the configured incident, then sends a safe natural-language phrase: `Necesito ayuda de reunificación familiar para encontrar a mi familiar.` The phrase intentionally avoids real PII. The bot should acknowledge family reunification, explain that sensitive details belong in the private web channel rather than Telegram, and issue a private link after incident selection for both command and natural-language paths.
+
+To target only the incident join onboarding coverage in staging:
+
+```bash
+pnpm e2e:staging:telegram:incident-join
+```
+
+The incident join scenario resets any pending bot flow, covers `/start` with explicit incident, pseudonym, and role selection, then sends a natural-language join phrase with an incident id, display-name hint, locale hint, and desired-role hint. The desired role is candidate-only: Telegram must ask for human confirmation before `joinIncident`, and the bot copy must state that the backend validates the role.
 
 ## Sensitive helpers
 
