@@ -9,6 +9,7 @@ import type {
   IncidentJoinRequest,
   IncidentJoinResponse,
   IncidentListResponse,
+  IncidentRole,
   IncidentSummary,
   OperationalEvent,
   PrivateWebLinkIssueRequest,
@@ -146,9 +147,9 @@ export type TelegramFamilyReunificationPorts = TelegramTelemetryOptions & {
 
 export type TelegramIncidentJoinState =
   | { step: 'idle'; preferredLocale?: SupportedLocale }
-  | { step: 'awaitingIncident'; incidents: IncidentSummary[]; externalUserId: string; preferredLocale?: SupportedLocale }
-  | { step: 'awaitingPseudonym'; incident: IncidentSummary; externalUserId: string; preferredLocale?: SupportedLocale }
-  | { step: 'awaitingRole'; config: IncidentConfigResponse; externalUserId: string; pseudonym: string; preferredLocale?: SupportedLocale }
+  | { step: 'awaitingIncident'; incidents: IncidentSummary[]; externalUserId: string; preferredLocale?: SupportedLocale; displayNameHint?: string; desiredRole?: IncidentRole }
+  | { step: 'awaitingPseudonym'; incident: IncidentSummary; externalUserId: string; preferredLocale?: SupportedLocale; displayNameHint?: string; desiredRole?: IncidentRole }
+  | { step: 'awaitingRole'; config: IncidentConfigResponse; externalUserId: string; pseudonym: string; preferredLocale?: SupportedLocale; desiredRole?: IncidentRole }
   | { step: 'joined'; response: IncidentJoinResponse }
   | { step: 'cancelled' };
 

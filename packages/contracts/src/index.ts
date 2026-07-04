@@ -999,7 +999,9 @@ export type TelegramIncidentJoinFactSignal = z.infer<typeof TelegramIncidentJoin
 export const TelegramIncidentJoinIntentFactsSchema = z.object({
   signal: TelegramIncidentJoinFactSignalSchema.default('unknown'),
   incidentHint: z.string().min(1).max(100).optional(),
-  roleHint: IncidentRoleSchema.optional(),
+  desiredRole: IncidentRoleSchema.optional(),
+  displayNameHint: z.string().min(1).max(120).optional(),
+  localeHint: SupportedLocaleSchema.optional(),
 }).strict();
 export type TelegramIncidentJoinIntentFacts = z.infer<typeof TelegramIncidentJoinIntentFactsSchema>;
 

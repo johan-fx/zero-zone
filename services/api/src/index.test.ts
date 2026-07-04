@@ -1286,6 +1286,72 @@ describe('api worker', () => {
     expect(state?.count).toBe(0);
   });
 
+  it('routes natural incident join candidates with desiredRole without joining automatically', async () => {
+    const classifier = enableTelegramIntentClassifier(
+      vi.fn().mockResolvedValue({
+        intent: 'incident_join',
+        confidence: 0.94,
+        extractedFacts: {
+          signal: 'request_join',
+          incidentHint: 'incident-zc-demo',
+          desiredRole: 'volunteer',
+          displayNameHint: 'Radio 12',
+          localeHint: 'es',
+        },
+      }),
+    );
+    const telegramUserId = 25220;
+    const beforeMemberships = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM incident_memberships').first<{ count: number }>();
+
+    const result = await postTelegramMessage(telegramUserId, 'Quiero unirme al incidente demo como voluntario, soy Radio 12', 'JoinNatural', 'es');
+
+    expect(result).toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining('Se detectó el seudónimo “Radio 12”'),
+    });
+    expect(classifier).toHaveBeenCalledTimes(1);
+
+    const state = await (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?')
+      .bind(`chat:${telegramUserId}:from:${telegramUserId}`)
+      .first<{ step: string }>();
+    expect(state).toMatchObject({ step: 'awaitingPseudonym' });
+
+    const afterMemberships = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM incident_memberships').first<{ count: number }>();
+    expect(afterMemberships?.count).toBe(beforeMemberships?.count);
+  });
+
+  it('drops invalid natural incident join desiredRole candidates while keeping safe join hints', async () => {
+    const classifier = enableTelegramIntentClassifier(
+      vi.fn().mockResolvedValue({
+        intent: 'incident_join',
+        confidence: 0.96,
+        extractedFacts: {
+          signal: 'request_join',
+          incidentHint: 'incident-zc-demo',
+          desiredRole: 'admin',
+        },
+      }),
+    );
+    const telegramUserId = 25221;
+    const beforeMemberships = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM incident_memberships').first<{ count: number }>();
+
+    await expect(postTelegramMessage(telegramUserId, 'join incident demo as admin', 'JoinInvalid', 'en')).resolves.toMatchObject({
+      accepted: true,
+      command: null,
+      responseText: expect.stringContaining('What pseudonym should we show to coordinators?'),
+    });
+    expect(classifier).toHaveBeenCalledTimes(1);
+
+    const state = await (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?')
+      .bind(`chat:${telegramUserId}:from:${telegramUserId}`)
+      .first<{ step: string }>();
+    expect(state).toMatchObject({ step: 'awaitingPseudonym' });
+
+    const afterMemberships = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM incident_memberships').first<{ count: number }>();
+    expect(afterMemberships?.count).toBe(beforeMemberships?.count);
+  });
+
   it('routes natural SOS messages to SOS context without creating alerts or persisting sensitive facts', async () => {
     const classifier = enableTelegramIntentClassifier(
       vi.fn().mockResolvedValue({

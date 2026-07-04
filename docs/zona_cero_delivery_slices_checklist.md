@@ -1093,12 +1093,12 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 
 | Equipo | Checklist |
 |---|---|
-| A | ⬜ Aceptar contexto en incident join/start flow. |
-| A | ⬜ Preseleccionar rol candidato si es válido, pero pedir confirmación. |
-| A | ⬜ Mantener detección/persistencia de idioma. |
-| B | ⬜ Extraer rol/incidente/idioma sin conceder permisos. |
-| B | ⬜ Reutilizar `joinIncident` y auditoría existentes. |
-| Todos | ⬜ Tests de “quiero ayudar”, “soy logística” y rol inválido/privilegiado. |
+| A | ✅ Aceptar contexto en incident join/start flow. |
+| A | ✅ Preseleccionar rol candidato si es válido, pero pedir confirmación. |
+| A | ✅ Mantener detección/persistencia de idioma. |
+| B | ✅ Extraer rol/incidente/idioma sin conceder permisos. |
+| B | ✅ Reutilizar `joinIncident` y auditoría existentes. |
+| Todos | ✅ Tests de “quiero ayudar”, “soy logística” y rol inválido/privilegiado. |
 
 **Definition of Done**
 
@@ -1117,6 +1117,14 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 - `pnpm --filter @zona-cero/telegram-channel test:strict`
 - `pnpm --filter @zona-cero/api exec vitest run src/index.test.ts src/telegram-intent-classifier.test.ts`
 - Smoke local webhook con onboarding natural ES/EN.
+
+**Cierre Slice 19**
+
+- Equipo B migró los facts de `incident_join` a `desiredRole`, `incidentHint`, `displayNameHint` y `localeHint`, manteniendo el rol como candidato sin autorización automática.
+- Equipo A consume `flowContext` en `/start`/incident join, sugiere incidente, pseudónimo, idioma y rol, y exige confirmación humana antes de `joinIncident`.
+- Equipo C aprobó no-op mobile/offline: `IncidentJoinRequest.role` y permisos siguen viniendo de inputs confirmados y backend.
+- E2E targeted añadido en `/e2e` para comando `/start` y onboarding natural con `pnpm e2e:telegram:dry-run:incident-join` y grep staging `incident join`.
+- Evidencia ejecutada: `pnpm contracts:test:strict`, `pnpm --filter @zona-cero/api test -- src/index.test.ts src/telegram-intent-classifier.test.ts`, `pnpm --filter @zona-cero/telegram-channel test:strict`, `pnpm --filter @zona-cero/i18n test`, `pnpm e2e:telegram:typecheck`, `pnpm e2e:telegram:dry-run:incident-join`, `pnpm e2e:staging:telegram --grep "incident join"`, y Equipo C `pnpm mobile:test:strict`.
 
 ## Gates antes de implementar cada slice
 

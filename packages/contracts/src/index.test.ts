@@ -910,12 +910,25 @@ describe('contracts package', () => {
     expect(TelegramDispatchIntentFactsSchema.safeParse({ action: 'delete', category: 'water' }).success).toBe(false);
     expect(TelegramDispatchIntentFactsSchema.safeParse({ action: 'create', dispatchTaskId: 'dt-free-text' }).success).toBe(false);
 
-    expect(TelegramIncidentJoinIntentFactsSchema.parse({ signal: 'request_join', incidentHint: 'incident-zc-demo', roleHint: 'volunteer' })).toEqual({
+    expect(
+      TelegramIncidentJoinIntentFactsSchema.parse({
+        signal: 'request_join',
+        incidentHint: 'incident-zc-demo',
+        desiredRole: 'volunteer',
+        displayNameHint: 'Radio 12',
+        localeHint: 'es',
+      }),
+    ).toEqual({
       signal: 'request_join',
       incidentHint: 'incident-zc-demo',
-      roleHint: 'volunteer',
+      desiredRole: 'volunteer',
+      displayNameHint: 'Radio 12',
+      localeHint: 'es',
     });
     expect(TelegramIncidentJoinIntentFactsSchema.parse({})).toEqual({ signal: 'unknown' });
+    expect(TelegramIncidentJoinIntentFactsSchema.safeParse({ signal: 'request_join', roleHint: 'volunteer' }).success).toBe(false);
+    expect(TelegramIncidentJoinIntentFactsSchema.safeParse({ signal: 'request_join', desiredRole: 'admin' }).success).toBe(false);
+    expect(TelegramIncidentJoinIntentFactsSchema.safeParse({ signal: 'request_join', localeHint: 'ca' }).success).toBe(false);
     expect(TelegramIncidentJoinIntentFactsSchema.safeParse({ signal: 'request_join', password: 'secret' }).success).toBe(false);
   });
 

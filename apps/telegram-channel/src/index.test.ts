@@ -231,9 +231,9 @@ function createFamilyReunificationPorts(overrides: Partial<TelegramFamilyReunifi
 
 const validJoinStates = [
   { step: 'idle' },
-  { step: 'awaitingIncident', incidents: incidentListHappyFixture.incidents, externalUserId: '1001' },
-  { step: 'awaitingPseudonym', incident: incidentListHappyFixture.incidents[0], externalUserId: '1001' },
-  { step: 'awaitingRole', config: incidentConfigHappyFixture, externalUserId: '1001', pseudonym: 'Field Telegram' },
+  { step: 'awaitingIncident', incidents: incidentListHappyFixture.incidents, externalUserId: '1001', displayNameHint: 'Field Hint', desiredRole: 'medical' },
+  { step: 'awaitingPseudonym', incident: incidentListHappyFixture.incidents[0], externalUserId: '1001', displayNameHint: 'Field Hint', desiredRole: 'medical' },
+  { step: 'awaitingRole', config: incidentConfigHappyFixture, externalUserId: '1001', pseudonym: 'Field Telegram', desiredRole: 'medical' },
   { step: 'joined', response: telegramIncidentJoinResponseFixture },
   { step: 'cancelled' },
 ] satisfies TelegramIncidentJoinState[];
@@ -305,12 +305,13 @@ const validWorkCenterStates = [
 async function advance(
   inputs: string[],
   ports = createPorts(),
+  flowContext?: Extract<TelegramFlowContext, { sourceIntent: 'incident_join' }>,
 ): Promise<{ state: TelegramIncidentJoinState; responseText: string; ports: TelegramIncidentJoinPorts }> {
   let state: TelegramIncidentJoinState = { step: 'idle' };
   let responseText = '';
 
-  for (const input of inputs) {
-    const result = await handleTelegramIncidentJoinFlow(state, telegramUserUpdate(input), ports);
+  for (const [index, input] of inputs.entries()) {
+    const result = await handleTelegramIncidentJoinFlow(state, telegramUserUpdate(input), ports, index === 0 ? flowContext : undefined);
     state = result.state;
     responseText = result.responseText;
   }
@@ -585,6 +586,98 @@ describe('telegram channel flows', () => {
       displayName: 'Field Telegram',
       role: 'volunteer',
       preferredLocale: 'en',
+    });
+  });
+
+  it('uses incident join flowContext as candidate-only onboarding hints', async () => {
+    const ports = createPorts();
+    const flowContext: Extract<TelegramFlowContext, { sourceIntent: 'incident_join' }> = {
+      sourceIntent: 'incident_join',
+      preferredLocale: 'es',
+      facts: {
+        signal: 'onboarding',
+        incidentHint: 'Zona Cero Demo Incident',
+        displayNameHint: 'Field Hint',
+        desiredRole: 'medical',
+        localeHint: 'en',
+      },
+      prefill: {},
+      confidence: 0.91,
+    };
+
+    let result = await handleTelegramIncidentJoinFlow({ step: 'idle' }, telegramUserUpdate('I want to join as medical', 'ca'), ports, flowContext);
+    expect(result.state).toMatchObject({
+      step: 'awaitingPseudonym',
+      displayNameHint: 'Field Hint',
+      desiredRole: 'medical',
+      preferredLocale: 'en',
+    });
+    expect(result.responseText).toContain('Detected pseudonym “Field Hint”');
+    expect(ports.getIncidentConfig).not.toHaveBeenCalled();
+    expect(ports.joinIncident).not.toHaveBeenCalled();
+
+    result = await handleTelegramIncidentJoinFlow(result.state, telegramUserUpdate('yes', 'ca'), ports);
+    expect(result.state).toMatchObject({ step: 'awaitingRole', pseudonym: 'Field Hint', desiredRole: 'medical' });
+    expect(result.responseText).toContain('Suggested role: medical');
+    expect(result.responseText).toContain('only a candidate');
+    expect(result.responseText).toContain('backend will validate');
+    expect(ports.joinIncident).not.toHaveBeenCalled();
+
+    result = await handleTelegramIncidentJoinFlow(result.state, telegramUserUpdate('yes', 'ca'), ports);
+    expect(result.state.step).toBe('joined');
+    expect(ports.joinIncident).toHaveBeenCalledWith('incident-zc-demo', {
+      channel: 'telegram',
+      externalId: '1001',
+      displayName: 'Field Hint',
+      role: 'medical',
+      preferredLocale: 'en',
+    });
+  });
+
+  it('does not auto-select an ambiguous incident hint from flowContext', async () => {
+    const unrelatedIncident = {
+      ...incidentListHappyFixture.incidents[0],
+      incidentId: 'incident-zc-unrelated',
+      name: 'Unrelated Incident',
+      locationName: 'Unrelated location',
+    };
+    const duplicateIncident = {
+      ...incidentListHappyFixture.incidents[0],
+      incidentId: 'incident-zc-second',
+      locationName: 'Second location',
+    };
+    const ports = createPorts({
+      listIncidents: vi.fn().mockResolvedValue({ incidents: [unrelatedIncident, incidentListHappyFixture.incidents[0], duplicateIncident] }),
+    });
+    const flowContext: Extract<TelegramFlowContext, { sourceIntent: 'incident_join' }> = {
+      sourceIntent: 'incident_join',
+      preferredLocale: 'en',
+      facts: {
+        signal: 'onboarding',
+        incidentHint: 'zona cero demo incident',
+        displayNameHint: 'Field Hint',
+        desiredRole: 'coordinator',
+      },
+      prefill: {},
+      confidence: 0.88,
+    };
+
+    let result = await handleTelegramIncidentJoinFlow({ step: 'idle' }, telegramUserUpdate('join the demo incident'), ports, flowContext);
+
+    expect(result.state).toMatchObject({ step: 'awaitingIncident', displayNameHint: 'Field Hint', desiredRole: 'coordinator' });
+    expect(result.state.step === 'awaitingIncident' ? result.state.incidents.map((incident) => incident.incidentId) : []).toEqual([
+      'incident-zc-demo',
+      'incident-zc-second',
+    ]);
+    expect(result.responseText).toContain('more than one incident');
+    expect(ports.getIncidentConfig).not.toHaveBeenCalled();
+    expect(ports.joinIncident).not.toHaveBeenCalled();
+
+    result = await handleTelegramIncidentJoinFlow(result.state, telegramUserUpdate('1'), ports);
+
+    expect(result.state).toMatchObject({
+      step: 'awaitingPseudonym',
+      incident: expect.objectContaining({ incidentId: 'incident-zc-demo' }),
     });
   });
 

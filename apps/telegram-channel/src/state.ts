@@ -7,6 +7,7 @@ import {
   DispatchTaskStatusSchema,
   IncidentConfigResponseSchema,
   IncidentJoinResponseSchema,
+  IncidentRoleSchema,
   IncidentSummarySchema,
   PrivateWebLinkIssueResponseSchema,
   ResourceReportConnectedCreateRequestSchema,
@@ -17,6 +18,7 @@ import {
   WorkCenterLocationSchema,
   WorkCenterPrioritySchema,
   WorkCenterCreateResponseSchema,
+  type IncidentRole,
   type IncidentSummary,
 } from '@zona-cero/contracts';
 
@@ -249,10 +251,13 @@ function parseTelegramIncidentJoinStateValue(value: unknown): TelegramIncidentJo
 
   if (value.step === 'awaitingIncident') {
     const preferredLocale = parsePreferredLocale(value);
+    const desiredRole = parseOptionalIncidentRole(value.desiredRole);
     if (
-      !hasOnlyKeys(value, ['step', 'incidents', 'externalUserId', 'preferredLocale']) ||
+      !hasOnlyKeys(value, ['step', 'incidents', 'externalUserId', 'preferredLocale', 'displayNameHint', 'desiredRole']) ||
       typeof value.externalUserId !== 'string' ||
       value.externalUserId.length === 0 ||
+      !isOptionalString(value.displayNameHint) ||
+      desiredRole === false ||
       !Array.isArray(value.incidents) ||
       !preferredLocale
     ) {
@@ -273,16 +278,21 @@ function parseTelegramIncidentJoinStateValue(value: unknown): TelegramIncidentJo
       incidents,
       externalUserId: value.externalUserId,
       ...preferredLocale,
+      ...(value.displayNameHint ? { displayNameHint: value.displayNameHint } : {}),
+      ...(desiredRole ? { desiredRole } : {}),
     };
   }
 
   if (value.step === 'awaitingPseudonym') {
     const incident = IncidentSummarySchema.safeParse(value.incident);
     const preferredLocale = parsePreferredLocale(value);
+    const desiredRole = parseOptionalIncidentRole(value.desiredRole);
     if (
-      !hasOnlyKeys(value, ['step', 'incident', 'externalUserId', 'preferredLocale']) ||
+      !hasOnlyKeys(value, ['step', 'incident', 'externalUserId', 'preferredLocale', 'displayNameHint', 'desiredRole']) ||
       typeof value.externalUserId !== 'string' ||
       value.externalUserId.length === 0 ||
+      !isOptionalString(value.displayNameHint) ||
+      desiredRole === false ||
       !incident.success ||
       !preferredLocale
     ) {
@@ -294,18 +304,22 @@ function parseTelegramIncidentJoinStateValue(value: unknown): TelegramIncidentJo
       incident: incident.data,
       externalUserId: value.externalUserId,
       ...preferredLocale,
+      ...(value.displayNameHint ? { displayNameHint: value.displayNameHint } : {}),
+      ...(desiredRole ? { desiredRole } : {}),
     };
   }
 
   if (value.step === 'awaitingRole') {
     const config = IncidentConfigResponseSchema.safeParse(value.config);
     const preferredLocale = parsePreferredLocale(value);
+    const desiredRole = parseOptionalIncidentRole(value.desiredRole);
     if (
-      !hasOnlyKeys(value, ['step', 'config', 'externalUserId', 'pseudonym', 'preferredLocale']) ||
+      !hasOnlyKeys(value, ['step', 'config', 'externalUserId', 'pseudonym', 'preferredLocale', 'desiredRole']) ||
       typeof value.externalUserId !== 'string' ||
       value.externalUserId.length === 0 ||
       typeof value.pseudonym !== 'string' ||
       value.pseudonym.length === 0 ||
+      desiredRole === false ||
       !config.success ||
       !preferredLocale
     ) {
@@ -318,6 +332,7 @@ function parseTelegramIncidentJoinStateValue(value: unknown): TelegramIncidentJo
       externalUserId: value.externalUserId,
       pseudonym: value.pseudonym,
       ...preferredLocale,
+      ...(desiredRole ? { desiredRole } : {}),
     };
   }
 
@@ -333,6 +348,12 @@ function parseTelegramIncidentJoinStateValue(value: unknown): TelegramIncidentJo
   return null;
 }
 
+
+function parseOptionalIncidentRole(value: unknown): IncidentRole | null | false {
+  if (value === undefined) return null;
+  const parsed = IncidentRoleSchema.safeParse(value);
+  return parsed.success ? parsed.data : false;
+}
 
 function parseTelegramWorkCenterReportStateValue(value: unknown): TelegramWorkCenterReportState | null {
   if (!isRecord(value) || typeof value.step !== 'string') {
