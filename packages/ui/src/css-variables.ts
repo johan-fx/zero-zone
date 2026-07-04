@@ -1,4 +1,5 @@
 import {
+  civilThemePalettes,
   operationalControlHeights,
   operationalFontSizes,
   operationalLayout,
@@ -34,6 +35,13 @@ export function generateThemeCss(themeName: OperationalThemeName): string {
     .join('\n');
 }
 
+export function generateCivilThemeCss(themeName: OperationalThemeName): string {
+  const palette = civilThemePalettes[themeName];
+  return Object.entries(palette)
+    .map(([key, value]) => `  --${kebabCase(key)}: ${value};`)
+    .join('\n');
+}
+
 /**
  * Theme-independent scale variables shared by both palettes: radii, control
  * heights, type scale, spacing, opacity, z-index, and layout constants.
@@ -62,13 +70,15 @@ function generateScaleCss(): string {
  */
 export function generateOperationalCss(): string {
   return [
-    ':root, [data-zc-theme="dark"] {',
+    ':root, [data-zc-theme="dark"], [data-theme="noche"] {',
     generateThemeCss('dark'),
+    generateCivilThemeCss('dark'),
     generateScaleCss(),
     '}',
     '',
-    '[data-zc-theme="light"] {',
+    '[data-zc-theme="light"], [data-theme="dia"] {',
     generateThemeCss('light'),
+    generateCivilThemeCss('light'),
     '}',
   ].join('\n');
 }
