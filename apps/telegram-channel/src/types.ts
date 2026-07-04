@@ -166,10 +166,12 @@ export type TelegramResourceReportState =
   | { step: 'reported'; response: ResourceReportCreateResponse }
   | { step: 'cancelled' };
 
+export type TelegramDispatchTaskPrefill = Partial<Pick<TelegramDispatchIntentFacts, 'taskHint' | 'category' | 'quantityApprox' | 'destinationHint' | 'status' | 'statusCandidate'>>;
+
 export type TelegramDispatchTaskState =
   | { step: 'idle' }
-  | { step: 'awaitingIncident'; incidents: IncidentSummary[]; externalUserId: string }
-  | { step: 'awaitingTask'; incident: IncidentSummary; tasks: DispatchTask[]; externalUserId: string }
+  | { step: 'awaitingIncident'; incidents: IncidentSummary[]; externalUserId: string; prefill?: TelegramDispatchTaskPrefill }
+  | { step: 'awaitingTask'; incident: IncidentSummary; tasks: DispatchTask[]; externalUserId: string; prefill?: TelegramDispatchTaskPrefill }
   | { step: 'awaitingStatus'; incident: IncidentSummary; task: DispatchTask; externalUserId: string }
   | { step: 'awaitingConfirmation'; incident: IncidentSummary; task: DispatchTask; externalUserId: string; request: DispatchTaskConnectedUpdateRequest }
   | { step: 'updated'; response: DispatchTaskResponse }
@@ -233,4 +235,3 @@ export type TelegramFamilyReunificationFlowResult = {
   state: TelegramFamilyReunificationState;
   responseText: string;
 };
-

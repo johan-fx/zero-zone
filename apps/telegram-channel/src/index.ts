@@ -40,6 +40,7 @@ export type {
   TelegramFlowContextSourceIntent,
   TelegramDispatchTaskFlowResult,
   TelegramDispatchTaskPorts,
+  TelegramDispatchTaskPrefill,
   TelegramDispatchTaskState,
   TelegramFamilyReunificationFlowResult,
   TelegramFamilyReunificationPorts,

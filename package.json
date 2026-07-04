@@ -57,7 +57,8 @@
     "e2e:telegram:typecheck": "tsc --noEmit -p e2e/tsconfig.json",
     "e2e:staging:telegram": "E2E_STAGING_TELEGRAM_REAL=1 playwright test -c e2e/playwright.staging.config.ts staging-telegram.spec.ts",
     "e2e:telegram:dry-run:natural-sos": "tsx e2e/telegram/staging-telegram-runner.ts dry-run --scenario natural-sos",
-    "e2e:telegram:dry-run:family-reunification": "tsx e2e/telegram/staging-telegram-runner.ts dry-run --scenario family-reunification"
+    "e2e:telegram:dry-run:family-reunification": "tsx e2e/telegram/staging-telegram-runner.ts dry-run --scenario family-reunification",
+    "e2e:telegram:dry-run:dispatch": "tsx e2e/telegram/staging-telegram-runner.ts dry-run --scenario dispatch"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.0",

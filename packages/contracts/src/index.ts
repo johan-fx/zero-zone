@@ -976,9 +976,18 @@ export const telegramDispatchFactSignals = ['assignment', 'status_update', 'logi
 export const TelegramDispatchFactSignalSchema = z.enum(telegramDispatchFactSignals);
 export type TelegramDispatchFactSignal = z.infer<typeof TelegramDispatchFactSignalSchema>;
 
+export const telegramDispatchActions = ['create', 'update', 'coordinate', 'unknown'] as const;
+export const TelegramDispatchActionSchema = z.enum(telegramDispatchActions);
+export type TelegramDispatchAction = z.infer<typeof TelegramDispatchActionSchema>;
+
 export const TelegramDispatchIntentFactsSchema = z.object({
   signal: TelegramDispatchFactSignalSchema.default('unknown'),
+  action: TelegramDispatchActionSchema.default('unknown'),
+  category: z.string().min(1).max(120).optional(),
+  quantityApprox: z.string().min(1).max(120).optional(),
+  taskHint: z.string().min(1).max(160).optional(),
   status: DispatchTaskStatusSchema.optional(),
+  statusCandidate: DispatchTaskStatusSchema.optional(),
   destinationHint: z.string().min(1).max(120).optional(),
 }).strict();
 export type TelegramDispatchIntentFacts = z.infer<typeof TelegramDispatchIntentFactsSchema>;

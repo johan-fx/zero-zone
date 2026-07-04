@@ -44,8 +44,8 @@ Usar este reparto como contrato de trabajo para todas las slices. La clave es qu
 | 14 | Telegram intent facts v3 contract + router context | 🟡 | 🟡 | 🟡 | Planificado |
 | 15 | Telegram `/workcenter` natural-language prefill | 🟡 | 🟡 | ⬜ | Planificado |
 | 16 | Telegram `/sos` natural-language prefill | 🟢 | 🟢 | 🟢 | Hecho |
-| 17 | Telegram `/reunificacion` natural-language assistant | 🟡 | 🟡 | 🟡 | Planificado |
-| 18 | Telegram `/dispatch` natural-language assistant | 🟡 | 🟡 | 🟡 | Planificado |
+| 17 | Telegram `/reunificacion` natural-language assistant | 🟢 | 🟢 | 🟢 | Hecho |
+| 18 | Telegram `/dispatch` natural-language assistant | 🟢 | 🟢 | 🟢 | Hecho |
 | 19 | Telegram `/start` + incident join natural-language onboarding | 🟡 | 🟡 | ⬜ | Planificado |
 
 Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloqueado.
@@ -963,12 +963,12 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 
 | Equipo | Checklist |
 |---|---|
-| A | ⬜ Aceptar contexto de intención en `handleTelegramFamilyReunificationFlow`. |
-| A | ⬜ Responder con explicación localizada y enlace privado cuando haya permisos/contexto. |
-| A | ⬜ Evitar eco de datos sensibles que el usuario haya escrito. |
-| B | ⬜ Clasificar search/report/info sin persistir descripciones personales. |
-| B | ⬜ Redactar/descartar facts sensibles antes de estado/telemetría. |
-| C | ⬜ Revisar política de datos con mobile/offline y web privado. |
+| A | 🟢 Aceptar contexto de intención en `handleTelegramFamilyReunificationFlow`. |
+| A | 🟢 Responder con explicación localizada y enlace privado cuando haya permisos/contexto. |
+| A | 🟢 Evitar eco de datos sensibles que el usuario haya escrito. |
+| B | 🟢 Clasificar search/report/info sin persistir descripciones personales. |
+| B | 🟢 Redactar/descartar facts sensibles antes de estado/telemetría. |
+| C | 🟢 Revisar política de datos con mobile/offline y web privado. |
 
 **Definition of Done**
 
@@ -988,6 +988,28 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 - `pnpm --filter @zona-cero/api exec vitest run src/index.test.ts src/telegram-intent-classifier.test.ts`
 - Fresh review de privacidad/PII.
 
+**Cierre Slice 17**
+
+- `/reunificacion` acepta contexto natural `family_reunification` en Telegram sin convertir el chat en canal de búsqueda sensible.
+- `TelegramFamilyReunificationIntentFacts` queda limitado a facts mínimos no PII: `action`, `relationshipHint` y `urgencyHint`.
+- El classifier descarta campos legacy/sensibles antes de crear la clasificación aceptada; nombres, edad, ropa, teléfono, ubicación precisa y texto crudo no se conservan como facts de reunificación.
+- `handleTelegramFamilyReunificationFlow` usa `flowContext` solo para UX/localización y no persiste `flowContext`, `facts`, `prefill` ni facts mínimos en el estado Telegram.
+- El bot explica el handoff seguro y deriva a enlace web privado; no repite datos sensibles escritos por el usuario.
+- Mobile/offline no recibe nuevos campos de reunificación ni cambia su flujo nativo.
+- E2E de staging cubre el flujo de comando y lenguaje natural de esta slice con frase natural sin PII real.
+
+**Evidencia ejecutada**
+
+- `pnpm --filter @zona-cero/contracts test:strict` — ✅ 26 tests.
+- `pnpm --filter @zona-cero/api exec vitest run src/index.test.ts src/telegram-intent-classifier.test.ts` — ✅; Vitest reportó el warning conocido de close-timeout después del éxito.
+- `pnpm --filter @zona-cero/telegram-channel test:strict` — ✅ 61 tests.
+- `pnpm --filter @zona-cero/mobile test:strict` — ✅.
+- `pnpm e2e:telegram:typecheck` — ✅.
+- `pnpm e2e:telegram:dry-run:family-reunification` — ✅.
+- `pnpm api:deploy:staging` — ✅ Worker `zona-cero-api-staging`, version `24677b23-ede1-417f-9ea7-66bd8ed85a6e`.
+- `pnpm e2e:staging:telegram --grep "family reunification"` — ✅ 1 test passed.
+- `git diff --check` — ✅.
+
 ## Slice 18 - Telegram `/dispatch` natural-language assistant
 
 **Objetivo:** permitir que mensajes como “llevar 10 cajas de medicamentos al centro médico” o “marcar entrega como completada” entren al flujo `/dispatch` con intención, tarea/categoría/cantidad/destino/estado pre-rellenables.
@@ -1006,12 +1028,12 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 
 | Equipo | Checklist |
 |---|---|
-| A | ⬜ Aceptar contexto en `handleTelegramDispatchTaskFlow`. |
-| A | ⬜ Mostrar tareas candidatas ordenadas cuando haya `taskHint` o `statusCandidate`. |
-| A | ⬜ Confirmar antes de actualizar estado. |
-| B | ⬜ Extraer acción, categoría, cantidad, destino y estado candidato. |
-| B | ⬜ Resolver candidatos con datos persistidos, no con texto libre. |
-| C | ⬜ Validar estados contra mobile/offline. |
+| A | 🟢 Aceptar contexto en `handleTelegramDispatchTaskFlow`. |
+| A | 🟢 Mostrar tareas candidatas ordenadas cuando haya `taskHint` o `statusCandidate`. |
+| A | 🟢 Confirmar antes de actualizar estado. |
+| B | 🟢 Extraer acción, categoría, cantidad, destino y estado candidato. |
+| B | 🟢 Resolver candidatos con datos persistidos, no con texto libre. |
+| C | 🟢 Validar estados contra mobile/offline. |
 
 **Definition of Done**
 
@@ -1030,6 +1052,28 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 - `pnpm --filter @zona-cero/telegram-channel test:strict`
 - `pnpm --filter @zona-cero/api exec vitest run src/index.test.ts src/telegram-intent-classifier.test.ts`
 - Smoke local webhook con creación/actualización de dispatch.
+
+**Cierre Slice 18**
+
+- `/dispatch` acepta contexto natural `dispatch` en Telegram y conserva hints seguros entre selección de incidente y tarea.
+- `TelegramDispatchIntentFacts` cubre candidatos de acción, categoría, cantidad, destino, tarea y estado sin convertirlos en mutaciones automáticas.
+- El routing combina clasificación AI con heurística determinista conservadora para señales claras de despacho/logística/tarea/entrega, sin capturar recursos genéricos como “tengo agua”.
+- Las tareas candidatas se ordenan por hints (`taskHint`, categoría, cantidad, destino y estado candidato) manteniendo orden estable para empates.
+- Toda actualización sigue exigiendo selección de una dispatch task persistida y confirmación explícita; el LLM no actualiza estados.
+- Mobile/offline mantiene el vocabulario canónico `pending`, `accepted`, `en_route`, `delivered`, `cancelled`; los candidate facts de Telegram no se materializan como datos offline.
+- E2E de staging cubre flujo por comando y lenguaje natural aislado de esta slice, preparando su propia dispatch task de fixture antes del test.
+
+**Evidencia ejecutada**
+
+- `pnpm --filter @zona-cero/contracts test:strict` — ✅ 27 tests.
+- `pnpm --filter @zona-cero/api exec vitest run src/index.test.ts src/telegram-intent-classifier.test.ts` — ✅ 107 tests; Vitest reportó el warning conocido de close-timeout después del éxito.
+- `pnpm --filter @zona-cero/telegram-channel test:strict` — ✅ 66 tests.
+- `pnpm --filter @zona-cero/mobile test:strict` — ✅ 20 suites / 114 tests.
+- `pnpm e2e:telegram:typecheck` — ✅.
+- `pnpm e2e:telegram:dry-run:dispatch` — ✅.
+- `pnpm api:deploy:staging` — ✅ Worker `zona-cero-api-staging`, version `8ba33340-c5c4-4860-9c93-0fc267c1bcfc`.
+- `pnpm e2e:staging:telegram --grep "dispatch"` — ✅ 1 test passed.
+- `git diff --check` — ✅.
 
 ## Slice 19 - Telegram `/start` + incident join natural-language onboarding
 

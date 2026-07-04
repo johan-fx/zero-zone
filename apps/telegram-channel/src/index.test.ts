@@ -170,6 +170,25 @@ const dispatchTaskFixture: DispatchTask = {
   updatedAt: '2026-06-30T10:00:00.000Z',
 };
 
+const dispatchTaskFoodFixture: DispatchTask = {
+  ...dispatchTaskFixture,
+  dispatchTaskId: 'dispatch-task-food-school',
+  category: 'food',
+  quantityApprox: '12 boxes',
+  notes: 'Deliver to school shelter',
+  targetWorkCenterId: 'center-school-shelter',
+};
+
+const dispatchTaskMedicineFixture: DispatchTask = {
+  ...dispatchTaskFixture,
+  dispatchTaskId: 'dispatch-task-medicine-pharmacy',
+  category: 'medicine',
+  quantityApprox: '4 kits',
+  notes: 'Priority medicine for north pharmacy',
+  targetWorkCenterId: 'center-north-pharmacy',
+  status: 'accepted',
+};
+
 const dispatchTaskResponseFixture: DispatchTaskResponse = {
   dispatchTask: { ...dispatchTaskFixture, status: 'accepted', updatedAt: '2026-06-30T10:05:00.000Z' },
   audit: { auditEventId: 'audit_dispatch_task_updated' },
@@ -238,7 +257,9 @@ const validResourceStates = [
 const validDispatchStates = [
   { step: 'idle' },
   { step: 'awaitingIncident', incidents: incidentListHappyFixture.incidents, externalUserId: '1001' },
+  { step: 'awaitingIncident', incidents: incidentListHappyFixture.incidents, externalUserId: '1001', prefill: { category: 'water', statusCandidate: 'accepted' } },
   { step: 'awaitingTask', incident: incidentListHappyFixture.incidents[0], tasks: [dispatchTaskFixture], externalUserId: '1001' },
+  { step: 'awaitingTask', incident: incidentListHappyFixture.incidents[0], tasks: [dispatchTaskFixture], externalUserId: '1001', prefill: { taskHint: 'water', destinationHint: 'center-north-triage' } },
   { step: 'awaitingStatus', incident: incidentListHappyFixture.incidents[0], task: dispatchTaskFixture, externalUserId: '1001' },
   { step: 'awaitingConfirmation', incident: incidentListHappyFixture.incidents[0], task: dispatchTaskFixture, externalUserId: '1001', request: { channel: 'telegram', externalId: '1001', status: 'accepted' } },
   { step: 'updated', response: dispatchTaskResponseFixture },
@@ -324,6 +345,23 @@ async function advanceDispatch(
 
   for (const input of inputs) {
     const result = await handleTelegramDispatchTaskFlow(state, telegramUserUpdate(input), ports);
+    state = result.state;
+    responseText = result.responseText;
+  }
+
+  return { state, responseText, ports };
+}
+
+async function advanceNaturalDispatch(
+  inputs: string[],
+  flowContext: Extract<TelegramFlowContext, { sourceIntent: 'dispatch' }>,
+  ports = createDispatchPorts(),
+): Promise<{ state: TelegramDispatchTaskState; responseText: string; ports: TelegramDispatchTaskPorts }> {
+  let state: TelegramDispatchTaskState = { step: 'idle' };
+  let responseText = '';
+
+  for (const [index, input] of inputs.entries()) {
+    const result = await handleTelegramDispatchTaskFlow(state, telegramUserUpdate(input, 'es'), ports, index === 0 ? flowContext : undefined);
     state = result.state;
     responseText = result.responseText;
   }
@@ -1015,6 +1053,115 @@ describe('telegram channel flows', () => {
       status: 'en_route',
     });
     expect(DispatchTaskConnectedUpdateRequestSchema.parse(vi.mocked(ports.updateDispatchTask).mock.calls[0]?.[2]).status).toBe('en_route');
+  });
+
+  it('prefills natural-language dispatch status candidates but waits for task selection and explicit confirmation', async () => {
+    const ports = createDispatchPorts();
+    const flowContext = {
+      preferredLocale: 'es' as const,
+      sourceIntent: 'dispatch' as const,
+      confidence: 0.93,
+      facts: { signal: 'status_update' as const, action: 'update' as const, taskHint: 'water', category: 'water', statusCandidate: 'accepted' as const },
+      prefill: { taskHint: 'water', category: 'water', statusCandidate: 'accepted' as const },
+    };
+
+    let result = await handleTelegramDispatchTaskFlow({ step: 'idle' }, telegramUserUpdate('Acepta la tarea de agua', 'es'), ports, flowContext);
+
+    expect(result.state).toMatchObject({ step: 'awaitingIncident', prefill: expect.objectContaining({ taskHint: 'water', statusCandidate: 'accepted' }) });
+    expect(ports.updateDispatchTask).not.toHaveBeenCalled();
+
+    result = await handleTelegramDispatchTaskFlow(result.state, telegramUserUpdate('1', 'es'), ports);
+
+    expect(result.state).toMatchObject({ step: 'awaitingTask', prefill: expect.objectContaining({ statusCandidate: 'accepted' }) });
+    expect(result.responseText).toContain('Choose a dispatch task');
+    expect(ports.updateDispatchTask).not.toHaveBeenCalled();
+
+    result = await handleTelegramDispatchTaskFlow(result.state, telegramUserUpdate('1', 'es'), ports);
+
+    expect(result.state).toMatchObject({ step: 'awaitingConfirmation', request: { status: 'accepted' } });
+    expect(result.responseText).toContain('Confirm dispatch task update');
+    expect(result.responseText).toContain('Status: accepted');
+    expect(ports.updateDispatchTask).not.toHaveBeenCalled();
+
+    result = await handleTelegramDispatchTaskFlow(result.state, telegramUserUpdate('sí', 'es'), ports);
+
+    expect(result.state.step).toBe('updated');
+    expect(ports.updateDispatchTask).toHaveBeenCalledWith('incident-zc-demo', 'dispatch-task-water-1', {
+      channel: 'telegram',
+      externalId: '1001',
+      status: 'accepted',
+    });
+  });
+
+  it('orders dispatch candidates by task hint, category, quantity and destination with stable tie handling', async () => {
+    const ports = createDispatchPorts({
+      listDispatchTasks: vi.fn().mockResolvedValue({
+        dispatchTasks: [dispatchTaskFoodFixture, dispatchTaskFixture, dispatchTaskMedicineFixture],
+      }),
+    });
+    const flowContext = {
+      preferredLocale: 'es' as const,
+      sourceIntent: 'dispatch' as const,
+      confidence: 0.91,
+      facts: { signal: 'status_update' as const, action: 'update' as const, category: 'medicine', quantityApprox: '4 kits', destinationHint: 'pharmacy' },
+      prefill: { category: 'medicine', quantityApprox: '4 kits', destinationHint: 'pharmacy' },
+    };
+
+    const { state, responseText } = await advanceNaturalDispatch(['Marca medicina para farmacia como entregada', '1'], flowContext, ports);
+
+    expect(state).toMatchObject({
+      step: 'awaitingTask',
+      tasks: [
+        expect.objectContaining({ dispatchTaskId: 'dispatch-task-medicine-pharmacy' }),
+        expect.objectContaining({ dispatchTaskId: 'dispatch-task-food-school' }),
+        expect.objectContaining({ dispatchTaskId: 'dispatch-task-water-1' }),
+      ],
+    });
+    expect(responseText.indexOf('dispatch-task-medicine-pharmacy')).toBeLessThan(responseText.indexOf('dispatch-task-food-school'));
+    expect(responseText.indexOf('dispatch-task-food-school')).toBeLessThan(responseText.indexOf('dispatch-task-water-1'));
+    expect(ports.updateDispatchTask).not.toHaveBeenCalled();
+  });
+
+  it('keeps dispatch candidate order stable when hints do not match any task', async () => {
+    const ports = createDispatchPorts({
+      listDispatchTasks: vi.fn().mockResolvedValue({
+        dispatchTasks: [dispatchTaskFoodFixture, dispatchTaskFixture],
+      }),
+    });
+    const flowContext = {
+      preferredLocale: 'en' as const,
+      sourceIntent: 'dispatch' as const,
+      confidence: 0.83,
+      facts: { signal: 'status_update' as const, action: 'update' as const, taskHint: 'unmatched crane' },
+      prefill: { taskHint: 'unmatched crane' },
+    };
+
+    const { state, responseText } = await advanceNaturalDispatch(['Update the unmatched crane task', '1'], flowContext, ports);
+
+    expect(state).toMatchObject({
+      step: 'awaitingTask',
+      tasks: [
+        expect.objectContaining({ dispatchTaskId: 'dispatch-task-food-school' }),
+        expect.objectContaining({ dispatchTaskId: 'dispatch-task-water-1' }),
+      ],
+    });
+    expect(responseText.indexOf('dispatch-task-food-school')).toBeLessThan(responseText.indexOf('dispatch-task-water-1'));
+  });
+
+  it('cancels a natural-language dispatch confirmation before submitting', async () => {
+    const ports = createDispatchPorts();
+    const flowContext = {
+      preferredLocale: 'es' as const,
+      sourceIntent: 'dispatch' as const,
+      confidence: 0.9,
+      facts: { signal: 'status_update' as const, action: 'update' as const, status: 'delivered' as const },
+      prefill: { status: 'delivered' as const },
+    };
+    const { state, responseText } = await advanceNaturalDispatch(['Marca la tarea como entregada', '1', '1', 'no'], flowContext, ports);
+
+    expect(state).toEqual({ step: 'cancelled' });
+    expect(responseText).toContain('Dispatch task update cancelled');
+    expect(ports.updateDispatchTask).not.toHaveBeenCalled();
   });
 
   it('rejects non-canonical dispatch statuses before calling the backend', async () => {

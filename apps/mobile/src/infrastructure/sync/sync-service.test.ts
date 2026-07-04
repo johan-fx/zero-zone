@@ -2,7 +2,7 @@
 
 import type { SignedOperation, SyncPullResponse, SyncPushResponse } from '@zona-cero/contracts';
 import { createInMemoryLocalOperationDatabase, type SyncOperationLocalDocument } from '@/infrastructure/local-db/local-db';
-import { FakeOperationSigner } from '@/infrastructure/security';
+import { createSignedOperation, FakeOperationSigner } from '@/infrastructure/security';
 import { appendSignedOperationAndMaterialize } from '@/infrastructure/oplog/outbox-service';
 import { createScopedOperationSyncService } from './sync-service';
 
@@ -175,6 +175,58 @@ describe('scoped operation sync service', () => {
     expect(result).toMatchObject({ pulled: 2, conflicts: 1 });
     expect(await database.views.workCenters.findByIncident('incident-1')).toHaveLength(1);
     expect(await database.views.syncIssues.findByIncident('incident-1')).toEqual([expect.objectContaining({ state: 'conflict', entityId: 'center-2', code: 'operation_conflict' })]);
+  });
+
+  it('rematerializes pulled dispatch events without persisting Telegram candidate facts or free ids', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    const operation = await createSignedOperation(
+      {
+        actorKeyId: 'actor-key-1',
+        deviceId: 'device-1',
+        incidentId: 'incident-1',
+        cellId: 'cell-a',
+        entityId: 'dispatch-server-1',
+        opType: 'dispatch_event.create',
+        payload: {
+          category: 'Water',
+          quantityApprox: '12 boxes',
+          dispatchTaskId: 'llm-free-task-id',
+          statusCandidate: 'accepted',
+          status: 'done',
+          facts: { statusCandidate: 'accepted' },
+        },
+        hlc: '2026-06-29T09:04:00.000Z-dispatch-server-1-device-1',
+        createdAtDevice: '2026-06-29T09:04:00.000Z',
+      },
+      new FakeOperationSigner('sync-service-tests'),
+    );
+    const service = createScopedOperationSyncService({
+      database,
+      client: {
+        push: jest.fn(),
+        pull: jest.fn().mockResolvedValue(
+          emptyPullResponse({
+            operations: [{ sequence: 1, serverVersion: 3, serverUpdatedAt: '2026-06-29T09:04:30.000Z', operation }],
+          }),
+        ),
+      },
+      clock: () => '2026-06-29T09:05:00.000Z',
+    });
+
+    const result = await service.sync({ incidentId: 'incident-1', cellId: 'cell-a' });
+    const dispatchEvents = await database.views.dispatchEvents.findByIncident('incident-1');
+
+    expect(result).toMatchObject({ pulled: 1 });
+    expect(dispatchEvents).toEqual([
+      expect.objectContaining({
+        dispatchEventId: 'dispatch-server-1',
+        dispatchTaskId: 'dispatch-server-1',
+        status: 'pending',
+      }),
+    ]);
+    expect(dispatchEvents[0]).not.toHaveProperty('statusCandidate');
+    expect(dispatchEvents[0]).not.toHaveProperty('facts');
+    expect(JSON.stringify(dispatchEvents[0])).not.toContain('llm-free-task-id');
   });
 
   it('emits aggregate sync observability metrics without raw error messages', async () => {

@@ -92,6 +92,37 @@ test('family reunification staging Telegram handles command and natural language
   expect(String(naturalIncident.botReplyPreview ?? '')).toMatch(/enlace web privado|private web link/i);
 });
 
+test('dispatch staging Telegram handles command and natural language without updating before confirmation', async ({ request }) => {
+  const apiBaseUrl = requiredEnv('E2E_API_BASE_URL').replace(/\/$/, '');
+
+  await ensureTelegramSessionExists();
+
+  const health = await request.get(`${apiBaseUrl}/health`);
+  await expect(health).toBeOK();
+
+  const result = await runTelegramRunner('dispatch');
+  const steps = getRunnerSteps(result);
+  const command = findStep(steps, 'dispatch-command');
+  const commandIncident = findStep(steps, 'dispatch-command-incident');
+  const commandStatus = findStep(steps, 'dispatch-command-status');
+  const commandCancel = findStep(steps, 'dispatch-command-cancel');
+  const commandIsolationReset = findStep(steps, 'dispatch-command-isolation-reset');
+  const naturalPhrase = findStep(steps, 'dispatch-natural-phrase');
+  const naturalIncident = findStep(steps, 'dispatch-natural-incident');
+  const naturalTask = findStep(steps, 'dispatch-natural-task');
+  const naturalCancel = findStep(steps, 'dispatch-natural-cancel');
+
+  expect(String(command.botReplyPreview ?? '')).toMatch(/Choose an incident|Elige un incidente|Choose a dispatch task/i);
+  expect(String(commandIncident.botReplyPreview ?? '')).toMatch(/Choose a dispatch task|tarea de despacho/i);
+  expect(String(commandStatus.botReplyPreview ?? '')).toMatch(/Confirm dispatch task update|Confirma|Reply yes to update/i);
+  expect(String(commandCancel.botReplyPreview ?? '')).toMatch(/cancelled|cancelada|cancelado/i);
+  expect(String(commandIsolationReset.botReplyPreview ?? '')).toMatch(/cancelled|cancelada|cancelado|No active|No hay/i);
+  expect(String(naturalPhrase.botReplyPreview ?? '')).toMatch(/Choose an incident|Elige un incidente|Choose a dispatch task/i);
+  expect(String(naturalIncident.botReplyPreview ?? '')).toMatch(/Choose a dispatch task|tarea de despacho/i);
+  expect(String(naturalTask.botReplyPreview ?? '')).toMatch(/Confirm dispatch task update|Confirma|Reply yes to update/i);
+  expect(String(naturalCancel.botReplyPreview ?? '')).toMatch(/cancelled|cancelada|cancelado/i);
+});
+
 async function ensureTelegramSessionExists(): Promise<void> {
   const sessionFile = requiredEnv('TELEGRAM_E2E_SESSION_FILE');
   try {
@@ -101,7 +132,7 @@ async function ensureTelegramSessionExists(): Promise<void> {
   }
 }
 
-async function runTelegramRunner(scenario: 'full' | 'natural-sos' | 'family-reunification' = 'full'): Promise<RunnerResult & { marker: string; preConfirmationMarkerVisible?: boolean }> {
+async function runTelegramRunner(scenario: 'full' | 'natural-sos' | 'family-reunification' | 'dispatch' = 'full'): Promise<RunnerResult & { marker: string; preConfirmationMarkerVisible?: boolean }> {
   const args = ['tsx', 'e2e/telegram/staging-telegram-runner.ts', 'run', '--json'];
   if (scenario !== 'full') args.push('--scenario', scenario);
 
