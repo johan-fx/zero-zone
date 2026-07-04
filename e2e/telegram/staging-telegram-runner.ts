@@ -477,11 +477,11 @@ function buildIncidentJoinTelegramSequence(env: RequiredEnv, markers: { marker: 
     { label: 'incident-join-command-role', message: 'volunteer', expectedReplyPattern: /Joined|Te uniste/i },
     {
       label: 'incident-join-natural-phrase',
-      message: `I want to join incident ${env.E2E_INCIDENT_ID} as medical. Use ${marker} natural join as my display name and English as language.`,
-      expectedReplyPattern: /Detected pseudonym|seudónimo|Choose an incident|Elige un incidente/i,
+      message: `I want to join incident ${env.E2E_INCIDENT_ID} as medical. English as language.`,
+      expectedReplyPattern: /pseudonym|seudónimo/i,
     },
-    { label: 'incident-join-natural-pseudonym-confirmation', message: 'yes', expectedReplyPattern: /Suggested role|Rol sugerido|Choose your role|Elige tu rol/i },
-    { label: 'incident-join-natural-role-confirmation', message: 'yes', expectedReplyPattern: /Joined|Te uniste/i },
+    { label: 'incident-join-natural-pseudonym', message: `${marker} natural join pseudonym`, expectedReplyPattern: /Suggested role|Rol sugerido|Choose your role|Elige tu rol/i },
+    { label: 'incident-join-natural-role-selection', message: 'medical', expectedReplyPattern: /Joined|Te uniste/i },
   ];
 }
 

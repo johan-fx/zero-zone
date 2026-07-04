@@ -93,7 +93,7 @@ To target only the incident join onboarding coverage in staging:
 pnpm e2e:staging:telegram:incident-join
 ```
 
-The incident join scenario resets any pending bot flow, covers `/start` with explicit incident, pseudonym, and role selection, then sends a natural-language join phrase with an incident id, display-name hint, locale hint, and desired-role hint. The desired role is candidate-only: Telegram must ask for human confirmation before `joinIncident`, and the bot copy must state that the backend validates the role.
+The incident join scenario resets any pending bot flow, covers `/start` with explicit incident, pseudonym, and role selection, then sends a natural-language join phrase with an incident id, locale hint, and desired-role hint. If the model does not extract a display-name or role hint, the runner provides those values explicitly. Extracted desired roles remain candidate-only: Telegram must ask for human confirmation before `joinIncident`, and candidate copy must state that the backend validates the role.
 
 ## Sensitive helpers
 

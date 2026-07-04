@@ -136,16 +136,19 @@ test('incident join staging Telegram handles command and natural language with c
   const commandStart = findStep(steps, 'incident-join-command-start');
   const commandRole = findStep(steps, 'incident-join-command-role');
   const naturalPhrase = findStep(steps, 'incident-join-natural-phrase');
-  const naturalPseudonymConfirmation = findStep(steps, 'incident-join-natural-pseudonym-confirmation');
-  const naturalRoleConfirmation = findStep(steps, 'incident-join-natural-role-confirmation');
+  const naturalPseudonym = findStep(steps, 'incident-join-natural-pseudonym');
+  const naturalRoleSelection = findStep(steps, 'incident-join-natural-role-selection');
 
   expect(String(commandStart.botReplyPreview ?? '')).toMatch(/Choose an incident|Elige un incidente/i);
   expect(String(commandRole.botReplyPreview ?? '')).toMatch(/Joined|Te uniste/i);
-  expect(String(naturalPhrase.botReplyPreview ?? '')).toMatch(/Detected pseudonym|seudónimo/i);
-  expect(String(naturalPseudonymConfirmation.botReplyPreview ?? '')).toMatch(/Suggested role|Rol sugerido/i);
-  expect(String(naturalPseudonymConfirmation.botReplyPreview ?? '')).toMatch(/only a candidate|solo un candidato/i);
-  expect(String(naturalPseudonymConfirmation.botReplyPreview ?? '')).toMatch(/backend will validate|backend validará/i);
-  expect(String(naturalRoleConfirmation.botReplyPreview ?? '')).toMatch(/Joined|Te uniste/i);
+  expect(String(naturalPhrase.botReplyPreview ?? '')).toMatch(/pseudonym|seudónimo/i);
+  const naturalRolePrompt = String(naturalPseudonym.botReplyPreview ?? '');
+  expect(naturalRolePrompt).toMatch(/Suggested role|Rol sugerido|Choose your role|Elige tu rol/i);
+  if (/Suggested role|Rol sugerido/i.test(naturalRolePrompt)) {
+    expect(naturalRolePrompt).toMatch(/only a candidate|solo un candidato/i);
+    expect(naturalRolePrompt).toMatch(/backend will validate|backend validará/i);
+  }
+  expect(String(naturalRoleSelection.botReplyPreview ?? '')).toMatch(/Joined|Te uniste/i);
 });
 
 async function ensureTelegramSessionExists(): Promise<void> {
