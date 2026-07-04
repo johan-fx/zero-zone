@@ -1,7 +1,21 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { DispatchTaskListResponse, DispatchTaskResponse, ResourceReportListResponse, SosAlertCreateResponse, SosAlertStatusResponse, SyncPullResponse } from '@zona-cero/contracts';
+import type {
+  DispatchTaskListResponse,
+  DispatchTaskResponse,
+  ResourceReportListResponse,
+  SosAlertCreateResponse,
+  SosAlertStatusResponse,
+  SyncPullResponse,
+} from "@zona-cero/contracts";
 import {
   familyReunificationSearchResponseFixture,
   privateFamilyReunificationConsumeResponseFixture,
@@ -11,26 +25,31 @@ import {
   sosAlertStatusHappyFixture,
   workCenterDetailHappyFixture,
   workCenterListHappyFixture,
-} from '../../../packages/testing/src';
-import { App } from './App';
-import { millisecondsUntilNextThemeBoundary, readStoredThemeOverride, resolveAutomaticThemeMode, themeOverrideStorageKey } from './themeMode';
+} from "../../../packages/testing/src";
+import { App } from "./App";
+import {
+  millisecondsUntilNextThemeBoundary,
+  readStoredThemeOverride,
+  resolveAutomaticThemeMode,
+  themeOverrideStorageKey,
+} from "./themeMode";
 
 const freshSyncPullFixture: SyncPullResponse = {
   operations: [],
   cursor: null,
   hasMore: false,
   freshness: {
-    status: 'fresh',
-    lastFreshAt: '2026-07-01T08:00:00.000Z',
-    lastSyncedAt: '2026-07-01T08:00:00.000Z',
+    status: "fresh",
+    lastFreshAt: "2026-07-01T08:00:00.000Z",
+    lastSyncedAt: "2026-07-01T08:00:00.000Z",
     cursorLag: 0,
     hasConflicts: false,
     channels: [
       {
-        channel: 'mobile',
-        status: 'fresh',
-        lastFreshAt: '2026-07-01T08:00:00.000Z',
-        lastSyncedAt: '2026-07-01T08:00:00.000Z',
+        channel: "mobile",
+        status: "fresh",
+        lastFreshAt: "2026-07-01T08:00:00.000Z",
+        lastSyncedAt: "2026-07-01T08:00:00.000Z",
         cursorLag: 0,
         hasConflicts: false,
       },
@@ -42,37 +61,37 @@ const freshSyncPullFixture: SyncPullResponse = {
 const resourceReportListFixture: ResourceReportListResponse = {
   resourceReports: [
     {
-      resourceReportId: 'resource-needed-water',
-      incidentId: 'incident-zc-demo',
-      cellId: 'cell-zc-demo',
-      workCenterId: 'center-north-triage',
-      category: 'water',
-      quantityApprox: '20 bottles',
-      urgency: 'high',
-      constraints: ['sealed bottles'],
-      reportKind: 'needed',
-      freshness: 'fresh',
-      confidence: 'low',
-      risk: 'medium',
-      sourceChannel: 'telegram',
-      createdAt: '2026-06-30T10:00:00.000Z',
-      updatedAt: '2026-06-30T10:00:00.000Z',
+      resourceReportId: "resource-needed-water",
+      incidentId: "incident-zc-demo",
+      cellId: "cell-zc-demo",
+      workCenterId: "center-north-triage",
+      category: "water",
+      quantityApprox: "20 bottles",
+      urgency: "high",
+      constraints: ["sealed bottles"],
+      reportKind: "needed",
+      freshness: "fresh",
+      confidence: "low",
+      risk: "medium",
+      sourceChannel: "telegram",
+      createdAt: "2026-06-30T10:00:00.000Z",
+      updatedAt: "2026-06-30T10:00:00.000Z",
     },
     {
-      resourceReportId: 'resource-surplus-blankets',
-      incidentId: 'incident-zc-demo',
-      cellId: 'cell-zc-demo',
-      category: 'blankets',
-      quantityApprox: '10 boxes',
-      urgency: 'medium',
+      resourceReportId: "resource-surplus-blankets",
+      incidentId: "incident-zc-demo",
+      cellId: "cell-zc-demo",
+      category: "blankets",
+      quantityApprox: "10 boxes",
+      urgency: "medium",
       constraints: [],
-      reportKind: 'surplus',
-      freshness: 'fresh',
-      confidence: 'medium',
-      risk: 'low',
-      sourceChannel: 'web-ui',
-      createdAt: '2026-06-30T10:00:00.000Z',
-      updatedAt: '2026-06-30T10:00:00.000Z',
+      reportKind: "surplus",
+      freshness: "fresh",
+      confidence: "medium",
+      risk: "low",
+      sourceChannel: "web-ui",
+      createdAt: "2026-06-30T10:00:00.000Z",
+      updatedAt: "2026-06-30T10:00:00.000Z",
     },
   ],
 };
@@ -80,26 +99,30 @@ const resourceReportListFixture: ResourceReportListResponse = {
 const dispatchTaskListFixture: DispatchTaskListResponse = {
   dispatchTasks: [
     {
-      dispatchTaskId: 'dispatch-task-water-1',
-      incidentId: 'incident-zc-demo',
-      cellId: 'cell-zc-demo',
-      category: 'water',
-      quantityApprox: '20 bottles',
-      fromResourceReportId: 'resource-surplus-water',
-      toResourceReportId: 'resource-needed-water',
-      targetWorkCenterId: 'center-north-triage',
-      status: 'pending',
-      notes: 'Use sealed bottles',
-      sourceChannel: 'web-ui',
-      createdAt: '2026-06-30T10:00:00.000Z',
-      updatedAt: '2026-06-30T10:00:00.000Z',
+      dispatchTaskId: "dispatch-task-water-1",
+      incidentId: "incident-zc-demo",
+      cellId: "cell-zc-demo",
+      category: "water",
+      quantityApprox: "20 bottles",
+      fromResourceReportId: "resource-surplus-water",
+      toResourceReportId: "resource-needed-water",
+      targetWorkCenterId: "center-north-triage",
+      status: "pending",
+      notes: "Use sealed bottles",
+      sourceChannel: "web-ui",
+      createdAt: "2026-06-30T10:00:00.000Z",
+      updatedAt: "2026-06-30T10:00:00.000Z",
     },
   ],
 };
 
 const dispatchTaskResponseFixture: DispatchTaskResponse = {
-  dispatchTask: { ...dispatchTaskListFixture.dispatchTasks[0]!, status: 'accepted', updatedAt: '2026-06-30T10:05:00.000Z' },
-  audit: { auditEventId: 'audit_dispatch_task_updated' },
+  dispatchTask: {
+    ...dispatchTaskListFixture.dispatchTasks[0]!,
+    status: "accepted",
+    updatedAt: "2026-06-30T10:05:00.000Z",
+  },
+  audit: { auditEventId: "audit_dispatch_task_updated" },
   idempotent: false,
 };
 
@@ -108,8 +131,8 @@ const sosCreateFixture: SosAlertCreateResponse = {
   ...sosAlertCreateResponseHappyFixture,
   sosAlert: {
     ...sosAlertCreateResponseHappyFixture.sosAlert,
-    sosAlertId: 'sos-web-critical-1',
-    sourceChannel: 'web-ui',
+    sosAlertId: "sos-web-critical-1",
+    sourceChannel: "web-ui",
   },
 };
 
@@ -120,85 +143,100 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
-  window.history.pushState({}, '', '/');
+  window.history.pushState({}, "", "/");
   window.sessionStorage.clear();
   window.localStorage.clear();
   delete document.documentElement.dataset.zcTheme;
   delete document.documentElement.dataset.zcThemeMode;
 });
 
-describe('web ui work center shell', () => {
-  it('resolves automatic theme from local time boundaries', () => {
-    expect(resolveAutomaticThemeMode(new Date(2026, 6, 4, 6, 59))).toBe('night');
-    expect(resolveAutomaticThemeMode(new Date(2026, 6, 4, 7, 0))).toBe('day');
-    expect(resolveAutomaticThemeMode(new Date(2026, 6, 4, 19, 59))).toBe('day');
-    expect(resolveAutomaticThemeMode(new Date(2026, 6, 4, 20, 0))).toBe('night');
+describe("web ui work center shell", () => {
+  it("resolves automatic theme from local time boundaries", () => {
+    expect(resolveAutomaticThemeMode(new Date(2026, 6, 4, 6, 59))).toBe(
+      "night",
+    );
+    expect(resolveAutomaticThemeMode(new Date(2026, 6, 4, 7, 0))).toBe("day");
+    expect(resolveAutomaticThemeMode(new Date(2026, 6, 4, 19, 59))).toBe("day");
+    expect(resolveAutomaticThemeMode(new Date(2026, 6, 4, 20, 0))).toBe(
+      "night",
+    );
   });
 
-
-  it('schedules automatic theme refreshes at the next day/night boundary', () => {
-    expect(millisecondsUntilNextThemeBoundary(new Date(2026, 6, 4, 6, 59, 30))).toBe(30_000);
-    expect(millisecondsUntilNextThemeBoundary(new Date(2026, 6, 4, 19, 59, 30))).toBe(30_000);
-    expect(millisecondsUntilNextThemeBoundary(new Date(2026, 6, 4, 20, 0, 0))).toBe(39_600_000);
+  it("schedules automatic theme refreshes at the next day/night boundary", () => {
+    expect(
+      millisecondsUntilNextThemeBoundary(new Date(2026, 6, 4, 6, 59, 30)),
+    ).toBe(30_000);
+    expect(
+      millisecondsUntilNextThemeBoundary(new Date(2026, 6, 4, 19, 59, 30)),
+    ).toBe(30_000);
+    expect(
+      millisecondsUntilNextThemeBoundary(new Date(2026, 6, 4, 20, 0, 0)),
+    ).toBe(39_600_000);
   });
 
-  it('falls back to auto when stored theme access is unavailable', () => {
+  it("falls back to auto when stored theme access is unavailable", () => {
     const storage = {
       getItem: () => {
-        throw new DOMException('blocked', 'SecurityError');
+        throw new DOMException("blocked", "SecurityError");
       },
     } as unknown as Storage;
 
-    expect(readStoredThemeOverride(storage)).toBe('auto');
+    expect(readStoredThemeOverride(storage)).toBe("auto");
   });
 
-  it('applies and persists the global theme mode selector', async () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
+  it("applies and persists the global theme mode selector", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(2026, 6, 4, 21, 0));
     mockOperationsShellFetch();
-    const { webTelemetry } = await import('./telemetry');
-    const initialLoadedEvents = webTelemetry.events.filter((event) => event.action === 'app.loaded').length;
+    const { webTelemetry } = await import("./telemetry");
+    const initialLoadedEvents = webTelemetry.events.filter(
+      (event) => event.action === "app.loaded",
+    ).length;
 
     render(<App />);
 
     await waitFor(() =>
-      expect(webTelemetry.events.filter((event) => event.action === 'app.loaded')).toHaveLength(initialLoadedEvents + 1),
+      expect(
+        webTelemetry.events.filter((event) => event.action === "app.loaded"),
+      ).toHaveLength(initialLoadedEvents + 1),
     );
-    expect(await screen.findByLabelText('Theme mode')).toBeInTheDocument();
-    expect(screen.getByLabelText('Auto')).toBeChecked();
-    expect(screen.getByText('Current: Night')).toBeInTheDocument();
-    expect(document.documentElement.dataset.zcTheme).toBe('dark');
-    expect(document.documentElement.dataset.zcThemeMode).toBe('auto');
+    expect(await screen.findByLabelText("Modo de tema")).toBeInTheDocument();
+    expect(screen.getByLabelText("Auto")).toBeChecked();
+    expect(screen.getByText("Actual: Noche")).toBeInTheDocument();
+    expect(document.documentElement.dataset.zcTheme).toBe("dark");
+    expect(document.documentElement.dataset.zcThemeMode).toBe("auto");
 
-    fireEvent.click(screen.getByLabelText('Day'));
+    fireEvent.click(screen.getByLabelText("Día"));
     await Promise.resolve();
 
-    expect(webTelemetry.events.filter((event) => event.action === 'app.loaded')).toHaveLength(initialLoadedEvents + 1);
-    expect(screen.getByLabelText('Day')).toBeChecked();
-    expect(screen.getByText('Current: Day')).toBeInTheDocument();
-    expect(document.documentElement.dataset.zcTheme).toBe('light');
-    expect(document.documentElement.dataset.zcThemeMode).toBe('day');
-    expect(window.localStorage.getItem(themeOverrideStorageKey)).toBe('day');
+    expect(
+      webTelemetry.events.filter((event) => event.action === "app.loaded"),
+    ).toHaveLength(initialLoadedEvents + 1);
+    expect(screen.getByLabelText("Día")).toBeChecked();
+    expect(screen.getByText("Actual: Día")).toBeInTheDocument();
+    expect(document.documentElement.dataset.zcTheme).toBe("light");
+    expect(document.documentElement.dataset.zcThemeMode).toBe("day");
+    expect(window.localStorage.getItem(themeOverrideStorageKey)).toBe("day");
 
     cleanup();
     mockOperationsShellFetch();
     render(<App />);
 
-    expect(await screen.findByLabelText('Theme mode')).toBeInTheDocument();
-    expect(screen.getByLabelText('Day')).toBeChecked();
-    expect(document.documentElement.dataset.zcTheme).toBe('light');
+    expect(await screen.findByLabelText("Modo de tema")).toBeInTheDocument();
+    expect(screen.getByLabelText("Día")).toBeChecked();
+    expect(document.documentElement.dataset.zcTheme).toBe("light");
   });
 
-  it('cleans up global theme attributes on unmount', async () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
+  it("cleans up global theme attributes on unmount", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(2026, 6, 4, 9, 0));
     mockOperationsShellFetch();
 
     const { unmount } = render(<App />);
 
-    expect(await screen.findByLabelText('Theme mode')).toBeInTheDocument();
-    expect(document.documentElement.dataset.zcTheme).toBe('light');
-    expect(document.documentElement.dataset.zcThemeMode).toBe('auto');
+    expect(await screen.findByLabelText("Modo de tema")).toBeInTheDocument();
+    expect(document.documentElement.dataset.zcTheme).toBe("light");
+    expect(document.documentElement.dataset.zcThemeMode).toBe("auto");
 
     unmount();
 
@@ -206,153 +244,305 @@ describe('web ui work center shell', () => {
     expect(document.documentElement.dataset.zcThemeMode).toBeUndefined();
   });
 
-  it('sets document language from query locale and renders the language selector', async () => {
-    window.history.pushState({}, '', '/?lang=es');
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+  it("sets document language from query locale and renders the language selector", async () => {
+    window.history.pushState({}, "", "/?lang=es");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (url.endsWith('/health')) return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
-      if (url.includes('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull')) return jsonResponse(freshSyncPullFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/work-centers')) return jsonResponse({ workCenters: [] });
-      if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) return jsonResponse({ resourceReports: [] });
-      if (url.endsWith('/incidents/incident-zc-demo/dispatch-tasks')) return jsonResponse({ dispatchTasks: [] });
-      if (url.endsWith('/incidents/incident-zc-demo/sos')) return jsonResponse({ sosAlerts: [], fanout: { total: 0, queued: 0, pending: 0, failed: 0, cancelled: 0 } });
-      return new Response('not found', { status: 404 });
+      if (url.endsWith("/health"))
+        return jsonResponse({
+          service: "zona-cero-api",
+          ok: true,
+          version: "test",
+        });
+      if (
+        url.includes("/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull")
+      )
+        return jsonResponse(freshSyncPullFixture);
+      if (url.endsWith("/incidents/incident-zc-demo/work-centers"))
+        return jsonResponse({ workCenters: [] });
+      if (url.endsWith("/incidents/incident-zc-demo/resource-reports"))
+        return jsonResponse({ resourceReports: [] });
+      if (url.endsWith("/incidents/incident-zc-demo/dispatch-tasks"))
+        return jsonResponse({ dispatchTasks: [] });
+      if (url.endsWith("/incidents/incident-zc-demo/sos"))
+        return jsonResponse({
+          sosAlerts: [],
+          fanout: {
+            total: 0,
+            queued: 0,
+            pending: 0,
+            failed: 0,
+            cancelled: 0,
+          },
+        });
+      return new Response("not found", { status: 404 });
     });
 
     render(<App />);
 
-    expect(document.documentElement.lang).toBe('es');
-    expect(screen.getByLabelText('Idioma')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Panel de operaciones en vivo de centros de trabajo' })).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe("es");
+    expect(screen.getByLabelText("Idioma")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", {
+        name: "Ayuda cercana para vecinos y voluntarios",
+      }),
+    ).toBeInTheDocument();
   });
 
-  it('renders backend health plus work center list, detail and map-lite from shared contracts', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+  it("renders backend health plus work center list, detail and map-lite from shared contracts", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (url.endsWith('/health')) {
-        return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
+      if (url.endsWith("/health")) {
+        return jsonResponse({
+          service: "zona-cero-api",
+          ok: true,
+          version: "test",
+        });
       }
-      if (url.includes('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull')) {
+      if (
+        url.includes("/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull")
+      ) {
         return jsonResponse(freshSyncPullFixture);
       }
-      if (url.endsWith('/incidents/incident-zc-demo/work-centers')) {
+      if (url.endsWith("/incidents/incident-zc-demo/work-centers")) {
         return jsonResponse(workCenterListHappyFixture);
       }
-      if (url.endsWith('/incidents/incident-zc-demo/work-centers/center-north-triage')) {
+      if (
+        url.endsWith(
+          "/incidents/incident-zc-demo/work-centers/center-north-triage",
+        )
+      ) {
         return jsonResponse(workCenterDetailHappyFixture);
       }
-      if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) {
+      if (url.endsWith("/incidents/incident-zc-demo/resource-reports")) {
         return jsonResponse(resourceReportListFixture);
       }
-      if (url.endsWith('/incidents/incident-zc-demo/dispatch-tasks')) {
+      if (url.endsWith("/incidents/incident-zc-demo/dispatch-tasks")) {
         return jsonResponse(dispatchTaskListFixture);
       }
-      if (url.endsWith('/incidents/incident-zc-demo/dispatch-tasks/dispatch-task-water-1')) {
+      if (
+        url.endsWith(
+          "/incidents/incident-zc-demo/dispatch-tasks/dispatch-task-water-1",
+        )
+      ) {
         return jsonResponse(dispatchTaskResponseFixture);
       }
-      if (url.endsWith('/incidents/incident-zc-demo/sos')) {
+      if (url.endsWith("/incidents/incident-zc-demo/sos")) {
         return jsonResponse(sosStatusFixture);
       }
-      return new Response('not found', { status: 404 });
+      return new Response("not found", { status: 404 });
     });
 
     render(<App />);
 
-    expect(screen.getByRole('heading', { name: /work centers live operations panel/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", {
+        name: /Ayuda cercana para vecinos y voluntarios/i,
+      }),
+    ).toBeInTheDocument();
 
-    await waitFor(() => expect(screen.getByTestId('api-health')).toHaveTextContent('zona-cero-api is online'));
+    await waitFor(() =>
+      expect(screen.getByTestId("api-health")).toHaveTextContent(
+        "zona-cero-api está online",
+      ),
+    );
 
-    // Hub landing renders tone-coded overview tiles with live counts once data is ready.
-    await waitFor(() => expect(screen.getByText('1 online')).toBeInTheDocument());
-    expect(screen.getByRole('button', { name: 'Open Work centers' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Open Resources' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Open Dispatch tasks' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Open SOS' })).toBeInTheDocument();
+    // Inicio landing renders tone-coded overview tiles with live counts once data is ready.
+    await waitFor(() =>
+      expect(screen.getAllByText("1 puntos").length).toBeGreaterThan(0),
+    );
+    expect(
+      screen.getByRole("button", { name: /Buscar punto/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Ver avisos/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Abrir encargo/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Abrir SOS/ }),
+    ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Work centers' }));
-    await waitFor(() => expect(screen.getAllByText('North triage point').length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByRole("button", { name: "Puntos de ayuda" }));
+    await waitFor(() =>
+      expect(screen.getAllByText("North triage point").length).toBeGreaterThan(
+        0,
+      ),
+    );
 
-    expect(screen.getByText('41.3800, 2.1700')).toBeInTheDocument();
-    expect(screen.getByText(/Triage and water distribution/)).toBeInTheDocument();
-    expect(screen.getByText('creator_report from telegram')).toBeInTheDocument();
+    expect(screen.getByText("41.3800, 2.1700")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Triage and water distribution/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Aviso inicial por Telegram")).toBeInTheDocument();
 
-    const status = screen.getAllByLabelText('North triage point backend status')[0];
-    expect(within(status).getByText('reported')).toBeInTheDocument();
-    expect(within(status).getByText('pending_corroboration')).toBeInTheDocument();
-    expect(within(status).getByText('fresh')).toBeInTheDocument();
-    expect(within(status).getByText('low')).toBeInTheDocument();
-    expect(within(status).getByText('medium')).toBeInTheDocument();
+    const status = screen.getAllByLabelText(
+      "North triage point estado para voluntarios",
+    )[0];
+    expect(within(status).getByText("Reportado")).toBeInTheDocument();
+    expect(within(status).getByText("Pendiente de confirmar")).toBeInTheDocument();
+    expect(within(status).getByText("Reciente")).toBeInTheDocument();
+    expect(within(status).getByText("Baja")).toBeInTheDocument();
+    expect(within(status).getByText("Media")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Resources' }));
-    expect(screen.getByRole('heading', { name: 'Needs and surplus' })).toBeInTheDocument();
-    const resourcesSection = screen.getByRole('heading', { name: 'Needs and surplus' }).closest('section')!;
-    expect(within(resourcesSection).getByText('20 bottles')).toBeInTheDocument();
-    expect(within(resourcesSection).getByText('Urgency: high')).toBeInTheDocument();
-    expect(within(resourcesSection).getByText('10 boxes')).toBeInTheDocument();
-    expect(within(resourcesSection).getByText('Urgency: medium')).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Avisar que falta algo" }),
+    );
+    expect(
+      screen.getByRole("heading", { name: "Avisar que falta algo" }),
+    ).toBeInTheDocument();
+    const resourcesSection = screen
+      .getByRole("heading", { name: "Avisar que falta algo" })
+      .closest("section")!;
+    expect(
+      within(resourcesSection).getByText("20 bottles"),
+    ).toBeInTheDocument();
+    expect(within(resourcesSection).getByText("Urgente")).toBeInTheDocument();
+    expect(within(resourcesSection).getByText("10 boxes")).toBeInTheDocument();
+    expect(
+      within(resourcesSection).getByText("Importante"),
+    ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Dispatch tasks' }));
-    expect(screen.getByRole('heading', { name: 'Dispatch tasks' })).toBeInTheDocument();
-    const dispatchSection = screen.getByRole('heading', { name: 'Dispatch tasks' }).closest('section')!;
-    expect(within(dispatchSection).getByText('20 bottles')).toBeInTheDocument();
-    expect(within(dispatchSection).getByText('pending')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Mi encargo" }));
+    expect(
+      screen.getByRole("heading", { name: "Mi encargo" }),
+    ).toBeInTheDocument();
+    const dispatchSection = screen
+      .getByRole("heading", { name: "Mi encargo" })
+      .closest("section")!;
+    expect(within(dispatchSection).getByText("20 bottles")).toBeInTheDocument();
+    expect(within(dispatchSection).getByText("Disponible")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'SOS' }));
-    expect(screen.getByRole('heading', { name: 'Connected SOS' })).toBeInTheDocument();
-    expect(screen.getByText('SOS ID: sos-mobile-critical-1')).toBeInTheDocument();
-    const sosCard = screen.getByText('SOS ID: sos-mobile-critical-1').closest('article')!;
-    expect(within(sosCard).getByText('open')).toBeInTheDocument();
-    expect(within(sosCard).getByText('Severity critical')).toBeInTheDocument();
-    expect(screen.getByLabelText('SOS backend fan-out status')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "SOS cercano" }));
+    expect(
+      screen.getByRole("heading", { name: "SOS cercano" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Aviso SOS recibido"),
+    ).toBeInTheDocument();
+    const sosCard = screen
+      .getByText("Aviso SOS recibido")
+      .closest("article")!;
+    expect(within(sosCard).getByText("Activo")).toBeInTheDocument();
+    expect(within(sosCard).getByText("Emergencia reportada")).toBeInTheDocument();
+    expect(screen.getByLabelText("Estado de avisos SOS")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Hub' }));
-    expect(screen.getByRole('button', { name: 'Open Work centers' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Inicio" }));
+    expect(
+      screen.getByRole("button", { name: /Buscar punto/ }),
+    ).toBeInTheDocument();
   });
 
+  it("requires explicit confirmation before cancelling a dispatch task", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/health"))
+        return jsonResponse({ service: "zona-cero-api", ok: true, version: "test" });
+      if (url.includes("/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull"))
+        return jsonResponse(freshSyncPullFixture);
+      if (url.endsWith("/incidents/incident-zc-demo/work-centers"))
+        return jsonResponse(workCenterListHappyFixture);
+      if (url.endsWith("/incidents/incident-zc-demo/work-centers/center-north-triage"))
+        return jsonResponse(workCenterDetailHappyFixture);
+      if (url.endsWith("/incidents/incident-zc-demo/resource-reports"))
+        return jsonResponse(resourceReportListFixture);
+      if (url.endsWith("/incidents/incident-zc-demo/dispatch-tasks"))
+        return jsonResponse(dispatchTaskListFixture);
+      if (url.endsWith("/incidents/incident-zc-demo/dispatch-tasks/dispatch-task-water-1") && init?.method === "PATCH")
+        return jsonResponse({
+          ...dispatchTaskResponseFixture,
+          dispatchTask: { ...dispatchTaskResponseFixture.dispatchTask, status: "cancelled" },
+        });
+      if (url.endsWith("/incidents/incident-zc-demo/sos"))
+        return jsonResponse(sosStatusFixture);
+      return new Response("not found", { status: 404 });
+    });
 
-  it('shows backend freshness channel limitation banners for stale, expired, missing, cursor lag, and conflicts', async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Mi encargo" }));
+    fireEvent.click(await screen.findByRole("button", { name: "No puedo hacerlo: water" }));
+
+    expect(confirm).toHaveBeenCalledWith(
+      "¿Seguro que no puedes hacer este encargo de 20 bottles (water)? Otro voluntario podrá tomarlo.",
+    );
+    expect(
+      fetcher.mock.calls.some(
+        ([url, init]) =>
+          String(url).endsWith("/incidents/incident-zc-demo/dispatch-tasks/dispatch-task-water-1") &&
+          init?.method === "PATCH",
+      ),
+    ).toBe(false);
+  });
+
+  it("shows backend freshness channel limitation banners for stale, expired, missing, cursor lag, and conflicts", async () => {
     const stalePull: SyncPullResponse = {
       ...freshSyncPullFixture,
       freshness: {
         ...freshSyncPullFixture.freshness,
-        status: 'stale',
+        status: "stale",
         cursorLag: 4,
         hasConflicts: true,
       },
       conflicts: [
         {
-          opId: 'op-conflict-1',
-          entityId: 'center-north-triage',
-          entityType: 'work_center',
-          code: 'operation_conflict',
-          message: 'entity already exists with another source operation',
+          opId: "op-conflict-1",
+          entityId: "center-north-triage",
+          entityType: "work_center",
+          code: "operation_conflict",
+          message: "entity already exists with another source operation",
         },
       ],
     };
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (url.endsWith('/health')) return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
-      if (url.includes('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull')) return jsonResponse(stalePull);
-      if (url.endsWith('/incidents/incident-zc-demo/work-centers')) return jsonResponse(workCenterListHappyFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/work-centers/center-north-triage')) return jsonResponse(workCenterDetailHappyFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) return jsonResponse(resourceReportListFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/dispatch-tasks')) return jsonResponse(dispatchTaskListFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/sos')) return jsonResponse(sosStatusFixture);
-      return new Response('not found', { status: 404 });
+      if (url.endsWith("/health"))
+        return jsonResponse({
+          service: "zona-cero-api",
+          ok: true,
+          version: "test",
+        });
+      if (
+        url.includes("/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull")
+      )
+        return jsonResponse(stalePull);
+      if (url.endsWith("/incidents/incident-zc-demo/work-centers"))
+        return jsonResponse(workCenterListHappyFixture);
+      if (
+        url.endsWith(
+          "/incidents/incident-zc-demo/work-centers/center-north-triage",
+        )
+      )
+        return jsonResponse(workCenterDetailHappyFixture);
+      if (url.endsWith("/incidents/incident-zc-demo/resource-reports"))
+        return jsonResponse(resourceReportListFixture);
+      if (url.endsWith("/incidents/incident-zc-demo/dispatch-tasks"))
+        return jsonResponse(dispatchTaskListFixture);
+      if (url.endsWith("/incidents/incident-zc-demo/sos"))
+        return jsonResponse(sosStatusFixture);
+      return new Response("not found", { status: 404 });
     });
 
     render(<App />);
 
-    const staleTitle = await screen.findByText('Channel data may be stale');
+    const staleTitle = await screen.findByText("Puede haber cambios recientes");
     const banner = staleTitle.closest('[role="status"]');
-    expect(banner).toHaveTextContent('Channel data may be stale');
-    expect(banner).toHaveTextContent('4 backend updates are not reflected');
-    expect(banner).toHaveTextContent('Sync conflicts are present');
-    expect(banner).not.toHaveTextContent(/offline save|offline sync|saved offline/i);
+    expect(banner).toHaveTextContent("Puede haber cambios recientes");
+    expect(banner).toHaveTextContent(
+      "4 cambios recientes todavía no aparecen aquí",
+    );
+    expect(banner).toHaveTextContent(
+      "Hay datos que un coordinador debe revisar antes de actuar",
+    );
+    expect(banner).not.toHaveTextContent(
+      /offline save|offline sync|saved offline/i,
+    );
   });
 
-  it('shows expired and missing backend freshness without promising offline-first behavior', async () => {
-    for (const status of ['expired', 'missing'] as const) {
+  it("shows expired and missing backend freshness without promising offline-first behavior", async () => {
+    for (const status of ["expired", "missing"] as const) {
       cleanup();
       vi.restoreAllMocks();
       const pull: SyncPullResponse = {
@@ -360,76 +550,154 @@ describe('web ui work center shell', () => {
         freshness: {
           ...freshSyncPullFixture.freshness,
           status,
-          lastFreshAt: status === 'missing' ? null : freshSyncPullFixture.freshness.lastFreshAt,
-          lastSyncedAt: status === 'missing' ? null : freshSyncPullFixture.freshness.lastSyncedAt,
+          lastFreshAt:
+            status === "missing"
+              ? null
+              : freshSyncPullFixture.freshness.lastFreshAt,
+          lastSyncedAt:
+            status === "missing"
+              ? null
+              : freshSyncPullFixture.freshness.lastSyncedAt,
         },
       };
-      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
         const url = String(input);
-        if (url.endsWith('/health')) return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
-        if (url.includes('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull')) return jsonResponse(pull);
-        if (url.endsWith('/incidents/incident-zc-demo/work-centers')) return jsonResponse({ workCenters: [] });
-        if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) return jsonResponse({ resourceReports: [] });
-        if (url.endsWith('/incidents/incident-zc-demo/dispatch-tasks')) return jsonResponse({ dispatchTasks: [] });
-        if (url.endsWith('/incidents/incident-zc-demo/sos')) return jsonResponse({ sosAlerts: [], fanout: { total: 0, queued: 0, pending: 0, failed: 0, cancelled: 0 } });
-        return new Response('not found', { status: 404 });
+        if (url.endsWith("/health"))
+          return jsonResponse({
+            service: "zona-cero-api",
+            ok: true,
+            version: "test",
+          });
+        if (
+          url.includes(
+            "/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull",
+          )
+        )
+          return jsonResponse(pull);
+        if (url.endsWith("/incidents/incident-zc-demo/work-centers"))
+          return jsonResponse({ workCenters: [] });
+        if (url.endsWith("/incidents/incident-zc-demo/resource-reports"))
+          return jsonResponse({ resourceReports: [] });
+        if (url.endsWith("/incidents/incident-zc-demo/dispatch-tasks"))
+          return jsonResponse({ dispatchTasks: [] });
+        if (url.endsWith("/incidents/incident-zc-demo/sos"))
+          return jsonResponse({
+            sosAlerts: [],
+            fanout: {
+              total: 0,
+              queued: 0,
+              pending: 0,
+              failed: 0,
+              cancelled: 0,
+            },
+          });
+        return new Response("not found", { status: 404 });
       });
 
       render(<App />);
-      const title = await screen.findByText(status === 'expired' ? 'Channel data expired' : 'Freshness signal missing');
+      const title = await screen.findByText(
+        status === "expired"
+          ? "La información puede estar desactualizada"
+          : "Falta una comprobación de cambios",
+      );
       const banner = title.closest('[role="status"]');
-      expect(banner).toHaveTextContent(status === 'expired' ? 'Channel data expired' : 'Freshness signal missing');
-      expect(banner).not.toHaveTextContent(/offline save|offline sync|saved offline/i);
+      expect(banner).toHaveTextContent(
+        status === "expired"
+          ? "La información puede estar desactualizada"
+          : "Falta una comprobación de cambios",
+      );
+      expect(banner).not.toHaveTextContent(
+        /offline save|offline sync|saved offline/i,
+      );
     }
   });
 
-  it('does not show noisy channel limitation warnings when backend freshness is fresh', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+  it("does not show noisy channel limitation warnings when backend freshness is fresh", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (url.endsWith('/health')) return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
-      if (url.includes('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull')) return jsonResponse(freshSyncPullFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/work-centers')) return jsonResponse(workCenterListHappyFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/work-centers/center-north-triage')) return jsonResponse(workCenterDetailHappyFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) return jsonResponse(resourceReportListFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/dispatch-tasks')) return jsonResponse(dispatchTaskListFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/sos')) return jsonResponse(sosStatusFixture);
-      return new Response('not found', { status: 404 });
+      if (url.endsWith("/health"))
+        return jsonResponse({
+          service: "zona-cero-api",
+          ok: true,
+          version: "test",
+        });
+      if (
+        url.includes("/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull")
+      )
+        return jsonResponse(freshSyncPullFixture);
+      if (url.endsWith("/incidents/incident-zc-demo/work-centers"))
+        return jsonResponse(workCenterListHappyFixture);
+      if (
+        url.endsWith(
+          "/incidents/incident-zc-demo/work-centers/center-north-triage",
+        )
+      )
+        return jsonResponse(workCenterDetailHappyFixture);
+      if (url.endsWith("/incidents/incident-zc-demo/resource-reports"))
+        return jsonResponse(resourceReportListFixture);
+      if (url.endsWith("/incidents/incident-zc-demo/dispatch-tasks"))
+        return jsonResponse(dispatchTaskListFixture);
+      if (url.endsWith("/incidents/incident-zc-demo/sos"))
+        return jsonResponse(sosStatusFixture);
+      return new Response("not found", { status: 404 });
     });
 
     render(<App />);
 
-    await waitFor(() => expect(screen.getByTestId('api-health')).toHaveTextContent('zona-cero-api is online'));
-    expect(screen.queryByText('Channel data may be stale')).not.toBeInTheDocument();
-    expect(screen.queryByText('Channel data expired')).not.toBeInTheDocument();
-    expect(screen.queryByText('Freshness signal missing')).not.toBeInTheDocument();
-    expect(document.body).not.toHaveTextContent(/offline save|offline sync|saved offline/i);
+    await waitFor(() =>
+      expect(screen.getByTestId("api-health")).toHaveTextContent(
+        "zona-cero-api está online",
+      ),
+    );
+    expect(
+      screen.queryByText("Puede haber cambios recientes"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("La información puede estar desactualizada"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Falta una comprobación de cambios"),
+    ).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(
+      /offline save|offline sync|saved offline/i,
+    );
   });
 
-  it('displays stable API errors for work center loading failures', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+  it("displays stable API errors for work center loading failures", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (url.endsWith('/health')) {
-        return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
+      if (url.endsWith("/health")) {
+        return jsonResponse({
+          service: "zona-cero-api",
+          ok: true,
+          version: "test",
+        });
       }
-      return new Response(JSON.stringify({ error: 'permission_denied' }), { status: 403 });
+      return new Response(JSON.stringify({ error: "permission_denied" }), {
+        status: 403,
+      });
     });
 
     render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Work centers' }));
-    await waitFor(() => expect(screen.getAllByRole('alert')[0]).toHaveTextContent('Work center list failed with status 403'));
+    fireEvent.click(screen.getByRole("button", { name: "Puntos de ayuda" }));
+    await waitFor(() =>
+      expect(screen.getAllByRole("alert")[0]).toHaveTextContent(
+        "Work center list failed with status 403",
+      ),
+    );
   });
 
-  it('displays backend-derived status values without recalculating activation logic', async () => {
+  it("displays backend-derived status values without recalculating activation logic", async () => {
     const backendOnlyList = {
       workCenters: [
         {
           ...workCenterListHappyFixture.workCenters[0],
-          status: 'active',
-          activationState: 'needs_review',
-          freshness: 'expired',
-          confidence: 'high',
-          risk: 'low',
+          status: "active",
+          activationState: "needs_review",
+          freshness: "expired",
+          confidence: "high",
+          risk: "low",
           signalCount: 0,
           corroboratingSignalCount: 0,
         },
@@ -443,21 +711,25 @@ describe('web ui work center shell', () => {
       },
     } as const;
 
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (url.endsWith('/health')) {
-        return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
+      if (url.endsWith("/health")) {
+        return jsonResponse({
+          service: "zona-cero-api",
+          ok: true,
+          version: "test",
+        });
       }
-      if (url.endsWith('/incidents/incident-zc-demo/work-centers')) {
+      if (url.endsWith("/incidents/incident-zc-demo/work-centers")) {
         return jsonResponse(backendOnlyList);
       }
-      if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) {
+      if (url.endsWith("/incidents/incident-zc-demo/resource-reports")) {
         return jsonResponse(resourceReportListFixture);
       }
-      if (url.endsWith('/incidents/incident-zc-demo/dispatch-tasks')) {
+      if (url.endsWith("/incidents/incident-zc-demo/dispatch-tasks")) {
         return jsonResponse(dispatchTaskListFixture);
       }
-      if (url.endsWith('/incidents/incident-zc-demo/sos')) {
+      if (url.endsWith("/incidents/incident-zc-demo/sos")) {
         return jsonResponse(sosStatusFixture);
       }
       return jsonResponse(backendOnlyDetail);
@@ -465,298 +737,570 @@ describe('web ui work center shell', () => {
 
     render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Work centers' }));
-    await waitFor(() => expect(screen.getAllByText('needs_review').length).toBeGreaterThan(0));
-    expect(screen.getAllByText('expired').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('high').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('low').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "Puntos de ayuda" }));
+    await waitFor(() =>
+      expect(screen.getAllByText("Revisar antes de ir").length).toBeGreaterThan(0),
+    );
+    expect(screen.getAllByText("Reportado").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Sin confirmar").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Alta").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Baja").length).toBeGreaterThan(0);
   });
 
-  it('requires exact SOS confirmation before calling the backend', async () => {
-    const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const url = String(input);
-      if (url.endsWith('/health')) return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
-      if (url.includes('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull')) return jsonResponse(freshSyncPullFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/work-centers')) return jsonResponse(workCenterListHappyFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/work-centers/center-north-triage')) return jsonResponse(workCenterDetailHappyFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) return jsonResponse(resourceReportListFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/dispatch-tasks')) return jsonResponse(dispatchTaskListFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/sos') && init?.method === 'POST') return jsonResponse(sosCreateFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/sos')) return jsonResponse(sosStatusFixture);
-      return new Response('not found', { status: 404 });
-    });
+  it("requires exact SOS confirmation before calling the backend", async () => {
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url.endsWith("/health"))
+          return jsonResponse({
+            service: "zona-cero-api",
+            ok: true,
+            version: "test",
+          });
+        if (
+          url.includes(
+            "/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull",
+          )
+        )
+          return jsonResponse(freshSyncPullFixture);
+        if (url.endsWith("/incidents/incident-zc-demo/work-centers"))
+          return jsonResponse(workCenterListHappyFixture);
+        if (
+          url.endsWith(
+            "/incidents/incident-zc-demo/work-centers/center-north-triage",
+          )
+        )
+          return jsonResponse(workCenterDetailHappyFixture);
+        if (url.endsWith("/incidents/incident-zc-demo/resource-reports"))
+          return jsonResponse(resourceReportListFixture);
+        if (url.endsWith("/incidents/incident-zc-demo/dispatch-tasks"))
+          return jsonResponse(dispatchTaskListFixture);
+        if (
+          url.endsWith("/incidents/incident-zc-demo/sos") &&
+          init?.method === "POST"
+        )
+          return jsonResponse(sosCreateFixture);
+        if (url.endsWith("/incidents/incident-zc-demo/sos"))
+          return jsonResponse(sosStatusFixture);
+        return new Response("not found", { status: 404 });
+      });
 
     render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'SOS' }));
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Connected SOS' })).toBeInTheDocument());
-    fireEvent.change(screen.getByLabelText('Type CONFIRM SOS to submit'), { target: { value: 'confirm' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit SOS' }));
+    fireEvent.click(screen.getByRole("button", { name: "SOS cercano" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "SOS cercano" }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.change(screen.getByLabelText("Escribe CONFIRM SOS para enviar"), {
+      target: { value: "confirm" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar SOS" }));
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Type CONFIRM SOS exactly');
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Escribe CONFIRM SOS exactamente",
+    );
     expect(fetcher).not.toHaveBeenCalledWith(
-      'http://127.0.0.1:8787/incidents/incident-zc-demo/sos',
-      expect.objectContaining({ method: 'POST' }),
+      "http://127.0.0.1:8787/incidents/incident-zc-demo/sos",
+      expect.objectContaining({ method: "POST" }),
     );
   });
 
-  it('submits SOS and renders the backend acknowledgement honestly', async () => {
-    const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const url = String(input);
-      if (url.endsWith('/health')) return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
-      if (url.includes('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull')) return jsonResponse(freshSyncPullFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/work-centers')) return jsonResponse(workCenterListHappyFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/work-centers/center-north-triage')) return jsonResponse(workCenterDetailHappyFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) return jsonResponse(resourceReportListFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/dispatch-tasks')) return jsonResponse(dispatchTaskListFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/sos') && init?.method === 'POST') return jsonResponse(sosCreateFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/sos')) return jsonResponse({ sosAlerts: [], fanout: { total: 0, queued: 0, pending: 0, failed: 0, cancelled: 0 } });
-      return new Response('not found', { status: 404 });
-    });
+  it("submits SOS and renders the backend acknowledgement honestly", async () => {
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url.endsWith("/health"))
+          return jsonResponse({
+            service: "zona-cero-api",
+            ok: true,
+            version: "test",
+          });
+        if (
+          url.includes(
+            "/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull",
+          )
+        )
+          return jsonResponse(freshSyncPullFixture);
+        if (url.endsWith("/incidents/incident-zc-demo/work-centers"))
+          return jsonResponse(workCenterListHappyFixture);
+        if (
+          url.endsWith(
+            "/incidents/incident-zc-demo/work-centers/center-north-triage",
+          )
+        )
+          return jsonResponse(workCenterDetailHappyFixture);
+        if (url.endsWith("/incidents/incident-zc-demo/resource-reports"))
+          return jsonResponse(resourceReportListFixture);
+        if (url.endsWith("/incidents/incident-zc-demo/dispatch-tasks"))
+          return jsonResponse(dispatchTaskListFixture);
+        if (
+          url.endsWith("/incidents/incident-zc-demo/sos") &&
+          init?.method === "POST"
+        )
+          return jsonResponse(sosCreateFixture);
+        if (url.endsWith("/incidents/incident-zc-demo/sos"))
+          return jsonResponse({
+            sosAlerts: [],
+            fanout: {
+              total: 0,
+              queued: 0,
+              pending: 0,
+              failed: 0,
+              cancelled: 0,
+            },
+          });
+        return new Response("not found", { status: 404 });
+      });
 
     render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'SOS' }));
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Connected SOS' })).toBeInTheDocument());
-    fireEvent.change(screen.getByLabelText('Type CONFIRM SOS to submit'), { target: { value: 'CONFIRM SOS' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit SOS' }));
+    fireEvent.click(screen.getByRole("button", { name: "SOS cercano" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "SOS cercano" }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.change(screen.getByLabelText("Escribe CONFIRM SOS para enviar"), {
+      target: { value: "CONFIRM SOS" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar SOS" }));
 
-    const status = await screen.findByRole('status');
-    expect(status).toHaveTextContent('SOS ID: sos-web-critical-1');
-    expect(status).toHaveTextContent('Backend recording only');
-    expect(screen.getByText('SOS ID: sos-web-critical-1')).toBeInTheDocument();
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent("Aviso SOS enviado");
+    expect(status).toHaveTextContent("Entrega, rescate y ubicación exacta no están confirmados");
+    expect(screen.getAllByText("Aviso SOS recibido").length).toBeGreaterThan(0);
 
-    const postCall = fetcher.mock.calls.find(([url, init]) => String(url).endsWith('/incidents/incident-zc-demo/sos') && init?.method === 'POST');
+    const postCall = fetcher.mock.calls.find(
+      ([url, init]) =>
+        String(url).endsWith("/incidents/incident-zc-demo/sos") &&
+        init?.method === "POST",
+    );
     expect(postCall).toBeDefined();
-    const payload = JSON.parse(String(postCall?.[1]?.body)) as { externalId: string; displayName?: string; payload: { reportedAt?: string } };
-    expect(payload.externalId).toBe('web-user-1001');
-    expect(payload.displayName).toBe('Field Web');
+    const payload = JSON.parse(String(postCall?.[1]?.body)) as {
+      externalId: string;
+      displayName?: string;
+      payload: { reportedAt?: string };
+    };
+    expect(payload.externalId).toBe("web-user-1001");
+    expect(payload.displayName).toBe("Field Web");
     expect(payload.payload.reportedAt).toEqual(expect.any(String));
   });
 
-
-
-  it('blocks duplicate SOS submits while the request is in-flight', async () => {
+  it("blocks duplicate SOS submits while the request is in-flight", async () => {
     let resolvePost: (response: Response) => void = () => undefined;
-    const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const url = String(input);
-      if (url.endsWith('/health')) return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
-      if (url.includes('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull')) return jsonResponse(freshSyncPullFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/work-centers')) return jsonResponse(workCenterListHappyFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/work-centers/center-north-triage')) return jsonResponse(workCenterDetailHappyFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) return jsonResponse(resourceReportListFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/dispatch-tasks')) return jsonResponse(dispatchTaskListFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/sos') && init?.method === 'POST') {
-        return new Promise<Response>((resolve) => {
-          resolvePost = resolve;
-        });
-      }
-      if (url.endsWith('/incidents/incident-zc-demo/sos')) return jsonResponse({ sosAlerts: [], fanout: { total: 0, queued: 0, pending: 0, failed: 0, cancelled: 0 } });
-      return new Response('not found', { status: 404 });
-    });
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url.endsWith("/health"))
+          return jsonResponse({
+            service: "zona-cero-api",
+            ok: true,
+            version: "test",
+          });
+        if (
+          url.includes(
+            "/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull",
+          )
+        )
+          return jsonResponse(freshSyncPullFixture);
+        if (url.endsWith("/incidents/incident-zc-demo/work-centers"))
+          return jsonResponse(workCenterListHappyFixture);
+        if (
+          url.endsWith(
+            "/incidents/incident-zc-demo/work-centers/center-north-triage",
+          )
+        )
+          return jsonResponse(workCenterDetailHappyFixture);
+        if (url.endsWith("/incidents/incident-zc-demo/resource-reports"))
+          return jsonResponse(resourceReportListFixture);
+        if (url.endsWith("/incidents/incident-zc-demo/dispatch-tasks"))
+          return jsonResponse(dispatchTaskListFixture);
+        if (
+          url.endsWith("/incidents/incident-zc-demo/sos") &&
+          init?.method === "POST"
+        ) {
+          return new Promise<Response>((resolve) => {
+            resolvePost = resolve;
+          });
+        }
+        if (url.endsWith("/incidents/incident-zc-demo/sos"))
+          return jsonResponse({
+            sosAlerts: [],
+            fanout: {
+              total: 0,
+              queued: 0,
+              pending: 0,
+              failed: 0,
+              cancelled: 0,
+            },
+          });
+        return new Response("not found", { status: 404 });
+      });
 
     render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'SOS' }));
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Connected SOS' })).toBeInTheDocument());
-    fireEvent.change(screen.getByLabelText('Type CONFIRM SOS to submit'), { target: { value: 'CONFIRM SOS' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit SOS' }));
+    fireEvent.click(screen.getByRole("button", { name: "SOS cercano" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "SOS cercano" }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.change(screen.getByLabelText("Escribe CONFIRM SOS para enviar"), {
+      target: { value: "CONFIRM SOS" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar SOS" }));
 
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Submitting SOS…' })).toBeDisabled());
-    fireEvent.click(screen.getByRole('button', { name: 'Submitting SOS…' }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Enviando SOS…" }),
+      ).toBeDisabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Enviando SOS…" }));
 
-    const postCalls = fetcher.mock.calls.filter(([url, init]) => String(url).endsWith('/incidents/incident-zc-demo/sos') && init?.method === 'POST');
+    const postCalls = fetcher.mock.calls.filter(
+      ([url, init]) =>
+        String(url).endsWith("/incidents/incident-zc-demo/sos") &&
+        init?.method === "POST",
+    );
     expect(postCalls).toHaveLength(1);
 
     resolvePost(jsonResponse(sosCreateFixture));
-    expect(await screen.findByRole('status')).toHaveTextContent('SOS ID: sos-web-critical-1');
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Aviso SOS enviado",
+    );
   });
 
-  it('shows SOS backend errors without inventing delivery state', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+  it("shows SOS backend errors without inventing delivery state", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
-      if (url.endsWith('/health')) return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
-      if (url.includes('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull')) return jsonResponse(freshSyncPullFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/work-centers')) return jsonResponse(workCenterListHappyFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/work-centers/center-north-triage')) return jsonResponse(workCenterDetailHappyFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) return jsonResponse(resourceReportListFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/dispatch-tasks')) return jsonResponse(dispatchTaskListFixture);
-      if (url.endsWith('/incidents/incident-zc-demo/sos') && init?.method === 'POST') return new Response(JSON.stringify({ error: 'permission_denied' }), { status: 403 });
-      if (url.endsWith('/incidents/incident-zc-demo/sos')) return jsonResponse(sosStatusFixture);
-      return new Response('not found', { status: 404 });
+      if (url.endsWith("/health"))
+        return jsonResponse({
+          service: "zona-cero-api",
+          ok: true,
+          version: "test",
+        });
+      if (
+        url.includes("/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull")
+      )
+        return jsonResponse(freshSyncPullFixture);
+      if (url.endsWith("/incidents/incident-zc-demo/work-centers"))
+        return jsonResponse(workCenterListHappyFixture);
+      if (
+        url.endsWith(
+          "/incidents/incident-zc-demo/work-centers/center-north-triage",
+        )
+      )
+        return jsonResponse(workCenterDetailHappyFixture);
+      if (url.endsWith("/incidents/incident-zc-demo/resource-reports"))
+        return jsonResponse(resourceReportListFixture);
+      if (url.endsWith("/incidents/incident-zc-demo/dispatch-tasks"))
+        return jsonResponse(dispatchTaskListFixture);
+      if (
+        url.endsWith("/incidents/incident-zc-demo/sos") &&
+        init?.method === "POST"
+      )
+        return new Response(JSON.stringify({ error: "permission_denied" }), {
+          status: 403,
+        });
+      if (url.endsWith("/incidents/incident-zc-demo/sos"))
+        return jsonResponse(sosStatusFixture);
+      return new Response("not found", { status: 404 });
     });
 
     render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'SOS' }));
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Connected SOS' })).toBeInTheDocument());
-    fireEvent.change(screen.getByLabelText('Type CONFIRM SOS to submit'), { target: { value: 'CONFIRM SOS' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit SOS' }));
+    fireEvent.click(screen.getByRole("button", { name: "SOS cercano" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "SOS cercano" }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.change(screen.getByLabelText("Escribe CONFIRM SOS para enviar"), {
+      target: { value: "CONFIRM SOS" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar SOS" }));
 
-    expect(await screen.findByRole('status')).toHaveTextContent('SOS creation failed with status 403');
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "SOS creation failed with status 403",
+    );
   });
 
-  it('renders the private family reunification flow with safety limits and minimized payloads', async () => {
+  it("renders the private family reunification flow with safety limits and minimized payloads", async () => {
     window.history.pushState(
       {},
-      '',
+      "",
       `/family-reunification?token=${privateFamilyReunificationIssueResponseFixture.token}&correlationId=${privateFamilyReunificationIssueResponseFixture.correlationId}`,
     );
-    window.sessionStorage.setItem('cf-turnstile-response', 'test-turnstile-token');
+    window.sessionStorage.setItem(
+      "cf-turnstile-response",
+      "test-turnstile-token",
+    );
 
-    const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const url = String(input);
-      if (url.endsWith('/private-links/validate')) return jsonResponse(privateFamilyReunificationValidateResponseFixture);
-      if (url.endsWith('/private-links/family-reunification/search') && init?.method === 'POST') {
-        return jsonResponse(familyReunificationSearchResponseFixture);
-      }
-      if (url.endsWith('/private-links/consume') && init?.method === 'POST') {
-        return jsonResponse(privateFamilyReunificationConsumeResponseFixture);
-      }
-      return new Response('not found', { status: 404 });
-    });
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url.endsWith("/private-links/validate"))
+          return jsonResponse(
+            privateFamilyReunificationValidateResponseFixture,
+          );
+        if (
+          url.endsWith("/private-links/family-reunification/search") &&
+          init?.method === "POST"
+        ) {
+          return jsonResponse(familyReunificationSearchResponseFixture);
+        }
+        if (url.endsWith("/private-links/consume") && init?.method === "POST") {
+          return jsonResponse(privateFamilyReunificationConsumeResponseFixture);
+        }
+        return new Response("not found", { status: 404 });
+      });
 
     render(<App />);
 
-    expect(screen.getByRole('heading', { name: 'Identity-safe search and in-person referral' })).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Minimized private search' })).toBeInTheDocument());
+    expect(
+      screen.getByRole("heading", {
+        name: "Búsqueda segura de identidad y derivación presencial",
+      }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Búsqueda privada minimizada" }),
+      ).toBeInTheDocument(),
+    );
 
-    expect(screen.getByText('No photos are requested or shown.')).toBeInTheDocument();
-    expect(screen.getByText('No exact location is requested or shown.')).toBeInTheDocument();
-    expect(screen.getByText('No full identity of minors is requested or shown.')).toBeInTheDocument();
+    expect(
+      screen.getByText("No se solicitan ni muestran fotos."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("No se solicita ni muestra ubicación exacta."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("No se solicita ni muestra identidad completa de menores."),
+    ).toBeInTheDocument();
     expect(screen.queryByLabelText(/full name/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/photo/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/exact location/i)).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText('Approximate age band'), { target: { value: 'child' } });
-    fireEvent.change(screen.getByLabelText('Relationship hint'), { target: { value: 'parent looking for child' } });
-    fireEvent.change(screen.getByLabelText('Broad last-known area label'), { target: { value: 'north gate area' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Search safely' }));
+    fireEvent.change(screen.getByLabelText("Rango de edad aproximado"), {
+      target: { value: "child" },
+    });
+    fireEvent.change(screen.getByLabelText("Pista de relación"), {
+      target: { value: "parent looking for child" },
+    });
+    fireEvent.change(screen.getByLabelText("Zona amplia de último avistamiento"), {
+      target: { value: "north gate area" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Buscar de forma segura" }));
 
-    expect(await screen.findByText('Possible in-person match')).toBeInTheDocument();
-    expect(screen.getByText('Verification required: yes')).toBeInTheDocument();
+    expect(
+      await screen.findByText("Posible coincidencia presencial"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Verificación requerida: sí")).toBeInTheDocument();
 
-    const searchCall = fetcher.mock.calls.find(([url]) => String(url).endsWith('/private-links/family-reunification/search'));
+    const searchCall = fetcher.mock.calls.find(([url]) =>
+      String(url).endsWith("/private-links/family-reunification/search"),
+    );
     expect(searchCall).toBeDefined();
-    const payload = JSON.parse(String(searchCall?.[1]?.body)) as Record<string, unknown> & { query: Record<string, unknown> };
-    expect(payload.token).toBe(privateFamilyReunificationIssueResponseFixture.token);
-    expect(payload.correlationId).toBe(privateFamilyReunificationIssueResponseFixture.correlationId);
+    const payload = JSON.parse(String(searchCall?.[1]?.body)) as Record<
+      string,
+      unknown
+    > & { query: Record<string, unknown> };
+    expect(payload.token).toBe(
+      privateFamilyReunificationIssueResponseFixture.token,
+    );
+    expect(payload.correlationId).toBe(
+      privateFamilyReunificationIssueResponseFixture.correlationId,
+    );
     expect(payload.fingerprint).toEqual(expect.stringMatching(/^browser-/));
     expect(payload.query).toEqual({
-      ageBand: 'child',
-      relationHint: 'parent looking for child',
-      lastKnownAreaLabel: 'north gate area',
+      ageBand: "child",
+      relationHint: "parent looking for child",
+      lastKnownAreaLabel: "north gate area",
     });
-    expect(payload.query).not.toHaveProperty('fullName');
-    expect(payload.query).not.toHaveProperty('photo');
-    expect(payload.query).not.toHaveProperty('exactLocation');
-    expect(payload).not.toHaveProperty('turnstileToken');
+    expect(payload.query).not.toHaveProperty("fullName");
+    expect(payload.query).not.toHaveProperty("photo");
+    expect(payload.query).not.toHaveProperty("exactLocation");
+    expect(payload).not.toHaveProperty("turnstileToken");
     expect(searchCall?.[1]?.headers).toMatchObject({
-      'cf-turnstile-response': 'test-turnstile-token',
+      "cf-turnstile-response": "test-turnstile-token",
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Continue to in-person verification' }));
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Continue with in-person verification'));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Continuar a verificación presencial",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Continúa con verificación presencial",
+      ),
+    );
 
-    const consumeCall = fetcher.mock.calls.find(([url]) => String(url).endsWith('/private-links/consume'));
-    const consumePayload = JSON.parse(String(consumeCall?.[1]?.body)) as Record<string, unknown>;
+    const consumeCall = fetcher.mock.calls.find(([url]) =>
+      String(url).endsWith("/private-links/consume"),
+    );
+    const consumePayload = JSON.parse(String(consumeCall?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
     expect(consumePayload).toMatchObject({
-      scope: 'family_reunification.search',
-      correlationId: privateFamilyReunificationIssueResponseFixture.correlationId,
-      referralReason: 'family_reunification_in_person_verification',
+      scope: "family_reunification.search",
+      correlationId:
+        privateFamilyReunificationIssueResponseFixture.correlationId,
+      referralReason: "family_reunification_in_person_verification",
     });
   });
 
-
-
-  it('renders private family reunification validation and search copy in Spanish', async () => {
+  it("renders private family reunification validation and search copy in Spanish", async () => {
     window.history.pushState(
       {},
-      '',
+      "",
       `/family-reunification?lang=es&token=${privateFamilyReunificationIssueResponseFixture.token}&correlationId=${privateFamilyReunificationIssueResponseFixture.correlationId}`,
     );
 
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
-      if (url.endsWith('/private-links/validate')) return jsonResponse(privateFamilyReunificationValidateResponseFixture);
-      if (url.endsWith('/private-links/family-reunification/search') && init?.method === 'POST') {
+      if (url.endsWith("/private-links/validate"))
+        return jsonResponse(privateFamilyReunificationValidateResponseFixture);
+      if (
+        url.endsWith("/private-links/family-reunification/search") &&
+        init?.method === "POST"
+      ) {
         return jsonResponse(familyReunificationSearchResponseFixture);
       }
-      if (url.endsWith('/private-links/consume') && init?.method === 'POST') {
+      if (url.endsWith("/private-links/consume") && init?.method === "POST") {
         return jsonResponse(privateFamilyReunificationConsumeResponseFixture);
       }
-      return new Response('not found', { status: 404 });
+      return new Response("not found", { status: 404 });
     });
 
     render(<App />);
 
-    expect(screen.getByRole('heading', { name: 'Búsqueda segura de identidad y derivación presencial' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Comprobando enlace privado' })).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Búsqueda privada minimizada' })).toBeInTheDocument());
-    expect(screen.queryByText('Checking private link')).not.toBeInTheDocument();
-    expect(screen.queryByText('Minimized private search')).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", {
+        name: "Búsqueda segura de identidad y derivación presencial",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Comprobando enlace privado" }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Búsqueda privada minimizada" }),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByText("Checking private link")).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText('Rango de edad aproximado'), { target: { value: 'child' } });
-    fireEvent.change(screen.getByLabelText('Pista de relación'), { target: { value: 'madre busca a su hijo' } });
-    fireEvent.change(screen.getByLabelText('Zona amplia de último avistamiento'), { target: { value: 'puerta norte' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Buscar de forma segura' }));
+    fireEvent.change(screen.getByLabelText("Rango de edad aproximado"), {
+      target: { value: "child" },
+    });
+    fireEvent.change(screen.getByLabelText("Pista de relación"), {
+      target: { value: "madre busca a su hijo" },
+    });
+    fireEvent.change(
+      screen.getByLabelText("Zona amplia de último avistamiento"),
+      { target: { value: "puerta norte" } },
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Buscar de forma segura" }),
+    );
 
-    expect(await screen.findByText('Posible coincidencia presencial')).toBeInTheDocument();
-    expect(screen.getByText('Rango de edad: Niñez')).toBeInTheDocument();
-    expect(screen.getByText('Verificación requerida: sí')).toBeInTheDocument();
-    expect(document.body).toHaveTextContent('La mesa familiar puede comparar detalles de relación en persona.');
-    expect(document.body).toHaveTextContent('Continúa con verificación presencial.');
+    expect(
+      await screen.findByText("Posible coincidencia presencial"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Rango de edad: Niñez")).toBeInTheDocument();
+    expect(screen.getByText("Verificación requerida: sí")).toBeInTheDocument();
+    expect(document.body).toHaveTextContent(
+      "La mesa familiar puede comparar detalles de relación en persona.",
+    );
+    expect(document.body).toHaveTextContent(
+      "Continúa con verificación presencial.",
+    );
     expect(document.body).not.toHaveTextContent(/\bchild\b/);
     expect(document.body).not.toHaveTextContent(/\bteen\b/);
     expect(document.body).not.toHaveTextContent(/\badult\b/);
     expect(document.body).not.toHaveTextContent(/\bolder_adult\b/);
-    expect(document.body).not.toHaveTextContent('family desk can compare details in person');
-    expect(document.body).not.toHaveTextContent('Visit the family reunification desk for identity-safe verification.');
+    expect(document.body).not.toHaveTextContent(
+      "family desk can compare details in person",
+    );
+    expect(document.body).not.toHaveTextContent(
+      "Visit the family reunification desk for identity-safe verification.",
+    );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Continuar a verificación presencial' }));
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Continúa con verificación presencial'));
-    expect(document.body).not.toHaveTextContent('Continue with in-person verification. Do not share photos, exact location, or full minor identity in chat.');
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Continuar a verificación presencial",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Continúa con verificación presencial",
+      ),
+    );
+    expect(document.body).not.toHaveTextContent(
+      "Continue with in-person verification. Do not share photos, exact location, or full minor identity in chat.",
+    );
   });
 
-  it('renders private family reunification validation errors in Spanish', async () => {
+  it("renders private family reunification validation errors in Spanish", async () => {
     window.history.pushState(
       {},
-      '',
+      "",
       `/family-reunification?lang=es&token=${privateFamilyReunificationIssueResponseFixture.token}&correlationId=${privateFamilyReunificationIssueResponseFixture.correlationId}`,
     );
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (url.endsWith('/private-links/validate')) {
-        return new Response(JSON.stringify({ error: 'link_expired' }), { status: 410 });
+      if (url.endsWith("/private-links/validate")) {
+        return new Response(JSON.stringify({ error: "link_expired" }), {
+          status: 410,
+        });
       }
-      return new Response('not found', { status: 404 });
+      return new Response("not found", { status: 404 });
     });
 
     render(<App />);
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('El enlace privado expiró');
-    expect(screen.getByText(/Ve al punto de reunificación familiar/)).toBeInTheDocument();
-    expect(screen.queryByText('Private link unavailable')).not.toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "El enlace privado expiró",
+    );
+    expect(
+      screen.getByText(/Ve al punto de reunificación familiar/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Private link unavailable"),
+    ).not.toBeInTheDocument();
   });
 
-  it('shows safe visible errors for invalid or expired private links', async () => {
+  it("shows safe visible errors for invalid or expired private links", async () => {
     window.history.pushState(
       {},
-      '',
+      "",
       `/family-reunification?token=${privateFamilyReunificationIssueResponseFixture.token}&correlationId=${privateFamilyReunificationIssueResponseFixture.correlationId}`,
     );
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (url.endsWith('/private-links/validate')) {
-        return new Response(JSON.stringify({ error: 'link_expired' }), { status: 410 });
+      if (url.endsWith("/private-links/validate")) {
+        return new Response(JSON.stringify({ error: "link_expired" }), {
+          status: 410,
+        });
       }
-      return new Response('not found', { status: 404 });
+      return new Response("not found", { status: 404 });
     });
 
     render(<App />);
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('The private link expired');
-    expect(screen.getByText(/Go to the family reunification desk/)).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "El enlace privado expiró",
+    );
+    expect(
+      screen.getByText(/Ve al punto de reunificación familiar/),
+    ).toBeInTheDocument();
     expect(screen.queryByLabelText(/full name/i)).not.toBeInTheDocument();
   });
 });
@@ -764,38 +1308,52 @@ describe('web ui work center shell', () => {
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
-    headers: { 'content-type': 'application/json' },
+    headers: { "content-type": "application/json" },
   });
 }
 
 function mockOperationsShellFetch() {
-  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
-    if (url.endsWith('/health')) return jsonResponse({ service: 'zona-cero-api', ok: true, version: 'test' });
-    if (url.includes('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull')) return jsonResponse(freshSyncPullFixture);
-    if (url.endsWith('/incidents/incident-zc-demo/work-centers')) return jsonResponse({ workCenters: [] });
-    if (url.endsWith('/incidents/incident-zc-demo/resource-reports')) return jsonResponse({ resourceReports: [] });
-    if (url.endsWith('/incidents/incident-zc-demo/dispatch-tasks')) return jsonResponse({ dispatchTasks: [] });
-    if (url.endsWith('/incidents/incident-zc-demo/sos')) {
-      return jsonResponse({ sosAlerts: [], fanout: { total: 0, queued: 0, pending: 0, failed: 0, cancelled: 0 } });
+    if (url.endsWith("/health"))
+      return jsonResponse({
+        service: "zona-cero-api",
+        ok: true,
+        version: "test",
+      });
+    if (
+      url.includes("/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull")
+    )
+      return jsonResponse(freshSyncPullFixture);
+    if (url.endsWith("/incidents/incident-zc-demo/work-centers"))
+      return jsonResponse({ workCenters: [] });
+    if (url.endsWith("/incidents/incident-zc-demo/resource-reports"))
+      return jsonResponse({ resourceReports: [] });
+    if (url.endsWith("/incidents/incident-zc-demo/dispatch-tasks"))
+      return jsonResponse({ dispatchTasks: [] });
+    if (url.endsWith("/incidents/incident-zc-demo/sos")) {
+      return jsonResponse({
+        sosAlerts: [],
+        fanout: { total: 0, queued: 0, pending: 0, failed: 0, cancelled: 0 },
+      });
     }
-    return new Response('not found', { status: 404 });
+    return new Response("not found", { status: 404 });
   });
 }
 
-
-describe('web ui telemetry and turnstile forwarding', () => {
-  it('keeps web telemetry sanitized and non-blocking', async () => {
-    const { createWebTelemetryEvent, emitChannelTelemetry } = await import('./telemetry');
-    const emit = vi.fn().mockRejectedValue(new Error('sink down'));
+describe("web ui telemetry and turnstile forwarding", () => {
+  it("keeps web telemetry sanitized and non-blocking", async () => {
+    const { createWebTelemetryEvent, emitChannelTelemetry } =
+      await import("./telemetry");
+    const emit = vi.fn().mockRejectedValue(new Error("sink down"));
 
     expect(() => {
       emitChannelTelemetry(
         { emit },
         createWebTelemetryEvent({
-          action: 'private_link.rejected',
-          result: 'rejected',
-          errorCode: 'rate_limited',
+          action: "private_link.rejected",
+          result: "rejected",
+          errorCode: "rate_limited",
         }),
       );
     }).not.toThrow();
@@ -803,24 +1361,26 @@ describe('web ui telemetry and turnstile forwarding', () => {
 
     expect(emit).toHaveBeenCalledWith(
       expect.objectContaining({
-        event: 'private_link.attempted',
-        channel: 'web-ui',
-        scope: 'web.private_link',
-        action: 'private_link.rejected',
-        errorCode: 'rate_limited',
+        event: "private_link.attempted",
+        channel: "web-ui",
+        scope: "web.private_link",
+        action: "private_link.rejected",
+        errorCode: "rate_limited",
       }),
     );
-    expect(JSON.stringify(emit.mock.calls)).not.toContain('token');
-    expect(JSON.stringify(emit.mock.calls)).not.toContain('fingerprint');
-    expect(JSON.stringify(emit.mock.calls)).not.toContain('relationHint');
+    expect(JSON.stringify(emit.mock.calls)).not.toContain("token");
+    expect(JSON.stringify(emit.mock.calls)).not.toContain("fingerprint");
+    expect(JSON.stringify(emit.mock.calls)).not.toContain("relationHint");
   });
 
-  it('forwards Turnstile header only when a token is provided', async () => {
-    const { createTurnstileHeaders } = await import('./api');
+  it("forwards Turnstile header only when a token is provided", async () => {
+    const { createTurnstileHeaders } = await import("./api");
 
     expect(createTurnstileHeaders()).toEqual({});
-    expect(createTurnstileHeaders({ turnstileToken: '  token-123  ' })).toEqual({
-      'cf-turnstile-response': 'token-123',
-    });
+    expect(createTurnstileHeaders({ turnstileToken: "  token-123  " })).toEqual(
+      {
+        "cf-turnstile-response": "token-123",
+      },
+    );
   });
 });

@@ -5,7 +5,14 @@
 :root {
   color: var(--zc-color-text);
   background: var(--zc-color-background);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
 }
 
 body {
@@ -406,21 +413,27 @@ dd {
   width: 100%;
 }
 
-.hub-tile-button .zc-card {
+.civil-action-card {
   height: 100%;
   box-sizing: border-box;
 }
 
-.hub-tile-button:hover .zc-card,
-.hub-tile-button:focus-visible .zc-card {
+.civil-action-card:focus-within,
+.civil-action-card:hover {
   border-color: var(--zc-color-primary);
 }
 
 .hub-tile__cta {
+  background: none;
+  border: none;
   color: var(--zc-color-info);
+  cursor: pointer;
   display: inline-block;
+  font: inherit;
   font-weight: 700;
   margin-top: 0.5rem;
+  padding: 0;
+  text-align: left;
 }
 
 .hub-back {
@@ -515,7 +528,11 @@ dd {
 
 .operations-map-marker {
   --marker-accent: #2f80ed;
-  --marker-accent-soft: color-mix(in srgb, var(--marker-accent) 18%, transparent);
+  --marker-accent-soft: color-mix(
+    in srgb,
+    var(--marker-accent) 18%,
+    transparent
+  );
   --marker-label-bg: rgba(255, 255, 255, 0.88);
   --marker-label-color: #0f172a;
   --marker-shift-x: 0;
@@ -538,11 +555,14 @@ dd {
   --marker-shift-x: -4.75rem;
 }
 
-
 .operations-map-marker__icon {
   align-items: center;
   background:
-    radial-gradient(circle at 32% 24%, rgba(255, 255, 255, 0.34), transparent 34%),
+    radial-gradient(
+      circle at 32% 24%,
+      rgba(255, 255, 255, 0.34),
+      transparent 34%
+    ),
     var(--marker-accent);
   border: 2px solid color-mix(in srgb, var(--marker-accent) 62%, #ffffff);
   border-radius: 999px;
@@ -609,8 +629,7 @@ dd {
   --marker-accent: #f59e0b;
   --marker-label-bg: rgba(17, 24, 39, 0.94);
   --marker-label-color: #fff7ed;
-  filter:
-    drop-shadow(0 0 14px rgba(245, 158, 11, 0.66))
+  filter: drop-shadow(0 0 14px rgba(245, 158, 11, 0.66))
     drop-shadow(0 18px 26px rgba(15, 23, 42, 0.34));
   width: 10.25rem;
 }
@@ -678,7 +697,9 @@ dd {
   .operations-map-marker {
     --marker-label-bg: rgba(17, 24, 39, 0.92);
     --marker-label-color: #f8fafc;
-    filter: drop-shadow(0 0 13px color-mix(in srgb, var(--marker-accent) 36%, transparent));
+    filter: drop-shadow(
+      0 0 13px color-mix(in srgb, var(--marker-accent) 36%, transparent)
+    );
   }
 
   .operations-map-marker__icon {
@@ -689,8 +710,7 @@ dd {
   }
 
   .operations-map-marker--selected-center {
-    filter:
-      drop-shadow(0 0 20px rgba(245, 158, 11, 0.82))
+    filter: drop-shadow(0 0 20px rgba(245, 158, 11, 0.82))
       drop-shadow(0 18px 28px rgba(0, 0, 0, 0.42));
   }
 }
@@ -708,7 +728,9 @@ dd {
 .operations-map__canvas--night .operations-map-marker {
   --marker-label-bg: rgba(6, 10, 20, 0.94);
   --marker-label-color: #e5eefc;
-  filter: drop-shadow(0 0 13px color-mix(in srgb, var(--marker-accent) 36%, transparent));
+  filter: drop-shadow(
+    0 0 13px color-mix(in srgb, var(--marker-accent) 36%, transparent)
+  );
 }
 
 .operations-map__canvas--night .operations-map-marker--selected-center {
@@ -764,7 +786,6 @@ dd {
   background: #020817;
 }
 
-
 .operations-map__canvas--night .maplibregl-map {
   background: #020817;
 }
@@ -786,4 +807,153 @@ dd {
 
 .operations-map__canvas--night .maplibregl-ctrl-attrib a {
   color: #93c5fd;
+}
+
+.nav-icon,
+.civil-icon,
+.state-pill__icon {
+  flex: 0 0 auto;
+  height: 1rem;
+  width: 1rem;
+}
+
+.hub-nav__tab {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.45rem;
+}
+
+.home-layout {
+  display: grid;
+  gap: 1rem;
+  margin: 0 auto;
+  width: min(1120px, 100%);
+}
+
+.home-layout .status-card {
+  margin: 0;
+  width: 100%;
+}
+
+.home-rail {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.home-map-card {
+  min-width: 0;
+}
+
+.civil-action-card .zc-card {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.civil-action-card__icon-row {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.civil-icon {
+  height: 1.35rem;
+  width: 1.35rem;
+}
+
+.state-pill {
+  align-items: center;
+  border: var(--zc-border-width) solid var(--zc-color-border);
+  border-radius: var(--zc-radius-pill);
+  color: var(--zc-color-text);
+  display: inline-flex;
+  font-size: 0.78rem;
+  font-weight: 850;
+  gap: 0.35rem;
+  line-height: 1;
+  padding: 0.35rem 0.55rem;
+  white-space: nowrap;
+}
+
+.state-pill--success {
+  border-color: var(--zc-color-success);
+  color: var(--zc-color-success);
+}
+
+.state-pill--warning,
+.state-pill--pending,
+.state-pill--stale {
+  border-color: var(--zc-color-warning);
+  color: var(--zc-color-warning);
+}
+
+.state-pill--risk,
+.state-pill--sos,
+.state-pill--conflict {
+  border-color: var(--zc-color-sos);
+  color: var(--zc-color-sos);
+}
+
+.state-pill--info {
+  border-color: var(--zc-color-info);
+  color: var(--zc-color-info);
+}
+
+.volunteer-steps {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.civil-step {
+  align-items: start;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.civil-step p {
+  margin-bottom: 0;
+}
+
+@media (min-width: 980px) {
+  .home-layout {
+    align-items: start;
+    grid-template-columns: minmax(0, 1.45fr) minmax(19rem, 0.55fr);
+  }
+
+  .home-rail {
+    position: sticky;
+    top: 1rem;
+  }
+}
+
+@media (max-width: 720px) {
+  .shell {
+    gap: 1rem;
+    padding: 1rem;
+  }
+
+  .hero,
+  .status-card {
+    padding: 1rem;
+  }
+
+  .hub-nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+  }
+
+  .hub-nav__tab {
+    flex: 0 0 auto;
+  }
+
+  .section-header {
+    display: grid;
+  }
+
+  .state-pill {
+    width: fit-content;
+  }
 }

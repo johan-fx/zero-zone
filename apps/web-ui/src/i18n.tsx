@@ -60,6 +60,5 @@ function resolveInitialLocale(): SupportedLocale {
     params.get('lang'),
     params.get('locale'),
     window.localStorage.getItem(storageKey),
-    window.navigator.language,
   ]);
 }

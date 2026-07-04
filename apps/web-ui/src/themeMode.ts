@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 export type AppThemeOverride = 'auto' | 'day' | 'night';
 export type AppThemeMode = 'day' | 'night';
 export type DocumentThemeName = 'light' | 'dark';
+export type CivilDocumentThemeName = 'dia' | 'noche';
 
 export const themeOverrideStorageKey = 'zc-theme-mode';
 
@@ -32,6 +33,10 @@ export function millisecondsUntilNextThemeBoundary(date: Date = new Date()): num
 
 export function toDocumentThemeName(mode: AppThemeMode): DocumentThemeName {
   return mode === 'day' ? 'light' : 'dark';
+}
+
+export function toCivilDocumentThemeName(mode: AppThemeMode): CivilDocumentThemeName {
+  return mode === 'day' ? 'dia' : 'noche';
 }
 
 function getLocalStorage(): Storage | undefined {
@@ -79,11 +84,16 @@ export function useAppThemeMode() {
 
   useEffect(() => {
     const documentTheme = toDocumentThemeName(resolvedMode);
+    const civilDocumentTheme = toCivilDocumentThemeName(resolvedMode);
     document.documentElement.dataset.zcTheme = documentTheme;
+    document.documentElement.dataset.theme = civilDocumentTheme;
     document.documentElement.dataset.zcThemeMode = override;
     return () => {
       if (document.documentElement.dataset.zcTheme === documentTheme) {
         delete document.documentElement.dataset.zcTheme;
+      }
+      if (document.documentElement.dataset.theme === civilDocumentTheme) {
+        delete document.documentElement.dataset.theme;
       }
       if (document.documentElement.dataset.zcThemeMode === override) {
         delete document.documentElement.dataset.zcThemeMode;
