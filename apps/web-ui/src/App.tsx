@@ -346,6 +346,64 @@ function civilSeverityLabel(
   }
 }
 
+type CivilWorkCenterDisplayName = {
+  label: string;
+  hasPublicName: boolean;
+};
+
+function getCivilWorkCenterDisplayName(
+  workCenter: Pick<WorkCenterSummary, "name">,
+  t: Translate,
+): CivilWorkCenterDisplayName {
+  if (isTechnicalWorkCenterName(workCenter.name)) {
+    return {
+      label: t("web.help.public_name.pending"),
+      hasPublicName: false,
+    };
+  }
+
+  return { label: workCenter.name.trim(), hasPublicName: true };
+}
+
+function isTechnicalWorkCenterName(name: string): boolean {
+  const trimmed = name.trim();
+  if (!trimmed) return true;
+
+  const normalized = trimmed.toLowerCase();
+  if (normalized.startsWith("e2e-") || normalized.startsWith("name:")) {
+    return true;
+  }
+
+  const uuidPattern = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
+  if (uuidPattern.test(trimmed)) return true;
+
+  const longGeneratedTokenPattern =
+    /\b(?=[a-z0-9_-]*[a-z])(?=[a-z0-9_-]*\d)[a-z0-9][a-z0-9_-]{13,}\b/i;
+  return longGeneratedTokenPattern.test(trimmed);
+}
+
+function countHelpPointsWithPublicLocation(
+  workCenters: readonly WorkCenterSummary[],
+): number {
+  return workCenters.filter((workCenter) => workCenter.location).length;
+}
+
+function scrollToHelpPointElement(targetId: string): void {
+  const target = document.getElementById(targetId);
+  if (!target) return;
+
+  const prefersReducedMotion =
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  target.scrollIntoView({
+    block: "start",
+    behavior: prefersReducedMotion ? "auto" : "smooth",
+  });
+  if (target instanceof HTMLElement) {
+    target.focus({ preventScroll: true });
+  }
+}
+
 function reportWebTelemetry(
   action: WebTelemetryAction,
   result: "accepted" | "rejected" | "bypassed",
@@ -738,20 +796,38 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
           />
           <p className="summary">{t("web.help.summary")}</p>
 
-          <div className="help-points-map-first">
+          <div
+            id="help-points-map"
+            className="help-points-map-first"
+            tabIndex={-1}
+          >
             <Suspense fallback={<p>{t("web.map.loading")}</p>}>
               <OperationsMapPanel
                 styleName={theme.resolvedMode}
                 copy={civilOperationsMapCopy}
               />
             </Suspense>
+            <HelpPointJumpButton
+              label={t("web.help.jump.view_list")}
+              targetId="help-points-list"
+            />
           </div>
 
+          <HelpPointsPublicLocationSummary state={workCenterState} />
+
           <section
+            id="help-points-list"
             className="help-points-list"
             aria-labelledby="help-points-list-title"
+            tabIndex={-1}
           >
-            <h3 id="help-points-list-title">{t("web.help.list.title")}</h3>
+            <div className="help-points-list__heading">
+              <h3 id="help-points-list-title">{t("web.help.list.title")}</h3>
+              <HelpPointJumpButton
+                label={t("web.help.jump.back_to_map")}
+                targetId="help-points-map"
+              />
+            </div>
             {workCenterState.status === "loading" ? (
               <p>{t("web.help.loading")}</p>
             ) : null}
@@ -1189,10 +1265,15 @@ function HomeHelpMapPreview({ state }: { state: WorkCenterState }) {
       aria-label={t("web.home.map.aria")}
     >
       {state.workCenters.slice(0, 4).map((workCenter) => (
-        <li key={workCenter.workCenterId}>
-          <span>{workCenter.name}</span>
-          <strong>{formatLocation(workCenter.location)}</strong>
-        </li>
+        (() => {
+          const displayName = getCivilWorkCenterDisplayName(workCenter, t);
+          return (
+            <li key={workCenter.workCenterId}>
+              <span>{displayName.label}</span>
+              <strong>{formatHelpPointLocation(workCenter.location, t)}</strong>
+            </li>
+          );
+        })()
       ))}
     </ol>
   );
@@ -1790,6 +1871,8 @@ function SosAlertList({ alerts }: { alerts: SosAlert[] }) {
 }
 
 function ChannelFreshnessBanner({ state }: { state: ChannelFreshnessState }) {
+  const { t } = useI18n();
+
   if (state.status === "loading") return null;
 
   if (state.status === "error") {
@@ -1800,25 +1883,22 @@ function ChannelFreshnessBanner({ state }: { state: ChannelFreshnessState }) {
         aria-live="polite"
       >
         <SectionHeader
-          eyebrow="Aviso"
-          title="No pudimos comprobar si hay cambios nuevos"
+          eyebrow={t("web.channel_warning.eyebrow")}
+          title={t("web.channel_warning.unavailable.title")}
           trailing={
             <StatePill
               tone="warning"
-              label="Revisar antes de actuar"
+              label={t("web.channel_warning.unavailable.state")}
               Icon={AlertTriangle}
             />
           }
         />
-        <p>
-          Usa esta pantalla como orientación y vuelve a intentar si vas a tomar
-          una decisión importante.
-        </p>
+        <p>{t("web.channel_warning.unavailable.body")}</p>
       </section>
     );
   }
 
-  const warning = describeChannelFreshnessWarning(state.freshness);
+  const warning = describeChannelFreshnessWarning(state.freshness, t);
   if (!warning) return null;
 
   return (
@@ -1828,7 +1908,7 @@ function ChannelFreshnessBanner({ state }: { state: ChannelFreshnessState }) {
       aria-live="polite"
     >
       <SectionHeader
-        eyebrow="Aviso"
+        eyebrow={t("web.channel_warning.eyebrow")}
         title={warning.title}
         trailing={
           <StatePill
@@ -1841,20 +1921,22 @@ function ChannelFreshnessBanner({ state }: { state: ChannelFreshnessState }) {
       <p>{warning.body}</p>
       {state.freshness.cursorLag > 0 ? (
         <p>
-          {state.freshness.cursorLag} cambios recientes todavía no aparecen
-          aquí.
+          {t("web.channel_warning.cursor_lag", {
+            count: state.freshness.cursorLag,
+          })}
         </p>
       ) : null}
       {state.freshness.hasConflicts ? (
-        <p>Hay datos que un coordinador debe revisar antes de actuar.</p>
+        <p>{t("web.channel_warning.conflicts")}</p>
       ) : null}
-      <p>Actualiza la pantalla antes de moverte o aceptar un encargo.</p>
+      <p>{t("web.channel_warning.refresh")}</p>
     </section>
   );
 }
 
 function describeChannelFreshnessWarning(
   freshness: SyncFreshness,
+  t: Translate,
 ): { title: string; body: string; stateLabel: string } | null {
   if (
     freshness.status === "fresh" &&
@@ -1865,25 +1947,76 @@ function describeChannelFreshnessWarning(
 
   if (freshness.status === "missing") {
     return {
-      title: "Falta una comprobación de cambios",
-      body: "La pantalla puede estar incompleta porque no recibimos la señal de actualización.",
-      stateLabel: "Comprobación pendiente",
+      title: t("web.channel_warning.missing.title"),
+      body: t("web.channel_warning.missing.body"),
+      stateLabel: t("web.channel_warning.missing.state"),
     };
   }
 
   if (freshness.status === "expired") {
     return {
-      title: "La información puede estar desactualizada",
-      body: "Ha pasado demasiado tiempo desde la última comprobación correcta.",
-      stateLabel: "Revisar",
+      title: t("web.channel_warning.expired.title"),
+      body: t("web.channel_warning.expired.body"),
+      stateLabel: t("web.channel_warning.expired.state"),
     };
   }
 
   return {
-    title: "Puede haber cambios recientes",
-    body: "Algunas acciones nuevas podrían no aparecer todavía en esta pantalla.",
-    stateLabel: "Actualizar",
+    title: t("web.channel_warning.stale.title"),
+    body: t("web.channel_warning.stale.body"),
+    stateLabel: t("web.channel_warning.stale.state"),
   };
+}
+
+function HelpPointJumpButton({
+  label,
+  targetId,
+}: {
+  label: string;
+  targetId: string;
+}) {
+  return (
+    <button
+      type="button"
+      className="inline-jump-link"
+      onClick={() => scrollToHelpPointElement(targetId)}
+    >
+      {label}
+    </button>
+  );
+}
+
+function HelpPointsPublicLocationSummary({
+  state,
+}: {
+  state: WorkCenterState;
+}) {
+  const { t } = useI18n();
+
+  if (state.status !== "ready") return null;
+
+  const withPublicLocation = countHelpPointsWithPublicLocation(
+    state.workCenters,
+  );
+  const withoutPublicLocation =
+    state.workCenters.length - withPublicLocation;
+
+  return (
+    <div className="help-points-public-summary" role="status">
+      <p>
+        {t("web.help.public_locations.with_count", {
+          count: withPublicLocation,
+        })}
+      </p>
+      {withoutPublicLocation > 0 ? (
+        <p>
+          {t("web.help.public_locations.without_count", {
+            count: withoutPublicLocation,
+          })}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function WorkCenterOnlineView({
@@ -1891,57 +2024,71 @@ function WorkCenterOnlineView({
 }: {
   state: Extract<WorkCenterState, { status: "ready" }>;
 }) {
+  const { t } = useI18n();
+
   if (state.workCenters.length === 0) {
-    return <p>Todavía no hay puntos de ayuda registrados.</p>;
+    return <p>{t("web.help.empty")}</p>;
   }
 
   return (
     <div className="work-center-grid">
       <div>
-        <h3>Lista</h3>
+        <h3>{t("web.help.list.cards_title")}</h3>
         <ul className="work-center-list">
-          {state.workCenters.map((workCenter) => (
-            <li key={workCenter.workCenterId}>
-              <Card tone={activationStateTone(workCenter.activationState)}>
-                <div className="card-title-row">
-                  <h4>{workCenter.name}</h4>
-                  <StatePill
-                    tone={activationStateTone(workCenter.activationState)}
-                    label={describeWorkCenterAvailability(workCenter)}
-                    Icon={CircleDot}
-                  />
-                </div>
-                <p>
-                  {workCenter.centerType ?? "Punto de ayuda"} · Prioridad{" "}
-                  {describePriority(workCenter.priority)}
-                </p>
-              </Card>
-            </li>
-          ))}
+          {state.workCenters.map((workCenter) => {
+            const displayName = getCivilWorkCenterDisplayName(workCenter, t);
+            return (
+              <li key={workCenter.workCenterId}>
+                <Card tone={activationStateTone(workCenter.activationState)}>
+                  <div className="card-title-row">
+                    <h4>{displayName.label}</h4>
+                    <StatePill
+                      tone={activationStateTone(workCenter.activationState)}
+                      label={describeWorkCenterAvailability(workCenter)}
+                      Icon={CircleDot}
+                    />
+                  </div>
+                  {!displayName.hasPublicName ? (
+                    <p>{t("web.help.public_name.note")}</p>
+                  ) : null}
+                  <p>
+                    {workCenter.centerType ?? t("web.help.center_type.default")} ·{" "}
+                    {t("web.help.priority.label")} {describePriority(workCenter.priority)}
+                  </p>
+                </Card>
+              </li>
+            );
+          })}
         </ul>
       </div>
 
       <div>
-        <h3>Detalle</h3>
+        <h3>{t("web.help.detail.title")}</h3>
         {state.selected ? (
           <WorkCenterDetailCard workCenter={state.selected} />
         ) : (
-          <p>Elige un punto de ayuda para ver más detalle.</p>
+          <p>{t("web.help.detail.choose")}</p>
         )}
       </div>
 
       <div>
-        <h3>Ubicaciones en texto</h3>
+        <h3>{t("web.help.locations.title")}</h3>
         <ol
           className="map-lite"
-          aria-label="Lista textual de ubicaciones aproximadas de puntos de ayuda"
+          aria-label={t("web.help.locations.aria")}
         >
-          {state.workCenters.map((workCenter) => (
-            <li key={workCenter.workCenterId}>
-              <span>{workCenter.name}</span>
-              <strong>{formatLocation(workCenter.location)}</strong>
-            </li>
-          ))}
+          {state.workCenters.map((workCenter) => {
+            const displayName = getCivilWorkCenterDisplayName(workCenter, t);
+            return (
+              <li key={workCenter.workCenterId}>
+                <span>{displayName.label}</span>
+                <strong>{formatHelpPointLocation(workCenter.location, t)}</strong>
+                {!displayName.hasPublicName ? (
+                  <small>{t("web.help.public_name.note")}</small>
+                ) : null}
+              </li>
+            );
+          })}
         </ol>
       </div>
     </div>
@@ -2200,6 +2347,7 @@ function WorkCenterDetailCard({
   workCenter: WorkCenterDetail;
 }) {
   const { t } = useI18n();
+  const displayName = getCivilWorkCenterDisplayName(workCenter, t);
 
   return (
     <Card
@@ -2208,12 +2356,15 @@ function WorkCenterDetailCard({
       tone={activationStateTone(workCenter.activationState)}
     >
       <div className="card-title-row">
-        <h4>{workCenter.name}</h4>
+        <h4>{displayName.label}</h4>
         <StatusBadge
           tone={activationStateTone(workCenter.activationState)}
           label={describeWorkCenterAvailability(workCenter)}
         />
       </div>
+      {!displayName.hasPublicName ? (
+        <p>{t("web.help.public_name.note")}</p>
+      ) : null}
       <StatusStrip workCenter={workCenter} />
       <dl>
         <dt>Descripción</dt>
@@ -2244,9 +2395,12 @@ function StatusStrip({
 }: {
   workCenter: WorkCenterSummary | WorkCenterDetail;
 }) {
+  const { t } = useI18n();
+  const displayName = getCivilWorkCenterDisplayName(workCenter, t);
+
   return (
     <MetaRow
-      aria-label={`${workCenter.name} estado para voluntarios`}
+      aria-label={t("web.help.status.aria", { name: displayName.label })}
       items={[
         {
           key: "status",
@@ -2283,9 +2437,15 @@ function StatusStrip({
   );
 }
 
-function formatLocation(location: WorkCenterSummary["location"]): string {
-  if (!location) return "No coordinates";
-  return `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`;
+function formatHelpPointLocation(
+  location: WorkCenterSummary["location"],
+  t: Translate,
+): string {
+  if (!location) return t("web.help.location.not_public");
+  return t("web.help.location.coordinates", {
+    latitude: location.latitude.toFixed(4),
+    longitude: location.longitude.toFixed(4),
+  });
 }
 
 function formatSosAlertLocation(

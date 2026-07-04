@@ -412,14 +412,14 @@ describe("web ui work center shell", () => {
       within(helpSection).getByRole("region", { name: "Lista y detalle" }),
     ).toBeInTheDocument();
 
-    expect(screen.getByText("41.3800, 2.1700")).toBeInTheDocument();
+    expect(screen.getByText("Coordenadas públicas: 41.3800, 2.1700")).toBeInTheDocument();
     expect(
       screen.getByText(/Triage and water distribution/),
     ).toBeInTheDocument();
     expect(screen.getByText("Aviso inicial por Telegram")).toBeInTheDocument();
 
     const status = screen.getAllByLabelText(
-      "North triage point estado para voluntarios",
+      "Estado para voluntarios de North triage point",
     )[0];
     expect(within(status).getByText("Reportado")).toBeInTheDocument();
     expect(within(status).getByText("Pendiente de confirmar")).toBeInTheDocument();
@@ -501,6 +501,130 @@ describe("web ui work center shell", () => {
     expect(
       within(helpSection).queryByText("Mapa de ayuda por país"),
     ).not.toBeInTheDocument();
+  });
+
+  it("summarizes public map locations and hides technical help point names", async () => {
+    window.localStorage.setItem("zona-cero-locale", "en");
+    const baseTechnicalWorkCenter = (({ location: _location, ...workCenter }) =>
+      workCenter)(workCenterListHappyFixture.workCenters[0]);
+    const technicalWorkCenter = {
+      ...baseTechnicalWorkCenter,
+      workCenterId: "center-e2e-generated",
+      name: "e2e-help-point-01hzy2x9demo",
+    };
+    const namedWorkCenter = {
+      ...workCenterListHappyFixture.workCenters[0],
+      workCenterId: "center-community-hall",
+      name: "Community Hall",
+      location: { latitude: 41.38, longitude: 2.17 },
+    };
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/health"))
+        return jsonResponse({
+          service: "zona-cero-api",
+          ok: true,
+          version: "test",
+        });
+      if (
+        url.includes("/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull")
+      )
+        return jsonResponse(freshSyncPullFixture);
+      if (url.endsWith("/incidents/incident-zc-demo/work-centers"))
+        return jsonResponse({
+          workCenters: [technicalWorkCenter, namedWorkCenter],
+        });
+      if (
+        url.endsWith(
+          "/incidents/incident-zc-demo/work-centers/center-e2e-generated",
+        )
+      )
+        return jsonResponse({
+          workCenter: {
+            ...workCenterDetailHappyFixture.workCenter,
+            ...technicalWorkCenter,
+            latestSignals: [],
+          },
+        });
+      if (url.endsWith("/incidents/incident-zc-demo/resource-reports"))
+        return jsonResponse(resourceReportListFixture);
+      if (url.endsWith("/incidents/incident-zc-demo/dispatch-tasks"))
+        return jsonResponse(dispatchTaskListFixture);
+      if (url.endsWith("/incidents/incident-zc-demo/sos"))
+        return jsonResponse(sosStatusFixture);
+      return new Response("not found", { status: 404 });
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Help points" }));
+
+    expect(
+      await screen.findByText("1 help point with public map location"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("1 listed below without exact public location"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByText("Help point pending public name").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getAllByText("Community Hall").length).toBeGreaterThan(0);
+    expect(
+      screen.getByText("Exact public location is not available yet."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Public coordinates: 41.3800, 2.1700"),
+    ).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent("e2e-help-point-01hzy2x9demo");
+  });
+
+  it("honors reduced-motion preferences for help point jump links", async () => {
+    window.localStorage.setItem("zona-cero-locale", "en");
+    mockOperationsShellFetch();
+    const scrollIntoView = vi.fn();
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    const originalMatchMedia = window.matchMedia;
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockReturnValue({
+        matches: true,
+        media: "(prefers-reduced-motion: reduce)",
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }),
+    });
+
+    try {
+      render(<App />);
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Help points" }),
+      );
+      fireEvent.click(await screen.findByRole("button", { name: "View list" }));
+
+      expect(scrollIntoView).toHaveBeenCalledWith({
+        block: "start",
+        behavior: "auto",
+      });
+    } finally {
+      Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+        configurable: true,
+        value: originalScrollIntoView,
+      });
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        value: originalMatchMedia,
+      });
+    }
   });
 
 
@@ -621,6 +745,62 @@ describe("web ui work center shell", () => {
     expect(banner).not.toHaveTextContent(
       /offline save|offline sync|saved offline/i,
     );
+  });
+
+  it("localizes stale freshness warnings in English", async () => {
+    window.localStorage.setItem("zona-cero-locale", "en");
+    const stalePull: SyncPullResponse = {
+      ...freshSyncPullFixture,
+      freshness: {
+        ...freshSyncPullFixture.freshness,
+        status: "stale",
+        cursorLag: 4,
+        hasConflicts: true,
+      },
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/health"))
+        return jsonResponse({
+          service: "zona-cero-api",
+          ok: true,
+          version: "test",
+        });
+      if (
+        url.includes("/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull")
+      )
+        return jsonResponse(stalePull);
+      if (url.endsWith("/incidents/incident-zc-demo/work-centers"))
+        return jsonResponse({ workCenters: [] });
+      if (url.endsWith("/incidents/incident-zc-demo/resource-reports"))
+        return jsonResponse({ resourceReports: [] });
+      if (url.endsWith("/incidents/incident-zc-demo/dispatch-tasks"))
+        return jsonResponse({ dispatchTasks: [] });
+      if (url.endsWith("/incidents/incident-zc-demo/sos"))
+        return jsonResponse({
+          sosAlerts: [],
+          fanout: {
+            total: 0,
+            queued: 0,
+            pending: 0,
+            failed: 0,
+            cancelled: 0,
+          },
+        });
+      return new Response("not found", { status: 404 });
+    });
+
+    render(<App />);
+
+    const staleTitle = await screen.findByText("Recent changes may be missing");
+    const banner = staleTitle.closest('[role="status"]');
+    expect(banner).toHaveTextContent(
+      "4 recent changes do not appear here yet.",
+    );
+    expect(banner).toHaveTextContent(
+      "Some data needs coordinator review before you act.",
+    );
+    expect(banner).not.toHaveTextContent("Puede haber cambios recientes");
   });
 
   it("shows expired and missing backend freshness without promising offline-first behavior", async () => {

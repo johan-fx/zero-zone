@@ -192,7 +192,7 @@ function OperationalMapReadyView({ map, styleName, copy }: { map: OperationalMap
             <ul>
               {markers.map((marker) => (
                 <li key={marker.id}>
-                  <strong>{marker.label}</strong>
+                  <strong>{copy.markerLabel?.(marker) ?? marker.label}</strong>
                   <span>{copy.markerMetadata(marker)}</span>
                   <span>{copy.markerDetail(marker)}</span>
                   <span>{marker.latitude.toFixed(4)}, {marker.longitude.toFixed(4)}</span>
