@@ -262,13 +262,13 @@ function getTurnstileForwardingOptions(): { turnstileToken?: string | null } {
   return { turnstileToken };
 }
 const dispatchActions: {
-  label: string;
+  labelKey: Parameters<ReturnType<typeof useI18n>["t"]>[0];
   status: Exclude<DispatchTaskStatus, "pending">;
 }[] = [
-  { label: "Me encargo", status: "accepted" },
-  { label: "Voy en camino", status: "en_route" },
-  { label: "Entregado", status: "delivered" },
-  { label: "No puedo hacerlo", status: "cancelled" },
+  { labelKey: "web.dispatch.action.accepted", status: "accepted" },
+  { labelKey: "web.dispatch.action.en_route", status: "en_route" },
+  { labelKey: "web.dispatch.action.delivered", status: "delivered" },
+  { labelKey: "web.dispatch.action.cancelled", status: "cancelled" },
 ];
 
 export function App() {
@@ -446,21 +446,28 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
           status,
         },
       );
-      setDispatchState({
-        status: "ready",
-        tasks: dispatchState.tasks.map((candidate) =>
-          candidate.dispatchTaskId === response.dispatchTask.dispatchTaskId
-            ? response.dispatchTask
-            : candidate,
-        ),
-        actionMessage: `Encargo ${response.dispatchTask.dispatchTaskId} marcado como ${describeDispatchStatus(response.dispatchTask.status)}.`,
+      setDispatchState((previous) => {
+        if (previous.status !== "ready") return previous;
+        return {
+          status: "ready",
+          tasks: previous.tasks.map((candidate) =>
+            candidate.dispatchTaskId === response.dispatchTask.dispatchTaskId
+              ? response.dispatchTask
+              : candidate,
+          ),
+          actionMessage: t("web.dispatch.action.success", {
+            dispatchTaskId: response.dispatchTask.dispatchTaskId,
+            status: describeDispatchStatus(response.dispatchTask.status, t),
+          }),
+        };
       });
       reportWebTelemetry("dispatch.completed", "accepted", startedAt);
     } catch (error: unknown) {
-      setDispatchState({
-        ...dispatchState,
-        actionMessage: errorMessage(error),
-      });
+      setDispatchState((previous) =>
+        previous.status === "ready"
+          ? { ...previous, actionMessage: errorMessage(error) }
+          : previous,
+      );
       reportWebTelemetry("dispatch.rejected", "rejected", startedAt, error);
     }
   }
@@ -504,7 +511,7 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
         },
         actionMessage: t("web.sos.action.success", {
           sosAlertId: response.sosAlert.sosAlertId,
-          status: describeSosAlertStatus(response.sosAlert.status),
+          status: describeSosAlertStatus(response.sosAlert.status, t),
           fanout: formatFanout(response.fanout, t),
         }),
       });
@@ -533,11 +540,8 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
             <LanguageSelector />
           </div>
         </div>
-        <h1 id="page-title">Ayuda cercana para vecinos y voluntarios</h1>
-        <p className="summary">
-          Encuentra puntos de ayuda, avisa qué falta, toma un encargo sencillo o
-          envía un SOS cercano sin lenguaje técnico.
-        </p>
+        <h1 id="page-title">{t("web.hero.title")}</h1>
+        <p className="summary">{t("web.hero.summary")}</p>
       </section>
 
       <section className="status-card" aria-live="polite">
@@ -579,7 +583,7 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
           aria-live="polite"
         >
           <HubBackLink onNavigate={navigate} />
-          <Suspense fallback={<p>Cargando mapa…</p>}>
+          <Suspense fallback={<p>{t("web.map.loading")}</p>}>
             <OperationsMapPanel styleName={theme.resolvedMode} />
           </Suspense>
         </section>
@@ -595,18 +599,22 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
         >
           <HubBackLink onNavigate={navigate} />
           <SectionHeader
-            eyebrow="Información para voluntarios"
-            title="Puntos de ayuda"
+            eyebrow={t("web.help.eyebrow")}
+            title={t("web.help.title")}
             titleId="work-centers-title"
             trailing={
               workCenterState.status === "ready" ? (
-                <strong>{workCenterState.workCenters.length} abiertos</strong>
+                <strong>
+                  {t("web.count.open_help_points", {
+                    count: workCenterState.workCenters.length,
+                  })}
+                </strong>
               ) : null
             }
           />
 
           {workCenterState.status === "loading" ? (
-            <p>Cargando puntos de ayuda…</p>
+            <p>{t("web.help.loading")}</p>
           ) : null}
           {workCenterState.status === "error" ? (
             <p role="alert">{workCenterState.message}</p>
@@ -625,16 +633,22 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
         >
           <HubBackLink onNavigate={navigate} />
           <SectionHeader
-            eyebrow="Avisos de vecinos"
-            title="Avisar que falta algo"
+            eyebrow={t("web.resources.eyebrow")}
+            title={t("web.resources.title")}
             titleId="resources-title"
             trailing={
               resourceState.status === "ready" ? (
-                <strong>{resourceState.reports.length} avisos</strong>
+                <strong>
+                  {t("web.count.reports", {
+                    count: resourceState.reports.length,
+                  })}
+                </strong>
               ) : null
             }
           />
-          {resourceState.status === "loading" ? <p>Cargando avisos…</p> : null}
+          {resourceState.status === "loading" ? (
+            <p>{t("web.resources.loading")}</p>
+          ) : null}
           {resourceState.status === "error" ? (
             <p role="alert">{resourceState.message}</p>
           ) : null}
@@ -652,19 +666,20 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
         >
           <HubBackLink onNavigate={navigate} />
           <SectionHeader
-            eyebrow="Emergencia cercana"
-            title="SOS cercano"
+            eyebrow={t("web.nearby_sos.eyebrow")}
+            title={t("web.nearby_sos.title")}
             titleId="sos-title"
             trailing={
               sosState.status === "ready" ? (
-                <strong>{sosState.response.sosAlerts.length} alertas</strong>
+                <strong>
+                  {t("web.count.alerts", {
+                    count: sosState.response.sosAlerts.length,
+                  })}
+                </strong>
               ) : null
             }
           />
-          <p className="summary">
-            Registra una alerta cercana en la lista de respuesta. No confirma
-            rescate ni ubicación exacta.
-          </p>
+          <p className="summary">{t("web.nearby_sos.summary")}</p>
           {sosState.status === "loading" ? <p>{t("web.sos.loading")}</p> : null}
           {sosState.status === "error" ? (
             <p role="alert">{sosState.message}</p>
@@ -689,17 +704,21 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
         >
           <HubBackLink onNavigate={navigate} />
           <SectionHeader
-            eyebrow="Tu ayuda"
-            title="Mi encargo"
+            eyebrow={t("web.dispatch.eyebrow")}
+            title={t("web.dispatch.title")}
             titleId="dispatch-title"
             trailing={
               dispatchState.status === "ready" ? (
-                <strong>{dispatchState.tasks.length} encargos</strong>
+                <strong>
+                  {t("web.count.tasks", {
+                    count: dispatchState.tasks.length,
+                  })}
+                </strong>
               ) : null
             }
           />
           {dispatchState.status === "loading" ? (
-            <p>Cargando encargos…</p>
+            <p>{t("web.dispatch.loading")}</p>
           ) : null}
           {dispatchState.status === "error" ? (
             <p role="alert">{dispatchState.message}</p>
@@ -775,20 +794,20 @@ function ThemeModeSelector({
 
 const hubNavTabs: {
   route: HubRoute;
-  label: string;
+  labelKey: Parameters<ReturnType<typeof useI18n>["t"]>[0];
   Icon: ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
 }[] = [
-  { route: "home", label: "Inicio", Icon: Home },
-  { route: "volunteer", label: "Soy voluntario", Icon: HandHeart },
-  { route: "help-points", label: "Puntos de ayuda", Icon: MapPin },
-  { route: "map", label: "Mapa", Icon: MapPin },
+  { route: "home", labelKey: "web.nav.home", Icon: Home },
+  { route: "volunteer", labelKey: "web.nav.volunteer", Icon: HandHeart },
+  { route: "help-points", labelKey: "web.nav.help_points", Icon: MapPin },
+  { route: "map", labelKey: "web.nav.map", Icon: MapPin },
   {
     route: "resource-report",
-    label: "Avisar que falta algo",
+    labelKey: "web.nav.resource_report",
     Icon: PackagePlus,
   },
-  { route: "task", label: "Mi encargo", Icon: ClipboardCheck },
-  { route: "nearby-sos", label: "SOS cercano", Icon: Siren },
+  { route: "task", labelKey: "web.nav.task", Icon: ClipboardCheck },
+  { route: "nearby-sos", labelKey: "web.nav.nearby_sos", Icon: Siren },
 ];
 
 function HubNav({
@@ -798,8 +817,10 @@ function HubNav({
   route: HubRoute;
   onNavigate: (route: HubRoute) => void;
 }) {
+  const { t } = useI18n();
+
   return (
-    <nav className="hub-nav" aria-label="Navegación civil">
+    <nav className="hub-nav" aria-label={t("web.nav.aria")}>
       {hubNavTabs.map((tab) => (
         <button
           key={tab.route}
@@ -809,7 +830,7 @@ function HubNav({
           onClick={() => onNavigate(tab.route)}
         >
           <tab.Icon className="nav-icon" aria-hidden />
-          <span>{tab.label}</span>
+          <span>{t(tab.labelKey)}</span>
         </button>
       ))}
     </nav>
@@ -821,20 +842,25 @@ function HubBackLink({
 }: {
   onNavigate: (route: HubRoute) => void;
 }) {
+  const { t } = useI18n();
+
   return (
     <button
       type="button"
       className="hub-back"
       onClick={() => onNavigate("home")}
     >
-      ← Volver al inicio
+      {t("web.hub.back")}
     </button>
   );
 }
 
 type HubTileSummary = { tone: StatusTone; countLabel: string };
 
-function summarizeWorkCenters(state: WorkCenterState): HubTileSummary {
+function summarizeWorkCenters(
+  state: WorkCenterState,
+  t: ReturnType<typeof useI18n>["t"],
+): HubTileSummary {
   if (state.status === "loading") return { tone: "info", countLabel: "…" };
   if (state.status === "error")
     return { tone: "conflict", countLabel: "Error" };
@@ -851,10 +877,18 @@ function summarizeWorkCenters(state: WorkCenterState): HubTileSummary {
       : state.workCenters.length > 0
         ? "success"
         : "info";
-  return { tone, countLabel: `${state.workCenters.length} puntos` };
+  return {
+    tone,
+    countLabel: t("web.count.help_points", {
+      count: state.workCenters.length,
+    }),
+  };
 }
 
-function summarizeResources(state: ResourceState): HubTileSummary {
+function summarizeResources(
+  state: ResourceState,
+  t: ReturnType<typeof useI18n>["t"],
+): HubTileSummary {
   if (state.status === "loading") return { tone: "info", countLabel: "…" };
   if (state.status === "error")
     return { tone: "conflict", countLabel: "Error" };
@@ -869,10 +903,13 @@ function summarizeResources(state: ResourceState): HubTileSummary {
       : state.reports.length > 0
         ? "warning"
         : "info";
-  return { tone, countLabel: `${state.reports.length} avisos` };
+  return { tone, countLabel: t("web.count.reports", { count: state.reports.length }) };
 }
 
-function summarizeDispatch(state: DispatchState): HubTileSummary {
+function summarizeDispatch(
+  state: DispatchState,
+  t: ReturnType<typeof useI18n>["t"],
+): HubTileSummary {
   if (state.status === "loading") return { tone: "info", countLabel: "…" };
   if (state.status === "error")
     return { tone: "conflict", countLabel: "Error" };
@@ -884,10 +921,13 @@ function summarizeDispatch(state: DispatchState): HubTileSummary {
     : state.tasks.length > 0
       ? "success"
       : "info";
-  return { tone, countLabel: `${state.tasks.length} encargos` };
+  return { tone, countLabel: t("web.count.tasks", { count: state.tasks.length }) };
 }
 
-function summarizeSos(state: SosState): HubTileSummary {
+function summarizeSos(
+  state: SosState,
+  t: ReturnType<typeof useI18n>["t"],
+): HubTileSummary {
   if (state.status === "loading") return { tone: "info", countLabel: "…" };
   if (state.status === "error")
     return { tone: "conflict", countLabel: "Error" };
@@ -895,7 +935,12 @@ function summarizeSos(state: SosState): HubTileSummary {
     (alert) => alert.status === "open",
   );
   const tone: StatusTone = hasOpen ? "sos" : "success";
-  return { tone, countLabel: `${state.response.sosAlerts.length} alertas` };
+  return {
+    tone,
+    countLabel: t("web.count.alerts", {
+      count: state.response.sosAlerts.length,
+    }),
+  };
 }
 
 function HomeDashboard({
@@ -911,77 +956,80 @@ function HomeDashboard({
   sosState: SosState;
   onNavigate: (route: HubRoute) => void;
 }) {
-  const workCenters = summarizeWorkCenters(workCenterState);
-  const resources = summarizeResources(resourceState);
-  const dispatch = summarizeDispatch(dispatchState);
-  const sos = summarizeSos(sosState);
+  const { t } = useI18n();
+  const workCenters = summarizeWorkCenters(workCenterState, t);
+  const resources = summarizeResources(resourceState, t);
+  const dispatch = summarizeDispatch(dispatchState, t);
+  const sos = summarizeSos(sosState, t);
 
   return (
-    <section className="home-layout" aria-label="Inicio">
+    <section className="home-layout" aria-label={t("web.nav.home")}>
       <section
         className="status-card home-map-card"
         aria-labelledby="home-map-title"
         aria-live="polite"
       >
         <SectionHeader
-          eyebrow="Vista rápida"
-          title="Mapa de ayuda cercana"
+          eyebrow={t("web.home.map.eyebrow")}
+          title={t("web.home.map.title")}
           titleId="home-map-title"
           trailing={
             workCenterState.status === "ready" ? (
-              <strong>{workCenterState.workCenters.length} puntos</strong>
+              <strong>
+                {t("web.count.help_points", {
+                  count: workCenterState.workCenters.length,
+                })}
+              </strong>
             ) : null
           }
         />
-        <p className="summary">
-          Mira dónde hay ayuda y qué avisos requieren atención antes de moverte.
-        </p>
+        <p className="summary">{t("web.home.map.summary")}</p>
         <HomeHelpMapPreview state={workCenterState} />
       </section>
 
-      <aside className="home-rail" aria-label="Acciones principales">
+      <aside className="home-rail" aria-label={t("web.home.actions.aria")}>
         <CivilActionCard
-          title="Soy voluntario"
-          description="Empieza por saber dónde ir, qué llevar y cómo evitar duplicar esfuerzos."
+          title={t("web.home.volunteer.title")}
+          description={t("web.home.volunteer.description")}
           tone="success"
           Icon={HandHeart}
-          actionLabel="Ver pasos"
+          actionLabel={t("web.home.volunteer.action")}
           onOpen={() => onNavigate("volunteer")}
         />
         <CivilActionCard
-          title="Puntos de ayuda"
-          description="Consulta puntos abiertos, ubicación aproximada y detalles del lugar."
+          title={t("web.help.title")}
+          description={t("web.home.help_points.description")}
           tone={workCenters.tone}
           badge={workCenters.countLabel}
           Icon={MapPin}
-          actionLabel="Buscar punto"
+          actionLabel={t("web.home.help_points.action")}
           onOpen={() => onNavigate("help-points")}
         />
         <CivilActionCard
-          title="Avisar que falta algo"
-          description="Revisa necesidades y sobrantes para informar agua, mantas, comida u otros recursos."
+          title={t("web.resources.title")}
+          description={t("web.home.resources.description")}
           tone={resources.tone}
           badge={resources.countLabel}
           Icon={PackagePlus}
-          actionLabel="Ver avisos"
+          actionLabel={t("web.home.resources.action")}
           onOpen={() => onNavigate("resource-report")}
         />
         <CivilActionCard
-          title="Mi encargo"
-          description="Acepta o actualiza una entrega concreta sin tocar pantallas de coordinación."
+          title={t("web.dispatch.title")}
+          description={t("web.home.dispatch.description")}
           tone={dispatch.tone}
           badge={dispatch.countLabel}
           Icon={ClipboardCheck}
-          actionLabel="Abrir encargo"
+          actionLabel={t("web.home.dispatch.action")}
           onOpen={() => onNavigate("task")}
         />
         <CivilActionCard
-          title="SOS cercano"
-          description="Usa esta opción solo si alguien necesita ayuda urgente cerca de ti."
+          title={t("web.nearby_sos.title")}
+          description={t("web.home.sos.description")}
           tone={sos.tone}
           badge={sos.countLabel}
           Icon={Siren}
-          actionLabel="Abrir SOS"
+          actionLabel={t("web.home.sos.action")}
           onOpen={() => onNavigate("nearby-sos")}
         />
       </aside>
@@ -990,15 +1038,16 @@ function HomeDashboard({
 }
 
 function HomeHelpMapPreview({ state }: { state: WorkCenterState }) {
-  if (state.status === "loading") return <p>Cargando puntos cercanos…</p>;
+  const { t } = useI18n();
+  if (state.status === "loading") return <p>{t("web.home.map.loading")}</p>;
   if (state.status === "error") return <p role="alert">{state.message}</p>;
   if (state.workCenters.length === 0)
-    return <p>Todavía no hay puntos con ubicación para mostrar.</p>;
+    return <p>{t("web.home.map.empty")}</p>;
 
   return (
     <ol
       className="map-lite home-map-lite"
-      aria-label="Puntos de ayuda cercanos"
+      aria-label={t("web.home.map.aria")}
     >
       {state.workCenters.slice(0, 4).map((workCenter) => (
         <li key={workCenter.workCenterId}>
@@ -1015,6 +1064,8 @@ function VolunteerGuide({
 }: {
   onNavigate: (route: HubRoute) => void;
 }) {
+  const { t } = useI18n();
+
   return (
     <section
       className="status-card volunteer-card"
@@ -1022,40 +1073,40 @@ function VolunteerGuide({
     >
       <HubBackLink onNavigate={onNavigate} />
       <SectionHeader
-        eyebrow="Guía civil"
-        title="Soy voluntario"
+        eyebrow={t("web.volunteer.eyebrow")}
+        title={t("web.volunteer.title")}
         titleId="volunteer-title"
         trailing={
           <StatePill
             tone="success"
-            label="Listo para empezar"
+            label={t("web.volunteer.ready")}
             Icon={CheckCircle2}
           />
         }
       />
       <div className="volunteer-steps">
         <CivilStep
-          title="1. Elige un punto cercano"
-          body="Revisa la ubicación aproximada y evita ir a lugares saturados."
+          title={t("web.volunteer.step1.title")}
+          body={t("web.volunteer.step1.body")}
           Icon={MapPin}
         />
         <CivilStep
-          title="2. Lleva algo concreto"
-          body="Prioriza lo que los avisos piden: agua, comida, mantas o transporte."
+          title={t("web.volunteer.step2.title")}
+          body={t("web.volunteer.step2.body")}
           Icon={PackagePlus}
         />
         <CivilStep
-          title="3. Toma un encargo"
-          body="Si puedes completar una entrega, márcala para que otros no la repitan."
+          title={t("web.volunteer.step3.title")}
+          body={t("web.volunteer.step3.body")}
           Icon={ClipboardCheck}
         />
       </div>
       <div className="action-row">
         <button type="button" onClick={() => onNavigate("help-points")}>
-          Buscar punto de ayuda
+          {t("web.volunteer.help_points.action")}
         </button>
         <button type="button" onClick={() => onNavigate("task")}>
-          Ver mi encargo
+          {t("web.volunteer.task.action")}
         </button>
       </div>
     </section>
@@ -1527,37 +1578,39 @@ function SosPanel({
 }
 
 function FanoutStrip({ fanout }: { fanout: SosFanoutStatus }) {
+  const { t } = useI18n();
+
   return (
     <MetaRow
-      aria-label="Estado de avisos SOS"
+      aria-label={t("web.sos.fanout.aria")}
       items={[
         {
           key: "total",
-          label: "Avisos",
+          label: t("web.sos.fanout.total"),
           value: fanout.total,
           tone: sosFanoutStatTone("total"),
         },
         {
           key: "queued",
-          label: "Por enviar",
+          label: t("web.sos.fanout.queued"),
           value: fanout.queued,
           tone: sosFanoutStatTone("queued"),
         },
         {
           key: "pending",
-          label: "En revisión",
+          label: t("web.sos.fanout.pending"),
           value: fanout.pending,
           tone: sosFanoutStatTone("pending"),
         },
         {
           key: "failed",
-          label: "Con problema",
+          label: t("web.sos.fanout.failed"),
           value: fanout.failed,
           tone: sosFanoutStatTone("failed"),
         },
         {
           key: "cancelled",
-          label: "Cancelados",
+          label: t("web.sos.fanout.cancelled"),
           value: fanout.cancelled,
           tone: sosFanoutStatTone("cancelled"),
         },
@@ -1567,8 +1620,9 @@ function FanoutStrip({ fanout }: { fanout: SosFanoutStatus }) {
 }
 
 function SosAlertList({ alerts }: { alerts: SosAlert[] }) {
+  const { t } = useI18n();
   if (alerts.length === 0)
-    return <p>No hay avisos SOS registrados para este incidente.</p>;
+    return <p>{t("web.sos.empty")}</p>;
 
   return (
     <ul className="work-center-list">
@@ -1576,15 +1630,19 @@ function SosAlertList({ alerts }: { alerts: SosAlert[] }) {
         <li key={alert.sosAlertId}>
           <Card tone={sosAlertStatusTone(alert.status)}>
             <div className="card-title-row">
-              <h4>Aviso SOS recibido</h4>
+              <h4>{t("web.sos.alert.title")}</h4>
               <StatusBadge
                 tone={sosAlertStatusTone(alert.status)}
-                label={describeSosAlertStatus(alert.status)}
+                label={describeSosAlertStatus(alert.status, t)}
               />
             </div>
-            <p>{describeSosSeverity(alert.severity)}</p>
-            <p>Aviso recibido por {describeSourceChannel(alert.sourceChannel)}</p>
-            <p>{formatSosAlertLocation(alert)}</p>
+            <p>{describeSosSeverity(alert.severity, t)}</p>
+            <p>
+              {t("web.sos.alert.source", {
+                source: describeSourceChannel(alert.sourceChannel, t),
+              })}
+            </p>
+            <p>{formatSosAlertLocation(alert, t)}</p>
           </Card>
         </li>
       ))}
@@ -1752,7 +1810,8 @@ function WorkCenterOnlineView({
 }
 
 function ResourceReportView({ reports }: { reports: ResourceReportSummary[] }) {
-  if (reports.length === 0) return <p>Todavía no hay avisos de recursos.</p>;
+  const { t } = useI18n();
+  if (reports.length === 0) return <p>{t("web.resources.empty")}</p>;
 
   const needed = reports.filter((report) => report.reportKind === "needed");
   const surplus = reports.filter((report) => report.reportKind === "surplus");
@@ -1760,13 +1819,13 @@ function ResourceReportView({ reports }: { reports: ResourceReportSummary[] }) {
   return (
     <div className="resource-grid">
       <ResourceColumn
-        title="Hace falta"
-        emptyText="Sin avisos de faltantes."
+        title={t("web.resources.needed.title")}
+        emptyText={t("web.resources.needed.empty")}
         reports={needed}
       />
       <ResourceColumn
-        title="Sobra"
-        emptyText="Sin avisos de sobrantes."
+        title={t("web.resources.surplus.title")}
+        emptyText={t("web.resources.surplus.empty")}
         reports={surplus}
       />
     </div>
@@ -1782,6 +1841,8 @@ function ResourceColumn({
   emptyText: string;
   reports: ResourceReportSummary[];
 }) {
+  const { t } = useI18n();
+
   return (
     <div>
       <h3>{title}</h3>
@@ -1794,17 +1855,21 @@ function ResourceColumn({
                 <h4>{report.category}</h4>
                 <StatePill
                   tone={urgencyTone(report.urgency)}
-                  label={describeUrgency(report.urgency)}
+                  label={describeUrgency(report.urgency, t)}
                   Icon={AlertTriangle}
                 />
               </div>
               <p>{report.quantityApprox}</p>
-              <p>{report.workCenterId ? "Punto de ayuda asignado" : "Sin punto asignado"}</p>
               <p>
-                Notas:{" "}
+                {report.workCenterId
+                  ? t("web.resources.assigned")
+                  : t("web.resources.unassigned")}
+              </p>
+              <p>
+                {t("web.resources.notes.label")}{" "}
                 {report.constraints.length
                   ? report.constraints.join(", ")
-                  : "sin notas"}
+                  : t("web.resources.notes.empty")}
               </p>
             </Card>
           </li>
@@ -1824,8 +1889,9 @@ function DispatchTaskView({
     status: Exclude<DispatchTaskStatus, "pending">,
   ) => void;
 }) {
+  const { t } = useI18n();
   if (state.tasks.length === 0)
-    return <p>No tienes encargos disponibles todavía.</p>;
+    return <p>{t("web.dispatch.empty")}</p>;
 
   return (
     <div>
@@ -1843,28 +1909,36 @@ function DispatchTaskView({
                   <h4>{task.category}</h4>
                   <StatePill
                     tone={dispatchStatusTone(task.status)}
-                    label={describeDispatchStatus(task.status)}
+                    label={describeDispatchStatus(task.status, t)}
                     Icon={ClipboardCheck}
                   />
                 </div>
                 <p>{task.quantityApprox}</p>
                 <p>
                   {task.targetWorkCenterId
-                    ? "Entrega en un punto de ayuda asignado"
-                    : "Punto de entrega por confirmar"}
+                    ? t("web.dispatch.destination.assigned")
+                    : t("web.dispatch.destination.pending")}
                 </p>
               </div>
               <div className="action-row">
                 {dispatchActions.map((action) => (
+                  (() => {
+                    const actionLabel = t(action.labelKey);
+                    return (
                   <button
                     key={action.status}
                     type="button"
                     onClick={() => onAction(task, action.status)}
                     disabled={task.status === action.status}
-                    aria-label={`${action.label}: ${task.category}`}
+                    aria-label={t("web.dispatch.action.aria", {
+                      action: actionLabel,
+                      category: task.category,
+                    })}
                   >
-                    {action.label}
+                    {actionLabel}
                   </button>
+                    );
+                  })()
                 ))}
               </div>
             </Card>
@@ -1897,19 +1971,25 @@ function describePriority(priority: WorkCenterSummary["priority"]): string {
   return "baja";
 }
 
-function describeUrgency(urgency: ResourceReportSummary["urgency"]): string {
-  if (urgency === "critical") return "Muy urgente";
-  if (urgency === "high") return "Urgente";
-  if (urgency === "medium") return "Importante";
-  return "Puede esperar";
+function describeUrgency(
+  urgency: ResourceReportSummary["urgency"],
+  t: ReturnType<typeof useI18n>["t"],
+): string {
+  if (urgency === "critical") return t("web.urgency.critical");
+  if (urgency === "high") return t("web.urgency.high");
+  if (urgency === "medium") return t("web.urgency.medium");
+  return t("web.urgency.low");
 }
 
-function describeDispatchStatus(status: DispatchTaskStatus): string {
-  if (status === "accepted") return "Aceptado";
-  if (status === "en_route") return "En camino";
-  if (status === "delivered") return "Entregado";
-  if (status === "cancelled") return "Cancelado";
-  return "Disponible";
+function describeDispatchStatus(
+  status: DispatchTaskStatus,
+  t: ReturnType<typeof useI18n>["t"],
+): string {
+  if (status === "accepted") return t("web.dispatch.status.accepted");
+  if (status === "en_route") return t("web.dispatch.status.en_route");
+  if (status === "delivered") return t("web.dispatch.status.delivered");
+  if (status === "cancelled") return t("web.dispatch.status.cancelled");
+  return t("web.dispatch.status.pending");
 }
 
 function describeWorkCenterStatus(status: WorkCenterSummary["status"]): string {
@@ -1947,23 +2027,32 @@ function describeSignalType(signalType: string): string {
   return "Aviso";
 }
 
-function describeSourceChannel(sourceChannel?: string | null): string {
+function describeSourceChannel(
+  sourceChannel: string | null | undefined,
+  t: ReturnType<typeof useI18n>["t"],
+): string {
   if (sourceChannel === "telegram") return "Telegram";
-  if (sourceChannel === "web-ui") return "la web";
-  if (sourceChannel === "mobile") return "la app móvil";
-  return "un canal no identificado";
+  if (sourceChannel === "web-ui") return t("web.source.web");
+  if (sourceChannel === "mobile") return t("web.source.mobile");
+  return t("web.source.unknown");
 }
 
-function describeSosAlertStatus(status: SosAlert["status"]): string {
-  if (status === "open") return "Activo";
-  return "Cancelado";
+function describeSosAlertStatus(
+  status: SosAlert["status"],
+  t: ReturnType<typeof useI18n>["t"],
+): string {
+  if (status === "open") return t("web.sos.status.open");
+  return t("web.sos.status.cancelled");
 }
 
-function describeSosSeverity(severity: SosAlert["severity"]): string {
-  if (severity === "medical") return "Emergencia médica";
-  if (severity === "security") return "Riesgo de seguridad";
-  if (severity === "trapped") return "Persona atrapada";
-  return "Emergencia reportada";
+function describeSosSeverity(
+  severity: SosAlert["severity"],
+  t: ReturnType<typeof useI18n>["t"],
+): string {
+  if (severity === "medical") return t("web.sos.severity.medical");
+  if (severity === "security") return t("web.sos.severity.security");
+  if (severity === "trapped") return t("web.sos.severity.trapped");
+  return t("web.sos.severity.critical");
 }
 
 function WorkCenterDetailCard({
@@ -1971,6 +2060,8 @@ function WorkCenterDetailCard({
 }: {
   workCenter: WorkCenterDetail;
 }) {
+  const { t } = useI18n();
+
   return (
     <Card
       as="article"
@@ -1998,7 +2089,10 @@ function WorkCenterDetailCard({
       <ul className="signal-list" aria-label="Últimos avisos recibidos">
         {workCenter.latestSignals.map((signal) => (
           <li key={signal.signalId}>
-            {describeSignalType(signal.signalType)} por {describeSourceChannel(signal.sourceChannel)}
+            {t("web.work_center.signal.source", {
+              signalType: describeSignalType(signal.signalType),
+              source: describeSourceChannel(signal.sourceChannel, t),
+            })}
           </li>
         ))}
       </ul>
@@ -2055,11 +2149,16 @@ function formatLocation(location: WorkCenterSummary["location"]): string {
   return `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`;
 }
 
-function formatSosAlertLocation(alert: SosAlert): string {
-  if (!alert.location) return "Ubicación no informada";
+function formatSosAlertLocation(
+  alert: SosAlert,
+  t: ReturnType<typeof useI18n>["t"],
+): string {
+  if (!alert.location) return t("web.sos.location.missing");
   if (alert.location.accuracyMeters !== undefined)
-    return `Ubicación aproximada con precisión de ${alert.location.accuracyMeters} m`;
-  return "Ubicación informada";
+    return t("web.sos.location.accuracy", {
+      accuracyMeters: alert.location.accuracyMeters,
+    });
+  return t("web.sos.location.present");
 }
 
 function formatFanout(
