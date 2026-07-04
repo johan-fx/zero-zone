@@ -475,7 +475,7 @@ function sanitizeTelegramIncidentJoinFacts(value: unknown): TelegramIntentClassi
   }
 
   const desiredRoleSource = source.desiredRole ?? source.roleHint;
-  if (desiredRoleSource !== undefined) {
+  if (isStringIn(desiredRoleSource, incidentRoles)) {
     sanitized.desiredRole = desiredRoleSource;
   }
 
@@ -483,7 +483,7 @@ function sanitizeTelegramIncidentJoinFacts(value: unknown): TelegramIntentClassi
     sanitized.displayNameHint = source.displayNameHint.trim();
   }
 
-  if (source.localeHint !== undefined) {
+  if (isStringIn(source.localeHint, supportedLocales)) {
     sanitized.localeHint = source.localeHint;
   }
 

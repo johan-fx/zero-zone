@@ -1321,7 +1321,7 @@ describe('api worker', () => {
     expect(afterMemberships?.count).toBe(beforeMemberships?.count);
   });
 
-  it('rejects invalid natural incident join desiredRole candidates without starting a join flow', async () => {
+  it('drops invalid natural incident join desiredRole candidates while keeping safe join hints', async () => {
     const classifier = enableTelegramIntentClassifier(
       vi.fn().mockResolvedValue({
         intent: 'incident_join',
@@ -1334,18 +1334,22 @@ describe('api worker', () => {
       }),
     );
     const telegramUserId = 25221;
+    const beforeMemberships = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM incident_memberships').first<{ count: number }>();
 
     await expect(postTelegramMessage(telegramUserId, 'join incident demo as admin', 'JoinInvalid', 'en')).resolves.toMatchObject({
       accepted: true,
       command: null,
-      responseText: expect.stringContaining('I’m not sure which operation you need'),
+      responseText: expect.stringContaining('What pseudonym should we show to coordinators?'),
     });
     expect(classifier).toHaveBeenCalledTimes(1);
 
-    const state = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM telegram_conversation_states WHERE state_key = ?')
+    const state = await (env as Env).DB.prepare('SELECT step FROM telegram_conversation_states WHERE state_key = ?')
       .bind(`chat:${telegramUserId}:from:${telegramUserId}`)
-      .first<{ count: number }>();
-    expect(state?.count).toBe(0);
+      .first<{ step: string }>();
+    expect(state).toMatchObject({ step: 'awaitingPseudonym' });
+
+    const afterMemberships = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM incident_memberships').first<{ count: number }>();
+    expect(afterMemberships?.count).toBe(beforeMemberships?.count);
   });
 
   it('routes natural SOS messages to SOS context without creating alerts or persisting sensitive facts', async () => {

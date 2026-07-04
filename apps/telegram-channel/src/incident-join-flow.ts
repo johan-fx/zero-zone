@@ -152,9 +152,10 @@ async function startIncidentSelection(
       };
     }
 
-    const incidentList = formatIncidentList(incidentHintSelection.status === 'ambiguous' ? incidentHintSelection.incidents : incidents);
+    const selectableIncidents = incidentHintSelection.status === 'ambiguous' ? incidentHintSelection.incidents : incidents;
+    const incidentList = formatIncidentList(selectableIncidents);
     return {
-      state: { step: 'awaitingIncident', incidents, externalUserId, preferredLocale: locale, displayNameHint, desiredRole },
+      state: { step: 'awaitingIncident', incidents: selectableIncidents, externalUserId, preferredLocale: locale, displayNameHint, desiredRole },
       responseText: incidentHintSelection.status === 'ambiguous'
         ? formatMessage(locale, 'telegram.join.incident_hint.ambiguous', { incidentList })
         : formatMessage(locale, 'telegram.join.start', { incidentList }),

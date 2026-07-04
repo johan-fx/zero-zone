@@ -416,7 +416,7 @@ describe('telegram intent classifier', () => {
     expect(result.extractedFacts).not.toHaveProperty('roleHint');
   });
 
-  it('rejects incident join desiredRole values outside the role contract', async () => {
+  it('drops invalid incident join optional enums while preserving safe hints', async () => {
     const ai = createAi({
       response: {
         intent: 'incident_join',
@@ -426,15 +426,23 @@ describe('telegram intent classifier', () => {
           signal: 'request_join',
           incidentHint: 'demo',
           desiredRole: 'admin',
+          localeHint: 'ca',
         },
       },
     });
 
-    await expect(classifyTelegramIntent({ ai, text: 'join demo as admin' })).resolves.toMatchObject({
-      intent: 'unknown',
-      confidence: 0,
-      extractedFacts: {},
+    const result = await classifyTelegramIntent({ ai, text: 'join demo as admin' });
+
+    expect(result).toMatchObject({
+      intent: 'incident_join',
+      confidence: 0.96,
+      extractedFacts: {
+        signal: 'request_join',
+        incidentHint: 'demo',
+      },
     });
+    expect(result.extractedFacts).not.toHaveProperty('desiredRole');
+    expect(result.extractedFacts).not.toHaveProperty('localeHint');
   });
 
   it('rejects dispatch status candidates outside the canonical contract', async () => {

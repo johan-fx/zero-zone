@@ -635,13 +635,19 @@ describe('telegram channel flows', () => {
   });
 
   it('does not auto-select an ambiguous incident hint from flowContext', async () => {
+    const unrelatedIncident = {
+      ...incidentListHappyFixture.incidents[0],
+      incidentId: 'incident-zc-unrelated',
+      name: 'Unrelated Incident',
+      locationName: 'Unrelated location',
+    };
     const duplicateIncident = {
       ...incidentListHappyFixture.incidents[0],
       incidentId: 'incident-zc-second',
       locationName: 'Second location',
     };
     const ports = createPorts({
-      listIncidents: vi.fn().mockResolvedValue({ incidents: [incidentListHappyFixture.incidents[0], duplicateIncident] }),
+      listIncidents: vi.fn().mockResolvedValue({ incidents: [unrelatedIncident, incidentListHappyFixture.incidents[0], duplicateIncident] }),
     });
     const flowContext: Extract<TelegramFlowContext, { sourceIntent: 'incident_join' }> = {
       sourceIntent: 'incident_join',
@@ -656,12 +662,23 @@ describe('telegram channel flows', () => {
       confidence: 0.88,
     };
 
-    const result = await handleTelegramIncidentJoinFlow({ step: 'idle' }, telegramUserUpdate('join the demo incident'), ports, flowContext);
+    let result = await handleTelegramIncidentJoinFlow({ step: 'idle' }, telegramUserUpdate('join the demo incident'), ports, flowContext);
 
     expect(result.state).toMatchObject({ step: 'awaitingIncident', displayNameHint: 'Field Hint', desiredRole: 'coordinator' });
+    expect(result.state.step === 'awaitingIncident' ? result.state.incidents.map((incident) => incident.incidentId) : []).toEqual([
+      'incident-zc-demo',
+      'incident-zc-second',
+    ]);
     expect(result.responseText).toContain('more than one incident');
     expect(ports.getIncidentConfig).not.toHaveBeenCalled();
     expect(ports.joinIncident).not.toHaveBeenCalled();
+
+    result = await handleTelegramIncidentJoinFlow(result.state, telegramUserUpdate('1'), ports);
+
+    expect(result.state).toMatchObject({
+      step: 'awaitingPseudonym',
+      incident: expect.objectContaining({ incidentId: 'incident-zc-demo' }),
+    });
   });
 
 
