@@ -1,6 +1,7 @@
 import {
   TelegramDispatchIntentFactsSchema,
   TelegramFamilyReunificationIntentFactsSchema,
+  TelegramIncidentJoinIntentFactsSchema,
   TelegramIntentClassificationSchema,
   telegramDispatchActions,
   telegramDispatchFactSignals,
@@ -14,6 +15,7 @@ import {
   telegramWorkCenterFactSignals,
   dispatchTaskStatuses,
   incidentRoles,
+  supportedLocales,
   sosSeverities,
   workCenterPriorities,
   workCenterStatuses,
@@ -165,10 +167,20 @@ const TELEGRAM_INTENT_RESPONSE_SCHEMA = {
           maxLength: 100,
           description: 'For incident_join only: short incident id or label if stated.',
         },
-        roleHint: {
+        desiredRole: {
           type: 'string',
           enum: incidentRoles,
-          description: 'For incident_join only: requested incident role if explicitly stated.',
+          description: 'For incident_join only: requested incident role candidate if explicitly stated. Candidate only; never grant permissions or join automatically.',
+        },
+        displayNameHint: {
+          type: 'string',
+          maxLength: 120,
+          description: 'For incident_join only: short display name or pseudonym candidate if explicitly stated.',
+        },
+        localeHint: {
+          type: 'string',
+          enum: supportedLocales,
+          description: 'For incident_join only: preferred locale candidate if explicitly stated.',
         },
       },
     },
@@ -406,7 +418,8 @@ function buildTelegramIntentSystemPrompt(): string {
     'Dispatch examples ES: "coordina 2 ambulancias al refugio norte" => intent dispatch, signal logistics_request, action coordinate, category "ambulancias", quantityApprox "2", destinationHint "refugio norte".',
     'Dispatch examples EN: "create a water delivery for north gate, 10 boxes" => intent dispatch, signal assignment, action create, category "water", quantityApprox "10 boxes", destinationHint "north gate".',
     'Dispatch update examples ES: "marca la entrega del almacén como en camino" => intent dispatch, signal status_update, action update, taskHint "entrega del almacén", statusCandidate en_route. Example EN: "mark north gate delivery delivered" => intent dispatch, signal status_update, action update, taskHint "north gate delivery", statusCandidate delivered.',
-    'For incident_join: signal, incidentHint, roleHint. Example ES: "quiero unirme al incidente demo como voluntario" => intent incident_join, signal request_join, incidentHint "demo", roleHint volunteer. Example EN: "switch me to incident north" => intent incident_join, signal change_incident, incidentHint "north".',
+    'For incident_join: signal, incidentHint, desiredRole, displayNameHint, localeHint. desiredRole is candidate-only; never grant permissions, never call joinIncident, and never join automatically from classification.',
+    'Incident join examples ES: "quiero unirme al incidente demo como voluntario" => intent incident_join, signal request_join, incidentHint "demo", desiredRole volunteer. Example EN: "switch me to incident north" => intent incident_join, signal change_incident, incidentHint "north".',
     'Resource directions: "tengo", "puedo llevar", "me sobra", "tenemos para entregar" => offer; "necesito", "necesitamos", "hace falta" => need.',
     'Resource examples: "tengo agua potable, dónde la necesitan?" => intent resource, resourceDirection offer, resourceType water, resourceLabel "agua potable", implicitQuestion where_needed.',
     'Resource examples: "puedo llevar comida" => intent resource, resourceDirection offer, resourceType food.',
@@ -420,14 +433,25 @@ function sanitizeTelegramIntentClassificationPayload(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
 
   const record = value as Record<string, unknown>;
-  if (record.intent !== 'family_reunification') return value;
+  if (record.intent === 'family_reunification') {
+    return {
+      intent: record.intent,
+      confidence: record.confidence,
+      reason: 'Family reunification route detected; sensitive details discarded.',
+      extractedFacts: sanitizeTelegramFamilyReunificationFacts(record.extractedFacts),
+    };
+  }
 
-  return {
-    intent: record.intent,
-    confidence: record.confidence,
-    reason: 'Family reunification route detected; sensitive details discarded.',
-    extractedFacts: sanitizeTelegramFamilyReunificationFacts(record.extractedFacts),
-  };
+  if (record.intent === 'incident_join') {
+    return {
+      intent: record.intent,
+      confidence: record.confidence,
+      reason: record.reason,
+      extractedFacts: sanitizeTelegramIncidentJoinFacts(record.extractedFacts),
+    };
+  }
+
+  return value;
 }
 
 function sanitizeTelegramFamilyReunificationFacts(value: unknown): TelegramIntentClassification['extractedFacts'] {
@@ -441,9 +465,39 @@ function sanitizeTelegramFamilyReunificationFacts(value: unknown): TelegramInten
   return TelegramFamilyReunificationIntentFactsSchema.parse(sanitized);
 }
 
+function sanitizeTelegramIncidentJoinFacts(value: unknown): TelegramIntentClassification['extractedFacts'] {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  const sanitized: Record<string, unknown> = {};
+
+  if (isStringIn(source.signal, telegramIncidentJoinFactSignals)) sanitized.signal = source.signal;
+  if (typeof source.incidentHint === 'string' && source.incidentHint.trim().length > 0 && source.incidentHint.trim().length <= 100) {
+    sanitized.incidentHint = source.incidentHint.trim();
+  }
+
+  const desiredRoleSource = source.desiredRole ?? source.roleHint;
+  if (desiredRoleSource !== undefined) {
+    sanitized.desiredRole = desiredRoleSource;
+  }
+
+  if (typeof source.displayNameHint === 'string' && source.displayNameHint.trim().length > 0 && source.displayNameHint.trim().length <= 120) {
+    sanitized.displayNameHint = source.displayNameHint.trim();
+  }
+
+  if (source.localeHint !== undefined) {
+    sanitized.localeHint = source.localeHint;
+  }
+
+  return TelegramIncidentJoinIntentFactsSchema.parse(sanitized);
+}
+
 function hasValidIntentSpecificFacts(classification: TelegramIntentClassification): boolean {
-  if (classification.intent !== 'dispatch') return true;
-  return TelegramDispatchIntentFactsSchema.safeParse(classification.extractedFacts).success;
+  if (classification.intent === 'dispatch') {
+    return TelegramDispatchIntentFactsSchema.safeParse(classification.extractedFacts).success;
+  }
+  if (classification.intent === 'incident_join') {
+    return TelegramIncidentJoinIntentFactsSchema.safeParse(classification.extractedFacts).success;
+  }
+  return true;
 }
 
 function isStringIn<const T extends readonly string[]>(value: unknown, allowed: T): value is T[number] {

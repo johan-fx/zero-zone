@@ -70,6 +70,9 @@ describe('telegram intent classifier', () => {
     expect(messages[0]?.content).toContain('"marca la entrega del almacén como en camino" => intent dispatch');
     expect(messages[0]?.content).toContain('never create, update, assign, resolve, rank, or mutate dispatch tasks from LLM output');
     expect(messages[0]?.content).toContain('statusCandidate and legacy status must be exactly one canonical dispatch status');
+    expect(messages[0]?.content).toContain('For incident_join: signal, incidentHint, desiredRole, displayNameHint, localeHint');
+    expect(messages[0]?.content).toContain('desiredRole is candidate-only; never grant permissions');
+    expect(messages[0]?.content).toContain('never call joinIncident, and never join automatically');
     expect(messages[0]?.content).toContain('"quiero unirme al incidente demo como voluntario" => intent incident_join');
     expect(messages[0]?.content).toContain('Do not include actions to execute, raw user text, phone numbers, exact coordinates, names, or other PII');
     expect(messages[0]?.content).toContain('"puedo llevar comida" => intent resource');
@@ -107,7 +110,9 @@ describe('telegram intent classifier', () => {
               destinationHint: expect.objectContaining({ type: 'string' }),
               taskHint: expect.objectContaining({ type: 'string' }),
               incidentHint: expect.objectContaining({ type: 'string' }),
-              roleHint: expect.objectContaining({ enum: ['volunteer', 'coordinator', 'logistics', 'medical'] }),
+              desiredRole: expect.objectContaining({ enum: ['volunteer', 'coordinator', 'logistics', 'medical'] }),
+              displayNameHint: expect.objectContaining({ type: 'string' }),
+              localeHint: expect.objectContaining({ enum: ['es', 'en'] }),
             },
           },
         },
@@ -354,6 +359,82 @@ describe('telegram intent classifier', () => {
       },
     });
     expect(ai.run).toHaveBeenCalled();
+  });
+
+  it('preserves incident join facts as candidate-only desiredRole context', async () => {
+    const ai = createAi({
+      response: {
+        intent: 'incident_join',
+        confidence: 0.94,
+        reason: 'The user wants to join an incident.',
+        extractedFacts: {
+          signal: 'request_join',
+          incidentHint: 'incident-zc-demo',
+          desiredRole: 'volunteer',
+          displayNameHint: 'Radio 12',
+          localeHint: 'es',
+        },
+      },
+    });
+
+    await expect(classifyTelegramIntent({ ai, text: 'Quiero unirme al incidente demo como voluntario, soy Radio 12' })).resolves.toMatchObject({
+      intent: 'incident_join',
+      confidence: 0.94,
+      extractedFacts: {
+        signal: 'request_join',
+        incidentHint: 'incident-zc-demo',
+        desiredRole: 'volunteer',
+        displayNameHint: 'Radio 12',
+        localeHint: 'es',
+      },
+    });
+  });
+
+  it('migrates legacy incident join roleHint to desiredRole without exposing roleHint', async () => {
+    const ai = createAi({
+      response: {
+        intent: 'incident_join',
+        confidence: 0.93,
+        extractedFacts: {
+          signal: 'request_join',
+          incidentHint: 'demo',
+          roleHint: 'volunteer',
+        },
+      },
+    });
+
+    const result = await classifyTelegramIntent({ ai, text: 'quiero unirme al incidente demo como voluntario' });
+
+    expect(result).toMatchObject({
+      intent: 'incident_join',
+      extractedFacts: {
+        signal: 'request_join',
+        incidentHint: 'demo',
+        desiredRole: 'volunteer',
+      },
+    });
+    expect(result.extractedFacts).not.toHaveProperty('roleHint');
+  });
+
+  it('rejects incident join desiredRole values outside the role contract', async () => {
+    const ai = createAi({
+      response: {
+        intent: 'incident_join',
+        confidence: 0.96,
+        reason: 'The user wants elevated access.',
+        extractedFacts: {
+          signal: 'request_join',
+          incidentHint: 'demo',
+          desiredRole: 'admin',
+        },
+      },
+    });
+
+    await expect(classifyTelegramIntent({ ai, text: 'join demo as admin' })).resolves.toMatchObject({
+      intent: 'unknown',
+      confidence: 0,
+      extractedFacts: {},
+    });
   });
 
   it('rejects dispatch status candidates outside the canonical contract', async () => {
