@@ -343,13 +343,13 @@ function findDispatchSignal(text: string, action: 'create' | 'update' | 'coordin
 
 function findDispatchCategory(text: string): string | undefined {
   const categoryPatterns: Array<[RegExp, string]> = [
-    [/\bagua|water\b/, 'agua'],
-    [/\bcomida|alimentos?|food\b/, 'comida'],
-    [/\bmedicin[ao]s?|medicamentos?|medicine\b/, 'medicina'],
-    [/\bambulancias?|ambulances?\b/, 'ambulancia'],
-    [/\bmantas?|blankets?\b/, 'mantas'],
-    [/\bcombustible|fuel\b/, 'combustible'],
-    [/\btransporte|transport\b/, 'transporte'],
+    [/\b(?:agua|water)\b/, 'agua'],
+    [/\b(?:comida|alimentos?|food)\b/, 'comida'],
+    [/\b(?:medicin[ao]s?|medicamentos?|medicine)\b/, 'medicina'],
+    [/\b(?:ambulancias?|ambulances?)\b/, 'ambulancia'],
+    [/\b(?:mantas?|blankets?)\b/, 'mantas'],
+    [/\b(?:combustible|fuel)\b/, 'combustible'],
+    [/\b(?:transporte|transport)\b/, 'transporte'],
   ];
 
   return categoryPatterns.find(([pattern]) => pattern.test(text))?.[1];

@@ -301,6 +301,35 @@ describe('telegram intent classifier', () => {
     expect(ai.run).not.toHaveBeenCalled();
   });
 
+  it.each([
+    'El equipo de despacho está en camino para la tarea de aguacate hacia el centro norte.',
+    'El equipo de despacho está en camino para la tarea de comidista hacia el centro norte.',
+    'El equipo de despacho está en camino para la tarea de premedicamento hacia el centro norte.',
+  ])('does not derive dispatch category from partial word match in "%s"', async (text) => {
+    const ai = createAi({
+      response: {
+        intent: 'unknown',
+        confidence: 0,
+        extractedFacts: {},
+      },
+    });
+
+    const result = await classifyTelegramIntent({ ai, text });
+
+    expect(result).toMatchObject({
+      intent: 'dispatch',
+      confidence: 0.92,
+      extractedFacts: {
+        signal: 'status_update',
+        action: 'update',
+        statusCandidate: 'en_route',
+        status: 'en_route',
+      },
+    });
+    expect(result.extractedFacts).not.toHaveProperty('category');
+    expect(ai.run).not.toHaveBeenCalled();
+  });
+
   it('does not deterministically capture generic resource messages as dispatch', async () => {
     const ai = createAi({
       response: {

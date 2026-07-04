@@ -471,10 +471,10 @@ async function sendMessageAndReadReply(client: TelegramClient, entity: any, mess
     const messages = (await client.getMessages(entity, { limit: 5 })) as unknown[];
     const replies = messages
       .map(asTelegramMessage)
-      .filter((candidate) => !candidate.out && candidate.id > lastSeenId && candidate.message.trim().length > 0)
-      .sort((a, b) => a.id - b.id);
+      .filter((candidate) => !candidate.out && candidate.id > lastSeenId && candidate.message.trim().length > 0);
+    const repliesToInspect = expectedReplyPattern ? [...replies].sort((a, b) => a.id - b.id) : replies;
 
-    for (const reply of replies) {
+    for (const reply of repliesToInspect) {
       latestReply = preview(reply.message);
       if (!expectedReplyPattern || expectedReplyPattern.test(reply.message)) {
         return latestReply;
