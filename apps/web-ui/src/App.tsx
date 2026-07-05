@@ -668,6 +668,7 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
       active = false;
     };
     async function loadTrustStates(subjects: TrustSubject[]) {
+      if (!active) return;
       if (subjects.length === 0) {
         setTrustUiState((previous) => ({ status: "ready", states: previous.states }));
         return;
@@ -680,6 +681,8 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
           return [trustSubjectKey(subject), response.trustState] as const;
         }),
       );
+
+      if (!active) return;
 
       const loaded = Object.fromEntries(
         results

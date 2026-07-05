@@ -337,7 +337,7 @@ export function deriveCanonicalTrustState(input: TrustScoringInput): TrustState 
   const negativeSignals = signals.filter((signal) => signal.signalType === 'negative_report');
   const distinctSources = new Set(signals.map((signal) => `${signal.sourceChannel}:${signal.sourceExternalId}`));
   const distinctPositiveSourceKinds = new Set(positiveSignals.map((signal) => signal.sourceKind));
-  const freshnessScore = strongestFreshnessScore(signals, now);
+  const freshnessScore = strongestFreshnessScore(positiveSignals, now);
   const diversityScore = Math.min(0.25, Math.max(0, distinctSources.size - 1) * 0.08 + Math.max(0, distinctPositiveSourceKinds.size - 1) * 0.05);
   const presenceScore = positiveSignals.some((signal) => signal.signalType === 'presence_observed') ? 0.12 : 0;
   const selfScore = positiveSignals.some((signal) => signal.signalType === 'self_declaration') ? 0.18 : 0;
@@ -376,7 +376,10 @@ function strongestFreshnessScore(signals: CanonicalTrustSignalInput[], now: Date
     if (!Number.isFinite(createdAtMs)) {
       return 0;
     }
-    const ageMs = Math.max(0, now.getTime() - createdAtMs);
+    if (createdAtMs > now.getTime()) {
+      return 0;
+    }
+    const ageMs = now.getTime() - createdAtMs;
     if (ageMs <= 6 * 60 * 60 * 1000) return 0.2;
     if (ageMs <= 24 * 60 * 60 * 1000) return 0.14;
     if (ageMs <= 72 * 60 * 60 * 1000) return 0.06;
