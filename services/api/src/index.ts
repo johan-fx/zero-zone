@@ -2261,7 +2261,7 @@ async function recordSyncOperation(
         resultEntityId,
         operation.entityType,
         operation.opType,
-        JSON.stringify({ ...operation, syncState: 'confirmed' }),
+        JSON.stringify({ ...operation, entityId: resultEntityId, syncState: 'confirmed' }),
         serverUpdatedAt,
       )
       .run();
@@ -2869,7 +2869,7 @@ async function recordTrustRejectedAudit(
     `INSERT OR IGNORE INTO audit_events (audit_event_id, incident_id, channel_identity_id, incident_membership_id, event_type, payload_json)
      VALUES (?, ?, ?, ?, ?, ?)`,
   ).bind(
-    `audit_${eventType.replace(/\./g, '_')}_${slug(incidentId)}_${slug(channel)}_${slug(externalId)}_${slug(errorCode)}_${Date.now()}`,
+    `audit_${eventType.replace(/\./g, '_')}_${slug(incidentId)}_${slug(channel)}_${slug(externalId)}_${slug(errorCode)}_${crypto.randomUUID()}`,
     incidentId,
     membership.channelIdentityId,
     membership.incidentMembershipId,
