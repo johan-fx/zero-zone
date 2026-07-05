@@ -11,11 +11,16 @@ import {
   PrivateWebLinkConsumeResponseSchema,
   PrivateWebLinkValidateRequestSchema,
   PrivateWebLinkValidateResponseSchema,
+  DisputeCreateRequestSchema,
+  DisputeCreateResponseSchema,
   ResourceReportListResponseSchema,
   SosAlertCreateResponseSchema,
   SosAlertStatusResponseSchema,
   SosConnectedCreateRequestSchema,
   SyncPullResponseSchema,
+  TrustSignalCreateRequestSchema,
+  TrustSignalCreateResponseSchema,
+  TrustStateResponseSchema,
   WorkCenterConnectedCreateRequestSchema,
   WorkCenterCreateResponseSchema,
   WorkCenterDetailResponseSchema,
@@ -32,11 +37,17 @@ import {
   type PrivateWebLinkConsumeResponse,
   type PrivateWebLinkValidateRequest,
   type PrivateWebLinkValidateResponse,
+  type DisputeCreateRequest,
+  type DisputeCreateResponse,
   type ResourceReportListResponse,
   type SosAlertCreateResponse,
   type SosAlertStatusResponse,
   type SosConnectedCreateRequest,
   type SyncFreshness,
+  type TrustSignalCreateRequest,
+  type TrustSignalCreateResponse,
+  type TrustStateResponse,
+  type TrustSubject,
   type WorkCenterConnectedCreateRequest,
   type WorkCenterCreateResponse,
   type WorkCenterDetailResponse,
@@ -201,6 +212,70 @@ export async function fetchSosStatus(
   }
 
   return SosAlertStatusResponseSchema.parse(await response.json());
+}
+
+export async function fetchTrustState(
+  incidentId: string,
+  subject: Pick<TrustSubject, "entityType" | "entityId">,
+  fetcher: Fetcher = fetch,
+): Promise<TrustStateResponse> {
+  const params = new URLSearchParams({
+    entityType: subject.entityType,
+    entityId: subject.entityId,
+  });
+  const response = await fetcher(
+    `${getApiBaseUrl()}${trustStatePath(incidentId)}?${params.toString()}`,
+  );
+
+  if (!response.ok) {
+    throw new Error(`Trust state failed with status ${response.status}`);
+  }
+
+  return TrustStateResponseSchema.parse(await response.json());
+}
+
+export async function createTrustSignal(
+  incidentId: string,
+  request: TrustSignalCreateRequest,
+  fetcher: Fetcher = fetch,
+): Promise<TrustSignalCreateResponse> {
+  const payload = TrustSignalCreateRequestSchema.parse(request);
+  const response = await fetcher(
+    `${getApiBaseUrl()}${trustSignalCollectionPath(incidentId)}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Trust signal failed with status ${response.status}`);
+  }
+
+  return TrustSignalCreateResponseSchema.parse(await response.json());
+}
+
+export async function createDispute(
+  incidentId: string,
+  request: DisputeCreateRequest,
+  fetcher: Fetcher = fetch,
+): Promise<DisputeCreateResponse> {
+  const payload = DisputeCreateRequestSchema.parse(request);
+  const response = await fetcher(
+    `${getApiBaseUrl()}${disputeCollectionPath(incidentId)}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Dispute failed with status ${response.status}`);
+  }
+
+  return DisputeCreateResponseSchema.parse(await response.json());
 }
 
 export async function createSosAlert(
@@ -381,6 +456,18 @@ function dispatchTaskDetailPath(
 
 function sosCollectionPath(incidentId: string): string {
   return `/incidents/${encodeURIComponent(incidentId)}/sos`;
+}
+
+function trustStatePath(incidentId: string): string {
+  return `/incidents/${encodeURIComponent(incidentId)}/trust-state`;
+}
+
+function trustSignalCollectionPath(incidentId: string): string {
+  return `/incidents/${encodeURIComponent(incidentId)}/trust-signals`;
+}
+
+function disputeCollectionPath(incidentId: string): string {
+  return `/incidents/${encodeURIComponent(incidentId)}/disputes`;
 }
 
 async function readApiError(

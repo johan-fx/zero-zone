@@ -839,6 +839,8 @@ describe('telegram channel flows', () => {
 
     expect(state.step).toBe('reported');
     expect(responseText).toContain('Work center reported: North triage point');
+    expect(responseText).toContain('Contextual trust');
+    expect(responseText).toContain('not a guarantee');
     expect(ports.createWorkCenter).toHaveBeenCalledWith('incident-zc-demo', {
       channel: 'telegram',
       externalId: '1001',
@@ -1059,6 +1061,8 @@ describe('telegram channel flows', () => {
 
     expect(state.step).toBe('reported');
     expect(responseText).toContain('Resource needed reported: water');
+    expect(responseText).toContain('Contextual trust');
+    expect(responseText).toContain('do not calculate priority outside the canonical state');
     expect(ports.createResourceReport).toHaveBeenCalledWith('incident-zc-demo', {
       channel: 'telegram',
       externalId: '1001',
@@ -1275,6 +1279,8 @@ describe('telegram channel flows', () => {
     expect(responseText).toContain('Status: open');
     expect(responseText).toContain('Fan-out: total 3, queued 3, pending 0, failed 0, cancelled 0');
     expect(responseText).toContain('does not confirm delivery, rescue, or exact location');
+    expect(responseText).toContain('Contextual trust');
+    expect(responseText).toContain('can be corroborated or disputed later');
     expect(ports.createSosAlert).toHaveBeenCalledWith('incident-zc-demo', {
       channel: 'telegram',
       externalId: '1001',

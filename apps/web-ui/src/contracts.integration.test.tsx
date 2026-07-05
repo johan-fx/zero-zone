@@ -9,6 +9,9 @@ import {
   SosAlertCreateResponseSchema,
   SosAlertStatusResponseSchema,
   SosConnectedCreateRequestSchema,
+  TrustSignalCreateRequestSchema,
+  TrustSignalCreateResponseSchema,
+  TrustStateResponseSchema,
   WorkCenterConnectedCreateRequestSchema,
   WorkCenterCreateResponseSchema,
   WorkCenterDetailResponseSchema,
@@ -23,7 +26,7 @@ import {
   workCenterDetailHappyFixture,
   workCenterListHappyFixture,
 } from '../../../packages/testing/src';
-import { createSosAlert, createWorkCenter, fetchApiHealth, fetchDispatchTasks, fetchResourceReports, fetchSosStatus, fetchWorkCenterDetail, fetchWorkCenters, updateDispatchTask } from './api';
+import { createDispute, createSosAlert, createTrustSignal, createWorkCenter, fetchApiHealth, fetchDispatchTasks, fetchResourceReports, fetchSosStatus, fetchTrustState, fetchWorkCenterDetail, fetchWorkCenters, updateDispatchTask } from './api';
 
 
 const resourceReportListFixture = {
@@ -71,6 +74,57 @@ const dispatchTaskListFixture = {
 const dispatchTaskResponseFixture = {
   dispatchTask: { ...dispatchTaskListFixture.dispatchTasks[0], status: 'accepted', updatedAt: '2026-06-30T10:05:00.000Z' },
   audit: { auditEventId: 'audit_dispatch_task_updated' },
+  idempotent: false,
+} as const;
+
+const trustStateFixture = {
+  incidentId: 'incident-zc-demo',
+  subject: {
+    entityType: 'work_center',
+    entityId: 'center-north-triage',
+    incidentId: 'incident-zc-demo',
+    displayRef: 'North triage point',
+  },
+  status: 'trusted_by_context',
+  visibility: 'normal',
+  priorityWeight: 0.7,
+  score: 0.84,
+  explanation: ['Canonical server trust state.'],
+  signalCount: 2,
+  disputeCount: 0,
+  updatedAt: '2026-07-05T10:00:00.000Z',
+} as const;
+
+const trustSignalCreateResponseFixture = {
+  trustSignal: {
+    trustSignalId: 'trust-signal-web-1',
+    incidentId: 'incident-zc-demo',
+    subject: trustStateFixture.subject,
+    signalType: 'context_corroboration',
+    sourceKind: 'peer',
+    sourceChannel: 'web-ui',
+    sourceExternalId: 'web-user-1001',
+    confidence: 0.5,
+    createdAt: '2026-07-05T10:01:00.000Z',
+  },
+  trustState: trustStateFixture,
+  audit: { auditEventId: 'audit_trust_signal_created' },
+  idempotent: false,
+} as const;
+
+const disputeCreateResponseFixture = {
+  dispute: {
+    disputeId: 'dispute-web-1',
+    incidentId: 'incident-zc-demo',
+    subject: trustStateFixture.subject,
+    reason: 'other',
+    sourceChannel: 'web-ui',
+    sourceExternalId: 'web-user-1001',
+    description: 'Needs local follow-up.',
+    createdAt: '2026-07-05T10:02:00.000Z',
+  },
+  trustState: { ...trustStateFixture, status: 'disputed', disputeCount: 1 },
+  audit: { auditEventId: 'audit_dispute_created' },
   idempotent: false,
 } as const;
 
@@ -153,6 +207,50 @@ describe('web ui contract integration', () => {
       2,
       'http://127.0.0.1:8787/incidents/incident-zc-demo/sos',
       expect.objectContaining({ method: 'POST', body: JSON.stringify(SosConnectedCreateRequestSchema.parse(telegramSosCreateRequestFixture)) }),
+    );
+  });
+
+  it('fetches trust state and posts trust/dispute actions through canonical endpoints', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ trustState: trustStateFixture }))
+      .mockResolvedValueOnce(jsonResponse(trustSignalCreateResponseFixture))
+      .mockResolvedValueOnce(jsonResponse(disputeCreateResponseFixture));
+    const trustRequest = TrustSignalCreateRequestSchema.parse({
+      channel: 'web-ui',
+      externalId: 'web-user-1001',
+      subject: trustStateFixture.subject,
+      signalType: 'context_corroboration',
+      sourceKind: 'peer',
+    });
+
+    await expect(fetchTrustState('incident-zc-demo', trustStateFixture.subject, fetcher)).resolves.toEqual(
+      TrustStateResponseSchema.parse({ trustState: trustStateFixture }),
+    );
+    await expect(createTrustSignal('incident-zc-demo', trustRequest, fetcher)).resolves.toEqual(
+      TrustSignalCreateResponseSchema.parse(trustSignalCreateResponseFixture),
+    );
+    await expect(createDispute('incident-zc-demo', {
+      channel: 'web-ui',
+      externalId: 'web-user-1001',
+      subject: trustStateFixture.subject,
+      reason: 'other',
+      description: 'Needs local follow-up.',
+    }, fetcher)).resolves.toEqual(disputeCreateResponseFixture);
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:8787/incidents/incident-zc-demo/trust-state?entityType=work_center&entityId=center-north-triage',
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:8787/incidents/incident-zc-demo/trust-signals',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify(trustRequest) }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      3,
+      'http://127.0.0.1:8787/incidents/incident-zc-demo/disputes',
+      expect.objectContaining({ method: 'POST' }),
     );
   });
 });

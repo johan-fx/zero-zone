@@ -1,5 +1,9 @@
 import type {
   OperationType,
+  Dispute,
+  TrustSignal,
+  TrustState,
+  TrustSubject,
   ResourceReportKind,
   ResourceReportSummary,
   ResourceReportUrgency,
@@ -311,4 +315,124 @@ const riskPenalty: Record<WorkCenterRisk, number> = { low: 0, medium: 0.04, high
 
 function clampScore(score: number): number {
   return Math.max(0, Math.min(1, Number(score.toFixed(2))));
+}
+
+export type CanonicalTrustSignalInput = Pick<TrustSignal, 'signalType' | 'sourceKind' | 'sourceChannel' | 'sourceExternalId' | 'confidence' | 'createdAt'>;
+export type CanonicalDisputeInput = Pick<Dispute, 'reason' | 'sourceChannel' | 'sourceExternalId' | 'createdAt'>;
+
+export type TrustScoringInput = {
+  incidentId: string;
+  subject: TrustSubject;
+  signals: CanonicalTrustSignalInput[];
+  disputes?: CanonicalDisputeInput[];
+  contextualReputation?: number;
+  now?: Date;
+};
+
+export function deriveCanonicalTrustState(input: TrustScoringInput): TrustState {
+  const now = input.now ?? new Date();
+  const signals = input.signals;
+  const disputes = input.disputes ?? [];
+  const positiveSignals = signals.filter((signal) => signal.signalType !== 'negative_report');
+  const negativeSignals = signals.filter((signal) => signal.signalType === 'negative_report');
+  const distinctSources = new Set(signals.map((signal) => `${signal.sourceChannel}:${signal.sourceExternalId}`));
+  const distinctPositiveSourceKinds = new Set(positiveSignals.map((signal) => signal.sourceKind));
+  const freshnessScore = strongestFreshnessScore(positiveSignals, now);
+  const diversityScore = Math.min(0.25, Math.max(0, distinctSources.size - 1) * 0.08 + Math.max(0, distinctPositiveSourceKinds.size - 1) * 0.05);
+  const presenceScore = positiveSignals.some((signal) => signal.signalType === 'presence_observed') ? 0.12 : 0;
+  const selfScore = positiveSignals.some((signal) => signal.signalType === 'self_declaration') ? 0.18 : 0;
+  const fieldScore = positiveSignals.some((signal) => signal.signalType === 'field_attestation') ? 0.36 : 0;
+  const contextScore = positiveSignals.some((signal) => signal.signalType === 'context_corroboration') ? 0.28 : 0;
+  const reputationScore = Math.min(0.15, Math.max(0, input.contextualReputation ?? 0));
+  const confidenceScore = positiveSignals.reduce((sum, signal) => sum + signal.confidence, 0) * 0.08;
+  const negativePenalty = negativeSignals.length * 0.18 + disputes.length * 0.25;
+  const sybilPenalty = distinctSources.size > 0 && distinctSources.size <= 1 && positiveSignals.length >= 3 ? 0.2 : 0;
+  const score = clampScore(freshnessScore + diversityScore + presenceScore + selfScore + fieldScore + contextScore + reputationScore + confidenceScore - negativePenalty - sybilPenalty);
+  const status = deriveTrustStatus({ score, positiveSignals, negativeSignals, disputes, sybilPenalty });
+  const visibility = status === 'disputed' || status === 'degraded' ? 'limited' : status === 'pending_corroboration' ? 'normal' : 'elevated';
+  const explanation = buildTrustExplanation({ freshnessScore, diversityScore, presenceScore, reputationScore, negativePenalty, sybilPenalty, status, sourceCount: distinctSources.size });
+
+  return {
+    incidentId: input.incidentId,
+    subject: input.subject,
+    status,
+    visibility,
+    priorityWeight: score,
+    score,
+    explanation,
+    signalCount: signals.length,
+    disputeCount: disputes.length,
+    updatedAt: now.toISOString(),
+  };
+}
+
+function strongestFreshnessScore(signals: CanonicalTrustSignalInput[], now: Date): number {
+  if (signals.length === 0) {
+    return 0;
+  }
+
+  return Math.max(...signals.map((signal) => {
+    const createdAtMs = Date.parse(signal.createdAt);
+    if (!Number.isFinite(createdAtMs)) {
+      return 0;
+    }
+    if (createdAtMs > now.getTime()) {
+      return 0;
+    }
+    const ageMs = now.getTime() - createdAtMs;
+    if (ageMs <= 6 * 60 * 60 * 1000) return 0.2;
+    if (ageMs <= 24 * 60 * 60 * 1000) return 0.14;
+    if (ageMs <= 72 * 60 * 60 * 1000) return 0.06;
+    return 0;
+  }));
+}
+
+function deriveTrustStatus(input: {
+  score: number;
+  positiveSignals: CanonicalTrustSignalInput[];
+  negativeSignals: CanonicalTrustSignalInput[];
+  disputes: CanonicalDisputeInput[];
+  sybilPenalty: number;
+}): TrustState['status'] {
+  if (input.disputes.length > 0) {
+    return 'disputed';
+  }
+
+  if (input.negativeSignals.length > 0 || input.sybilPenalty > 0) {
+    return input.score >= 0.45 ? 'pending_corroboration' : 'degraded';
+  }
+
+  if (input.positiveSignals.some((signal) => signal.signalType === 'context_corroboration') && input.score >= 0.7) {
+    return 'trusted_by_context';
+  }
+
+  if (input.positiveSignals.some((signal) => signal.signalType === 'field_attestation') && input.score >= 0.5) {
+    return 'field_attested';
+  }
+
+  if (input.positiveSignals.some((signal) => signal.signalType === 'self_declaration')) {
+    return input.score >= 0.35 ? 'self_declared' : 'pending_corroboration';
+  }
+
+  return 'pending_corroboration';
+}
+
+function buildTrustExplanation(input: {
+  freshnessScore: number;
+  diversityScore: number;
+  presenceScore: number;
+  reputationScore: number;
+  negativePenalty: number;
+  sybilPenalty: number;
+  status: TrustState['status'];
+  sourceCount: number;
+}): string[] {
+  const explanation = [`status:${input.status}`];
+  if (input.freshnessScore > 0) explanation.push('fresh_signal');
+  if (input.diversityScore > 0) explanation.push(`source_diversity:${input.sourceCount}`);
+  if (input.presenceScore > 0) explanation.push('presence_observed');
+  if (input.reputationScore > 0) explanation.push('contextual_reputation');
+  if (input.negativePenalty > 0) explanation.push('negative_signals_or_disputes');
+  if (input.sybilPenalty > 0) explanation.push('sybil_penalty_same_source_cluster');
+  return explanation;
 }

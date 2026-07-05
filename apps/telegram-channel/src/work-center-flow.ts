@@ -70,7 +70,7 @@ export async function handleTelegramWorkCenterReportFlow(
           if (request) {
             return {
               state: { step: 'awaitingConfirmation', ...baseState, request },
-              responseText: [limitation, formatWorkCenterReportConfirmation(locale, incident.name, request)].filter(Boolean).join('\n'),
+              responseText: [limitation, formatWorkCenterReportConfirmation(locale, incident.name, request), trustContextCopy(locale, 'confirmation')].filter(Boolean).join('\n'),
             };
           }
         }
@@ -107,7 +107,7 @@ export async function handleTelegramWorkCenterReportFlow(
             displayName: state.displayName,
             request,
           },
-          responseText: formatWorkCenterReportConfirmation(locale, state.incident.name, request),
+          responseText: [formatWorkCenterReportConfirmation(locale, state.incident.name, request), trustContextCopy(locale, 'confirmation')].join('\n'),
         };
       }
 
@@ -122,7 +122,7 @@ export async function handleTelegramWorkCenterReportFlow(
             if (request) {
               return {
                 state: { ...state, request },
-                responseText: formatWorkCenterReportConfirmation(locale, state.incident.name, request),
+                responseText: [formatWorkCenterReportConfirmation(locale, state.incident.name, request), trustContextCopy(locale, 'confirmation')].join('\n'),
               };
             }
           }
@@ -133,7 +133,7 @@ export async function handleTelegramWorkCenterReportFlow(
             if (request) {
               return {
                 state: { ...state, request },
-                responseText: formatWorkCenterReportConfirmation(locale, state.incident.name, request),
+                responseText: [formatWorkCenterReportConfirmation(locale, state.incident.name, request), trustContextCopy(locale, 'confirmation')].join('\n'),
               };
             }
           }
@@ -143,7 +143,7 @@ export async function handleTelegramWorkCenterReportFlow(
 
         try {
           const response = await ports.createWorkCenter(state.incident.incidentId, state.request);
-          return { state: { step: 'reported', response }, responseText: formatWorkCenterReportSuccess(response) };
+          return { state: { step: 'reported', response }, responseText: `${formatWorkCenterReportSuccess(response)}\n${trustContextCopy(locale, 'success')}` };
         } catch (error) {
           return { state, responseText: formatWorkCenterReportError(error) };
         }
@@ -237,6 +237,18 @@ function formatWorkCenterReportConfirmation(locale: SupportedLocale, incidentNam
     payload.surplus ? `${labels.surplus}: ${payload.surplus}` : null,
     labels.confirm,
   ].filter(Boolean).join('\n');
+}
+
+function trustContextCopy(locale: SupportedLocale, phase: 'confirmation' | 'success'): string {
+  if (locale === 'es') {
+    return phase === 'confirmation'
+      ? 'Confianza contextual: este punto empezará como información civil pendiente de corroboración. No representa autoridad oficial ni rescate garantizado.'
+      : 'Confianza contextual: otras personas pueden corroborar o disputar este punto; usa el estado del servidor como señal, no como garantía.';
+  }
+
+  return phase === 'confirmation'
+    ? 'Contextual trust: this point starts as civil information pending corroboration. It is not official authority or guaranteed rescue.'
+    : 'Contextual trust: others can corroborate or dispute this point; use the server state as a signal, not a guarantee.';
 }
 
 function parseTelegramNativeLocation(location: TelegramNativeLocation | undefined): WorkCenterLocation | null {

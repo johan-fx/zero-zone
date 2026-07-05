@@ -55,6 +55,47 @@ describe('durable signed outbox service', () => {
     ]);
   });
 
+  it('persists trust signals as signed operations and projects fallback trust status onto local views only', async () => {
+    const writeOrder: string[] = [];
+    const db = createRxdbLocalOperationDatabase({ collections: createFakeRxdbCollections(writeOrder) });
+    const signer = new FakeOperationSigner('outbox-trust-tests');
+
+    await appendSignedOperationAndMaterialize({
+      database: db,
+      input: operationInput,
+      signer,
+    });
+    writeOrder.length = 0;
+
+    const result = await appendSignedOperationAndMaterialize({
+      database: db,
+      input: {
+        ...operationInput,
+        entityId: 'trust-signal-1',
+        opType: 'trust_signal.create',
+        payload: {
+          channel: 'mobile',
+          externalId: 'actor-key-1',
+          subject: { entityType: 'work_center', entityId: 'center-1', incidentId: 'incident-1' },
+          signalType: 'field_attestation',
+          sourceKind: 'field_actor',
+        },
+      },
+      signer,
+    });
+
+    expect(writeOrder.slice(0, 2)).toEqual(['sync_ops', 'work_centers']);
+    expect(await db.syncOps.findByIncident('incident-1')).toEqual(expect.arrayContaining([expect.objectContaining({ opId: result.operation.opId, opType: 'trust_signal.create', entityType: 'trust_signal', syncState: 'pending' })]));
+    expect(await db.views.workCenters.findByIncident('incident-1')).toEqual([
+      expect.objectContaining({
+        centerId: 'center-1',
+        trustStatus: 'pending_corroboration',
+        trustSignalCount: 1,
+        trustDisputeCount: 0,
+      }),
+    ]);
+  });
+
   it('does not persist or materialize when signing is unavailable', async () => {
     const writeOrder: string[] = [];
     const db = createRxdbLocalOperationDatabase({ collections: createFakeRxdbCollections(writeOrder) });
