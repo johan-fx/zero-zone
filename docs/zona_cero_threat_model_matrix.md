@@ -14,11 +14,11 @@ Zona Cero opera en un contexto de alto riesgo: catástrofes, conectividad degrad
 
 Las decisiones de seguridad más importantes son:
 
-- Tratar la presencia como **probabilística**, nunca como prueba absoluta.
+- Tratar la presencia y la verificación social como **probabilísticas**, nunca como prueba absoluta.
 - Mantener identidad civil seudónima separada de identidad `org_verified`.
-- No desbloquear permisos críticos mediante atestación social.
+- No desbloquear permisos críticos, credenciales, safeguarding, entrega de menores ni datos sensibles mediante atestación social.
 - No publicar ubicación exacta de menores, terceros o personas vulnerables.
-- Priorizar firmas, idempotencia y auditoría para todas las operaciones críticas.
+- Priorizar firmas, idempotencia, auditoría, rate limits, deduplicación y disputas para todas las operaciones críticas.
 - Mantener reunificación real de menores, multimedia, alertas oficiales automáticas, adultos desaparecidos e IA detrás de feature flags, acuerdos operativos y revisión específica.
 
 ## Alcance
@@ -32,7 +32,7 @@ Las decisiones de seguridad más importantes son:
 - Outbox de operaciones firmadas.
 - Recomendaciones determinísticas de coordinación.
 - Logística de recursos.
-- SOS y cola crítica compatible con gateway Meshtastic.
+- SOS civil y de rescatista con cola crítica compatible con gateway Meshtastic.
 - Arquitectura preparada para reunificación familiar.
 - Funcionalidades futuras de alto riesgo marcadas como backlog o feature flag.
 
@@ -50,7 +50,7 @@ Las decisiones de seguridad más importantes son:
 |---|---|
 | Personas voluntarias | Doxxing, persecución, exposición de ubicación, recomendaciones inseguras. |
 | Menores y personas vulnerables | Reclamación falsa, exposición de identidad, ubicación o foto. |
-| Rescatistas en peligro | SOS falso, repetido, bloqueado o con precisión engañosa. |
+| Participantes civiles y rescatistas en peligro | SOS falso, repetido, bloqueado, abusivo o con precisión engañosa. |
 | Centros de trabajo | Activación falsa, duplicados, sabotaje o datos obsoletos. |
 | Recursos críticos | Manipulación de faltantes/sobrantes y desvío logístico. |
 | Operaciones firmadas | Replay, manipulación, duplicación o conflictos mal resueltos. |
@@ -93,11 +93,11 @@ Las decisiones de seguridad más importantes son:
 | TM-006 | Menores / reunificación | Reclamación falsa o exposición de un menor. | Crítico | Media | Evitar en MVP público | Flujo real deshabilitado sin organismo verificador; no publicar fotos, ubicación exacta ni identidad completa; capa privada cifrada; derivación presencial obligatoria. | Tests anti-abuso, auditoría de intentos y verificación de que no existe entrega desde la app. |
 | TM-007 | Outbox / sync | Replay, duplicación o manipulación de operaciones offline. | Alto | Media | Mitigar | Operaciones firmadas Ed25519, `op_id` único, idempotencia, validación backend, append-only log y rechazo de firmas inválidas. | Tests de firma inválida, replay, duplicados y payload manipulado. |
 | TM-008 | Dispositivo perdido | Exposición de datos offline, claves o registros sensibles. | Alto | Media | Mitigar | Secure Store/Keychain/Keystore para claves, datos mínimos por celda, TTL agresivo y cifrado de datos privados. | Revisión de almacenamiento local, expiración y extracción básica. |
-| TM-009 | SOS / Meshtastic | Mensajes críticos falsos, repetidos o sin trazabilidad. | Alto | Media | Mitigar | Mensajes compactos firmados o con resumen verificable, ACK, deduplicación, prioridad auditada y rate limits. | Tests de SOS falso, repetición, ACK y deduplicación. |
+| TM-009 | SOS / Meshtastic | Mensajes críticos falsos, repetidos o sin trazabilidad. | Alto | Media | Mitigar | Creación abierta a participantes civiles con confirmación fuerte, mensajes compactos firmados o con resumen verificable, ACK, deduplicación, prioridad auditada, rate limits y confianza contextual visible. | Tests de SOS falso, repetición, ACK, deduplicación, rate limit y ausencia de promesa de rescate. |
 | TM-010 | Recomendaciones | La app dirige civiles hacia zonas inseguras. | Alto | Media | Aceptar con mitigaciones | Motor determinístico explicable, etiquetas de riesgo, confirmación explícita antes de zona peligrosa, restricciones por rol y auditoría de recomendaciones aceptadas. | Tests donde voluntarios generales no reciben como recomendación principal zonas especializadas o peligrosas. |
 | TM-011 | Datos obsoletos | Información stale provoca decisiones operativas incorrectas. | Alto | Alta | Mitigar | Freshness visible, TTL por tipo de dato, degradación visual y pérdida de peso en matching, conteos y recomendaciones. | Tests de expiración para necesidades, sobrantes, presencia, roles y recomendaciones. |
-| TM-012 | Recursos / logística | Reportes falsos manipulan faltantes, sobrantes o tareas de traslado. | Alto | Media | Mitigar | Confianza por reportero/presencia, corroboración, frescura, restricciones, auditoría y resolución de disputas. | Tests de matching con baja confianza, datos obsoletos y reportes contradictorios. |
-| TM-013 | Conflictos offline | Estados críticos se sobrescriben incorrectamente al reconectar. | Alto | Media | Mitigar | No usar last-write-wins global; eventos append-only; estados derivados recalculables; conflictos administrativos requieren revisión. | Tests de operaciones concurrentes y materialización desde historial. |
+| TM-012 | Recursos / logística | Reportes falsos manipulan faltantes, sobrantes o tareas de traslado. | Alto | Media | Mitigar | Creación civil abierta con confianza por reportero/presencia, corroboración, frescura, restricciones, auditoría, rate limits y resolución de disputas. | Tests de matching con baja confianza, datos obsoletos y reportes contradictorios. |
+| TM-013 | Conflictos offline | Estados críticos se sobrescriben incorrectamente al reconectar. | Alto | Media | Mitigar | No usar last-write-wins global; eventos append-only; estados derivados recalculables; conflictos sensibles o de safeguarding requieren revisión verificada. | Tests de operaciones concurrentes y materialización desde historial. |
 | TM-014 | Multimedia futura | Fotos/videos filtran víctimas, menores, ubicaciones o saturan sincronización. | Alto | Media | Diferir / feature flag | Redacción, TTL, cuotas offline, moderación, metadatos firmados, consentimiento y política de acceso antes de habilitar. | Tests de feature flag, cuotas, visibilidad, borrado y moderación. |
 | TM-015 | Alertas confiables futuras | Fuente no confiable o severidad errónea genera pánico o rutas inseguras. | Crítico | Baja/Media | Diferir / feature flag | Solo proveedores oficiales o explícitamente confiables; procedencia/firma cuando exista; deduplicación; TTL; override humano; auditoría. | Tests de fuente no confiable, duplicados, severidad y bloqueo de push crítico. |
 | TM-016 | IA futura | Recomendaciones de IA generan sesgo de autoridad o decisiones inseguras. | Alto | Media | Diferir | MVP con reglas determinísticas; IA solo tras datos de campo, observabilidad, revisión de sesgo/seguridad y override humano. | Revisión de modelo, trazabilidad, comparación con reglas y pruebas de seguridad antes de activar. |
@@ -111,7 +111,7 @@ Las decisiones de seguridad más importantes son:
 | Riesgo | Estado | Racional | Revisión requerida |
 |---|---|---|---|
 | Recomendaciones hacia zonas peligrosas con advertencias. | Aceptado con preocupación | El producto necesita coordinación operativa, pero los warnings no sustituyen controles duros. | Revisar tras pruebas de campo; considerar bloqueo por rol/riesgo si hay señales de daño. |
-| Atestación social manipulable. | Aceptado parcialmente | Aporta señal de campo, pero no debe otorgar permisos críticos. | Revisar umbrales, rate limits y detección Sybil. |
+| Atestación social manipulable. | Aceptado parcialmente | Aporta señal de campo y prioridad contextual, pero no debe otorgar permisos críticos, credenciales, safeguarding, entrega de menores ni acceso sensible. | Revisar umbrales, rate limits, disputas y detección Sybil. |
 | Reunificación real de menores. | Evitado en MVP público | El daño potencial es crítico sin organismo verificador. | Activar solo con protocolo formal, acceso restringido y revisión legal/operativa. |
 | Multimedia como evidencia. | Diferido | Eleva privacidad, moderación, coste y sincronización. | Activar solo con feature flag, redacción, cuotas, TTL y moderación. |
 | Alertas oficiales automáticas. | Diferido | Una alerta errónea puede causar pánico o rutas inseguras. | Activar solo con fuentes confiables, procedencia, deduplicación y override humano. |
@@ -143,7 +143,7 @@ Las decisiones de seguridad más importantes son:
 
 - [ ] GPS por sí solo no activa centros ni presencia de alta confianza.
 - [ ] Identidades nuevas y masivas tienen peso operativo limitado.
-- [ ] Roles autodeclarados o atestados socialmente no desbloquean permisos críticos.
+- [ ] Roles autodeclarados o atestados socialmente no desbloquean permisos críticos, credenciales, safeguarding, entrega de menores ni datos sensibles.
 - [ ] No se publica ubicación exacta de menores, terceros o personas vulnerables.
 - [ ] Todas las operaciones críticas están firmadas, son idempotentes y auditables.
 - [ ] Los datos obsoletos pierden peso y se muestran degradados visualmente.

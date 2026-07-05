@@ -4,7 +4,7 @@ Este documento define Telegram + Web UI como canal complementario de Zona Cero. 
 
 ## Decisión de producto
 
-Telegram + Web UI debe cubrir flujos que funcionan bien con conectividad y conversación guiada. La app nativa conserva las capacidades críticas de campo: operación offline, mapa offline, presencia probabilística robusta, outbox firmada local, SOS degradado, bajo consumo e integración Meshtastic.
+Telegram + Web UI debe cubrir flujos que funcionan bien con conectividad y conversación guiada. El canal debe sostener el modelo social-first: cualquier participante civil puede iniciar reportes de incidente, centro, recursos, disputas o SOS; esos reportes operativos nacen no verificados y se muestran con confianza contextual. La app nativa conserva las capacidades críticas de campo: operación offline, mapa offline, presencia probabilística robusta, outbox firmada local, SOS degradado, bajo consumo e integración Meshtastic.
 
 ## Usuarios objetivo
 
@@ -12,7 +12,7 @@ Telegram + Web UI debe cubrir flujos que funcionan bien con conectividad y conve
 |---|---|
 | Voluntario general | Alta rápida, selección de incidente, estado de disponibilidad, recomendaciones y reportes simples. |
 | Logística / motorizados | Aceptar tareas, actualizar estados y reportar entrega/cancelación. |
-| Coordinador local | Consultar resúmenes, validar reportes ligeros y abrir paneles web. |
+| Coordinador local | Consultar resúmenes, revisar señales, resolver disputas contextuales y abrir paneles web sin actuar como administrador global. |
 | Familiar buscando menor | Acceder a flujo web privado desde enlace seguro. |
 | Personal verificado | Revisar casos sensibles mediante web UI con permisos reforzados. |
 
@@ -22,18 +22,18 @@ Telegram + Web UI debe cubrir flujos que funcionan bien con conectividad y conve
 |---|---|---|---|
 | Onboarding | `/start`, idioma, incidente, seudónimo y rol. | Formularios largos si hacen falta. | Identidad local offline fuerte. |
 | Incidentes | Listar/unirse a incidente activo. | Vista resumida de incidente/celda. | Crear paquetes offline. |
-| Centros de trabajo | Crear reporte mínimo, actualizar estado simple, reportar falso/duplicado. | Mapa online, detalle de centro, edición estructurada. | Validación fuerte por presencia. |
+| Centros de trabajo | Crear reporte mínimo, actualizar estado simple, corroborar o disputar falso/duplicado. | Mapa online, detalle de centro, edición estructurada y señales de confianza. | Validación fuerte por presencia. |
 | Voluntarios | Cambiar disponibilidad y recibir recomendaciones. | Panel de recomendaciones con explicación. | Tracking en background. |
-| Recursos | Reportar faltantes/sobrantes y urgencia. | Formulario estructurado y detalle de matching. | Reporte offline local-first. |
+| Recursos | Reportar faltantes/sobrantes, urgencia, corroboración o disputa. | Formulario estructurado, detalle de matching, frescura y confianza. | Reporte offline local-first. |
 | Tareas logísticas | Aceptar, marcar en camino, entregar o cancelar. | Vista de tarea y ruta online. | Routing offline avanzado. |
-| SOS con red | Emitir SOS conectado y acusar recibo. | Detalle de SOS con datos permitidos. | SOS offline/degradado/Meshtastic directo. |
+| SOS con red | Emitir SOS conectado desde cualquier participante civil y acusar recibo. | Detalle de SOS con datos permitidos, deduplicación, rate limit y confianza. | SOS offline/degradado/Meshtastic directo. |
 | Reunificación | Entrada conversacional mínima y enlaces privados. | Búsqueda privada, derivación y revisión verificada. | Entrega/autorización de menores. |
 
 ## Principios UX
 
 - Telegram se usa para acciones rápidas, confirmaciones y notificaciones.
 - Web UI se usa cuando Telegram no permite suficiente estructura visual, privacidad o densidad de información.
-- Cada mensaje operativo debe indicar frescura, riesgo y estado cuando afecte decisiones de campo.
+- Cada mensaje operativo debe indicar frescura, riesgo, estado y confianza contextual cuando afecte decisiones de campo.
 - Los enlaces web deben ser temporales, de alcance mínimo y revocables.
 - Las acciones críticas deben pedir confirmación y quedar auditadas.
 
@@ -46,21 +46,21 @@ Telegram + Web UI debe cubrir flujos que funcionan bien con conectividad y conve
 3. Usuario selecciona incidente o introduce código de invitación.
 4. Usuario define seudónimo por incidente.
 5. Usuario selecciona rol.
-6. Backend crea identidad de canal y permisos iniciales.
+6. Backend crea identidad de canal, permisos iniciales civiles y estado de confianza contextual.
 
 ### Reporte de centro
 
 1. Usuario elige `Reportar centro`.
 2. Bot solicita ubicación aproximada o abre Web UI con mapa online.
 3. Usuario añade tipo, prioridad y necesidad inicial mínima.
-4. Backend registra operación como pendiente de corroboración.
+4. Backend registra operación como reporte operativo civil pendiente de corroboración social/contextual.
 5. Bot devuelve estado y próximos pasos.
 
 ### Reporte de recursos
 
 1. Usuario elige `Faltante` o `Sobrante`.
 2. Bot solicita centro, categoría, cantidad aproximada y urgencia.
-3. Backend calcula frescura/confianza y matching simple.
+3. Backend calcula frescura, confianza contextual, señales contradictorias y matching simple.
 4. Bot notifica posibles tareas logísticas.
 
 ### Reunificación familiar
@@ -76,10 +76,10 @@ Telegram + Web UI debe cubrir flujos que funcionan bien con conectividad y conve
 - El canal debe soportar comandos y botones para acciones frecuentes.
 - El canal debe generar enlaces web firmados para pantallas complejas.
 - Los enlaces deben incluir alcance, expiración, incidente, rol y permisos mínimos.
-- El canal debe mostrar estado de operación: recibida, pendiente, confirmada, rechazada o requiere revisión.
+- El canal debe mostrar estado de operación: recibida, pendiente, no verificada, corroborada, disputada, confirmada, rechazada o requiere revisión.
 - El canal debe degradar con claridad cuando no haya datos frescos.
 - El canal no debe exponer ubicación exacta de menores ni datos sensibles en mensajes de Telegram.
-- El canal no debe tomar decisiones críticas que dependan de presencia fuerte.
+- El canal no debe tomar decisiones críticas que dependan de presencia fuerte ni convertir atestación social en permisos sensibles.
 
 ## Requisitos no funcionales
 

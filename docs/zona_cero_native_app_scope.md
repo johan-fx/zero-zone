@@ -4,7 +4,7 @@ Este documento delimita qué debe seguir perteneciendo a la app nativa aunque ex
 
 ## Decisión
 
-La app nativa es el cliente de campo crítico. Su misión no es replicar todos los flujos conversacionales de Telegram, sino garantizar operación local-first cuando la conectividad, la batería, la seguridad y el estrés operativo degradan el entorno.
+La app nativa es el cliente de campo crítico. Su misión no es replicar todos los flujos conversacionales de Telegram, sino garantizar operación local-first cuando la conectividad, la batería, la seguridad y el estrés operativo degradan el entorno. También debe materializar el ciclo común de confianza: reportes operativos civiles creados en campo nacen no verificados y se elevan, degradan o disputan con señales sociales/contextuales.
 
 ## Estado actual del repo
 
@@ -25,9 +25,9 @@ La implementación actual ya apunta en esta dirección:
 | Mapa offline | Necesita almacenamiento local robusto, rendimiento y control de paquetes. |
 | Operación local-first | Debe funcionar sin red y sincronizar después. |
 | Outbox firmada local | Requiere persistencia fiable y material criptográfico local. |
-| Presencia probabilística fuerte | Usa señales del dispositivo, permanencia, sensores, batería y background. |
+| Presencia probabilística fuerte | Usa señales del dispositivo, permanencia, sensores, batería y background para alimentar confianza contextual sin prometer certeza. |
 | Bajo consumo | Necesita control de muestreo, tracking y degradación. |
-| SOS crítico | Debe funcionar con mínima fricción, cola local y transporte degradado. |
+| SOS crítico | Debe estar abierto a participantes civiles, funcionar con mínima fricción, cola local, transporte degradado, deduplicación y comunicación honesta. |
 | Meshtastic | Integración realista con hardware/gateway y mensajes críticos. |
 | UX de campo | Targets grandes, estado offline visible y decisiones bajo estrés. |
 
@@ -46,7 +46,7 @@ La implementación actual ya apunta en esta dirección:
 
 - No debe contener reglas de negocio divergentes del backend.
 - No debe exponer datos sensibles de menores salvo alcance explícito y cifrado.
-- No debe intentar reemplazar paneles administrativos complejos.
+- No debe intentar reemplazar paneles de safeguarding, auditoría sensible o gobernanza restringida.
 - No debe bloquear operación local por fallos de Telegram/Web.
 - No debe asumir conectividad estable.
 
@@ -71,7 +71,7 @@ La app debe tratar al backend como fuente de coordinación compartida, pero no c
 | Sin red | Registrar operaciones localmente y actualizar vistas locales. |
 | Red intermitente | Empujar outbox, tirar cambios por cursor y mostrar estado. |
 | Conflicto | Conservar historial, mostrar estado y aplicar resolución de dominio. |
-| Datos stale | Degradar visualmente confianza, recomendaciones y matching. |
+| Datos stale | Degradar visualmente confianza, recomendaciones, matching y peso de reportes operativos civiles. |
 
 ## Backlog nativo posterior
 

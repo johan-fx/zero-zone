@@ -6,7 +6,7 @@
 **Estado:** Borrador funcional v0.1  
 **Fuentes:** `docs/Plan.md` y `docs/research/zona_cero_benchmark_tecnico_2026-06-27.md`
 
-Zona Cero coordina voluntarios, centros de trabajo, recursos críticos, alertas SOS y reunificación familiar durante catástrofes. El producto no debe diseñarse como una app CRUD con mapa, sino como una red local-first por incidente, capaz de operar con conectividad degradada, presencia probabilística y operaciones firmadas.
+Zona Cero coordina voluntarios, centros de trabajo, recursos críticos, alertas SOS y reunificación familiar durante catástrofes. El producto no debe diseñarse como una app CRUD con mapa ni como una jerarquía de administradores globales, sino como una red social-first y local-first por incidente, capaz de operar con conectividad degradada, presencia probabilística, confianza contextual y operaciones firmadas.
 
 ## 1. Tesis del producto
 
@@ -16,7 +16,7 @@ Zona Cero resuelve una pregunta operativa:
 
 > ¿A dónde debe ir el siguiente recurso —persona, agua, herramienta, vehículo o equipo especializado— para producir el mayor impacto seguro?
 
-El producto convierte señales de campo en decisiones accionables: dónde falta gente, qué centro está activo, qué recurso escasea, qué alerta requiere respuesta y qué casos deben derivarse a organismos verificados.
+El producto convierte señales de campo en decisiones accionables: dónde falta gente, qué centro está activo, qué recurso escasea, qué alerta requiere respuesta y qué casos deben derivarse a organismos verificados. La mayoría de recursos y reportes operativos nacen como señales civiles no verificadas y ganan o pierden confianza mediante corroboración social, presencia, frescura, reputación contextual, señales anti-abuso y disputas.
 
 ## 2. Objetivos
 
@@ -27,7 +27,7 @@ El producto convierte señales de campo en decisiones accionables: dónde falta 
 - Mostrar un mapa offline/online con centros, saturación, necesidades y alertas.
 - Provide a map-first operational flow with progressive center details, role counts, needs, surplus resources, freshness, and risk labels.
 - Registrar faltantes y sobrantes de suministros para facilitar logística.
-- Emitir SOS de rescatista con última ubicación conocida y señales de rescate disponibles.
+- Emitir SOS civil o de rescatista con última ubicación conocida, señales disponibles y comunicación honesta de límites.
 - Permitir registro seguro de niños separados sin exponer identidad completa, foto pública ni ubicación exacta.
 - Interoperar con PFIF/RFL para reunificación familiar, sin reemplazar la verificación oficial.
 - Funcionar con conectividad intermitente mediante operaciones locales firmadas y sincronización posterior.
@@ -48,23 +48,25 @@ El producto convierte señales de campo en decisiones accionables: dónde falta 
 | Usuario | Necesidad | Resultado esperado |
 |---|---|---|
 | Voluntario general | Saber dónde ayudar sin saturar un punto | Recibe recomendaciones de centros con déficit |
+| Participante civil | Reportar incidentes, centros, recursos, disputas o SOS sin esperar autorización central | Puede crear reportes operativos que nacen sin verificar y ganan o pierden confianza contextual |
 | Rescatista | Coordinar trabajo y pedir ayuda si queda atrapado | Puede hacer check-in, ver relevos y emitir SOS |
 | Personal médico | Saber qué centros requieren cobertura sanitaria | Ve centros con déficit médico y reporta capacidad |
 | Logística / motorizados | Transportar recursos a donde faltan | Recibe tareas de traslado priorizadas |
-| Coordinador local | Entender el estado del incidente | Ve datos agregados, auditoría y alertas |
+| Coordinador local | Entender el estado del incidente sin convertirse en administrador global | Ve datos agregados, auditoría, disputas y alertas según su contexto |
 | Familiar buscando menor | Encontrar una pista sin exponer al niño | Puede buscar de forma privada y derivar a verificación |
-| Personal verificado | Validar casos sensibles y coordinar respuesta | Accede a datos restringidos según rol |
+| Personal verificado | Validar casos sensibles, safeguarding y coordinación restringida | Accede a datos restringidos según rol verificado, no por atestación social |
 
 ## 4. Principios funcionales
 
 1. **Local-first por defecto:** toda acción crítica debe poder registrarse sin conexión.
 2. **Operaciones firmadas:** cada cambio relevante se registra como operación firmada, auditable e idempotente.
 3. **Sincronización por incidente/celda:** la app sincroniza solo lo necesario para la zona operativa del usuario.
-4. **Presencia probabilística:** GPS, permanencia, señales del dispositivo, reputación y corroboración cruzada producen evidencia; ninguna señal aislada prueba presencia.
-5. **Minimización de datos:** solo se recoge lo imprescindible, especialmente en menores y contextos políticamente sensibles.
-6. **Seguridad antes que eficiencia:** el sistema coordina ayuda, pero no debe empujar a personas no capacitadas hacia peligro.
-7. **Interoperabilidad humanitaria:** reunificación familiar debe alinearse con PFIF/RFL y organismos verificados.
-8. **Mesh pragmático:** Meshtastic funciona como gateway para mensajes críticos; BLE mesh móvil generalizado no es base confiable del MVP.
+4. **Confianza contextual y verificación social:** incidentes, centros, recursos, SOS y disputas nacen como reportes operativos no verificados; ganan o pierden peso con corroboración, presencia, frescura, reputación contextual y señales anti-abuso.
+5. **Presencia probabilística:** GPS, permanencia, señales del dispositivo, reputación y corroboración cruzada producen evidencia; ninguna señal aislada prueba presencia.
+6. **Minimización de datos:** solo se recoge lo imprescindible, especialmente en menores y contextos políticamente sensibles.
+7. **Seguridad antes que eficiencia:** el sistema coordina ayuda, pero no debe empujar a personas no capacitadas hacia peligro.
+8. **Interoperabilidad humanitaria:** reunificación familiar debe alinearse con PFIF/RFL y organismos verificados.
+9. **Mesh pragmático:** Meshtastic funciona como gateway para mensajes críticos; BLE mesh móvil generalizado no es base confiable del MVP.
 
 ## 5. Alcance del MVP
 
@@ -91,7 +93,7 @@ El MVP debe validar el diferenciador del producto: coordinación local-first de 
 ### Fuera del MVP inicial
 
 - Optimización avanzada de rutas multi-parada.
-- App completa para autoridades.
+- App de administración global o jerarquía centralizada de control.
 - Reunificación familiar en producción sin acuerdos operativos con organismos competentes.
 - BLE mesh teléfono-a-teléfono como dependencia central.
 - Prueba criptográfica fuerte de presencia física.
@@ -116,7 +118,7 @@ El usuario entra con una identidad local seudónima. No necesita email, teléfon
   - logística,
   - coordinación,
   - personal verificado.
-- Los roles sensibles deben requerir validación por una organización o coordinador autorizado.
+- Los roles sensibles solo pueden validarse por una organización, safeguarding o persona verificada con mandato operativo; la confianza contextual, la popularidad o la atestación social no bastan ni desbloquean esos roles.
 - La app debe firmar cada operación crítica con la clave local.
 - Si el dispositivo cambia o se pierde, la identidad local no debe asumirse recuperable salvo que exista un mecanismo explícito de respaldo seguro.
 
@@ -135,8 +137,8 @@ Un incidente representa una catástrofe concreta. La operación se divide en cel
 
 ### Requisitos funcionales
 
-- La app debe permitir crear o unirse a un incidente.
-- Cada incidente debe tener nombre, zona aproximada, fecha, estado y paquetes de mapa asociados.
+- La app debe permitir a cualquier participante civil crear o unirse a un incidente, con deduplicación previa, rate limits/throttling, penalización Sybil, disputas y degradación de visibilidad/peso cuando la confianza sea baja.
+- Cada incidente debe tener nombre, zona aproximada, fecha, estado de confianza y paquetes de mapa asociados.
 - La app debe dividir el incidente en celdas geográficas.
 - El usuario debe sincronizar prioritariamente la celda actual y celdas cercanas.
 - La app debe permitir cambiar de celda cuando el usuario se desplaza.
@@ -197,7 +199,7 @@ Un centro de trabajo es un punto operativo en el terreno: edificio colapsado, zo
 
 ### Requisitos funcionales
 
-- Un usuario debe poder crear un centro desde el mapa.
+- Cualquier participante civil debe poder crear un centro desde el mapa como reporte operativo inicial `pending`/no verificado, sujeto a deduplicación, rate limits/throttling, penalización Sybil, disputas y degradación de visibilidad/peso cuando la confianza sea baja.
 - Center creation must feel like a field check-in from the map, with minimal required input first and optional details later.
 - El centro debe incluir tipo, descripción breve, ubicación aproximada, prioridad y necesidades iniciales.
 - La app debe mostrar el estado del centro y la confianza de validación.
@@ -295,8 +297,8 @@ El módulo conecta puntos con faltantes y puntos con sobrantes para mover recurs
 
 ### Requisitos funcionales
 
-- Un usuario activo en un centro debe poder reportar faltantes.
-- Un usuario activo en un centro debe poder reportar sobrantes.
+- Cualquier participante civil debe poder reportar faltantes; el reporte nace con confianza baja/media según contexto y sube o baja por señales.
+- Cualquier participante civil debe poder reportar sobrantes; el reporte debe mostrar frescura, confianza, restricciones y disputas.
 - Each report must include type, approximate quantity, urgency, freshness, confidence, and restrictions.
 - Resource categories must be incident-configurable and start simple in the MVP: roles/people, water, food, light tools, heavy machinery, vehicles, and medical support.
 - La app debe emparejar faltantes y sobrantes por prioridad, distancia, seguridad y frescura de datos.
@@ -312,22 +314,22 @@ El módulo conecta puntos con faltantes y puntos con sobrantes para mover recurs
 - Un usuario de logística puede aceptar una tarea de traslado.
 - La tarea mantiene estados: pendiente, aceptada, en camino, entregada, cancelada.
 
-## 6.8 Módulo H - SOS de rescatista
+## 6.8 Módulo H - SOS civil y de rescatista
 
 ### Descripción
 
-Un rescatista puede emitir una alerta crítica si queda atrapado o en peligro. La app no promete profundidad exacta bajo escombros; entrega última ubicación conocida y señales útiles.
+Cualquier participante civil puede emitir una alerta crítica si está atrapado, en peligro o necesita ayuda urgente. La app no promete rescate, prioridad oficial ni profundidad exacta bajo escombros; entrega última ubicación conocida, señales útiles, estado de propagación y confianza contextual. Los roles verificados pueden recibir capacidades adicionales de respuesta o cierre, pero no son requisito para crear el SOS.
 
 ### Requisitos funcionales
 
-- La app debe ofrecer un botón SOS de acceso rápido para roles autorizados o usuarios en centro activo.
-- El SOS debe incluir última ubicación conocida, hora, centro asociado y estado de batería si está disponible.
+- La app debe ofrecer un botón SOS de acceso rápido para cualquier participante civil, con confirmación fuerte, deduplicación, rate limits y controles anti-abuso.
+- El SOS debe incluir última ubicación conocida, hora, centro asociado si existe, estado de batería si está disponible, frescura y nivel de confianza.
 - El SOS debe intentar propagarse por:
   - red local/app sync,
   - backend cuando haya conexión,
   - cola de mensajes críticos para gateway Meshtastic,
   - notificaciones locales a usuarios cercanos cuando sea posible.
-- La app debe permitir acuse de recibo.
+- La app debe permitir acuse de recibo y actualizaciones de estado por participantes cercanos, separando señales sociales de permisos de respuesta restringidos.
 - La app debe registrar actualizaciones de estado: emitido, recibido, en respuesta, resuelto, falso positivo.
 - La app debe dejar claro que barómetro/BLE/RSSI son señales de proximidad, no profundidad exacta.
 - SOS location may show last known coordinates, timestamp, accuracy radius, and optional sensor notes, but never exact rubble depth or false altitude precision.
@@ -335,7 +337,7 @@ Un rescatista puede emitir una alerta crítica si queda atrapado o en peligro. L
 ### Criterios de aceptación
 
 - Un SOS creado sin conexión queda en cola y se difunde en cuanto exista transporte disponible.
-- Usuarios cercanos ven la alerta con prioridad máxima.
+- Usuarios cercanos ven la alerta con prioridad visual alta, estado de confianza y límites claros de actuación segura.
 - El sistema no muestra “profundidad exacta”.
 
 ## 6.9 Módulo I - Reunificación familiar
@@ -391,7 +393,7 @@ El sistema registra cambios como operaciones locales firmadas. Cuando hay conect
 - Los conflictos deben resolverse según tipo de entidad:
   - eventos append-only: conservar historial,
   - estados derivados: recalcular desde operaciones,
-  - campos administrativos: requerir moderación si hay disputa.
+  - campos sensibles o de safeguarding: requerir rol verificado si hay disputa.
 
 ### Criterios de aceptación
 
@@ -431,7 +433,7 @@ La interfaz debe seguir siendo usable por usuarios estresados, cansados y no té
 - Permitir auditoría de operaciones críticas.
 - Reducir riesgo de doxxing o persecución política mediante seudónimos por incidente.
 - Diseñar con abuso esperado: sabotaje, Sybil, spam, falsos centros, pesca de menores y GPS spoofing.
-- Social attestation can increase confidence but must never grant critical permissions, professional credentials, minor handoff, or access to sensitive records by itself.
+- Social attestation can increase confidence but must never grant critical permissions, professional credentials, minor handoff, safeguarding authority, or access to sensitive records by itself.
 - Optional media evidence must remain backlog/feature-flagged until redaction, retention, moderation, signed metadata, consent, and abuse controls are defined.
 
 ## 8. Requisitos de resiliencia operativa
@@ -489,7 +491,7 @@ La interfaz debe seguir siendo usable por usuarios estresados, cansados y no té
 - La ubicación exacta de un menor no se publica.
 - Las operaciones offline no se descartan por falta de red.
 - Los mensajes críticos tienen prioridad sobre sincronización normal.
-- Las autoridades/personas verificadas tienen más capacidades, pero sus acciones también deben auditarse.
+- Las personas verificadas pueden tener capacidades sensibles o de safeguarding, pero sus acciones también deben auditarse y no convierten el producto en una jerarquía de administración global.
 
 ## 12. Preguntas abiertas
 
@@ -519,7 +521,7 @@ El MVP estará funcionalmente listo cuando un grupo de usuarios pueda, en una pr
 1. Unirse a un incidente sin registro personal tradicional.
 2. Descargar o usar un mapa offline de la zona.
 3. Crear centros de trabajo desde el terreno.
-4. Validar centros mediante presencia probabilística.
+4. Elevar o degradar confianza de centros, recursos y SOS mediante señales sociales/contextuales.
 5. Ver déficit/saturación de voluntarios por rol.
 6. Reportar necesidades básicas de recursos.
 7. Operar durante un corte de red y sincronizar después.

@@ -6,7 +6,7 @@
 **Estado:** Borrador de diseño v0.1  
 **Fuentes:** `docs/zona_cero_prd_funcional.md`, `docs/zona_cero_technical_design.md`
 
-Zona Cero debe diseñarse como una superficie operativa de campo, no como una app administrativa. La pantalla principal es el mapa: desde ahí el usuario entiende el incidente, su celda, los centros activos, la frescura de datos, los déficits, los riesgos, las alertas y su propio estado operativo.
+Zona Cero debe diseñarse como una superficie operativa de campo social-first, no como una app administrativa. La pantalla principal es el mapa: desde ahí el usuario entiende el incidente, su celda, los centros activos, la frescura de datos, los déficits, los riesgos, las alertas, la confianza contextual y su propio estado operativo.
 
 ## 1. Decisión de diseño
 
@@ -16,7 +16,7 @@ La app usa un flujo **map-first + acción progresiva**:
 2. Descarga o confirma el paquete offline de su zona.
 3. Opera desde el mapa con estado de conexión, celda, frescura y modo voluntario siempre visibles.
 4. Selecciona un centro para ver un panel progresivo con lo mínimo para decidir.
-5. Crea centros, hace check-in, reporta recursos o emite SOS sin abandonar el contexto operativo.
+5. Crea reportes operativos de centros, hace check-in, reporta recursos, disputa información o emite SOS sin abandonar el contexto operativo.
 
 La idea clave: **menos navegación, más decisión en contexto**. En una emergencia, una pantalla que obliga a buscar menús es una pantalla que falla.
 
@@ -24,10 +24,10 @@ La idea clave: **menos navegación, más decisión en contexto**. En una emergen
 
 | Principio | Regla de diseño |
 |---|---|
-| Operación antes que gestión | El mapa, las recomendaciones y los estados operativos tienen prioridad sobre formularios. |
+| Operación antes que gestión | El mapa, las recomendaciones, las señales sociales y los estados operativos tienen prioridad sobre formularios. |
 | Local-first visible | Offline, sync pendiente, datos obsoletos y conflictos se muestran siempre con texto e icono. |
 | Seguridad antes que velocidad | Zonas peligrosas, SOS, checkout y tracking requieren señales claras y confirmación cuando aplique. |
-| Privacidad por defecto | Se muestran conteos agregados, nunca listas públicas de voluntarios ni ubicación exacta de terceros. |
+| Privacidad por defecto | Se muestran conteos agregados y confianza contextual, nunca listas públicas de voluntarios ni ubicación exacta de terceros. |
 | Divulgación progresiva | Primero decisión rápida; después detalle; auditoría e historial solo bajo demanda. |
 | Accesibilidad en estrés | Objetivos táctiles grandes, etiquetas textuales, alto contraste y copy operativo. |
 
@@ -59,7 +59,7 @@ Estos indicadores deben aparecer de forma consistente en las pantallas operativa
 | Conectividad | `Online`, `Offline`, `Parcial`, `Mesh queue` con icono y texto | Barra superior del mapa, outbox, SOS |
 | Frescura | `Reciente`, `Degradado`, `Obsoleto` con timestamp | Centros, recursos, conteos, recomendaciones |
 | Sync local | `Pendiente`, `Enviado`, `Confirmado`, `Conflicto`, `Rechazado` | Acciones recién creadas, outbox, detalle |
-| Confianza | `Baja`, `Media`, `Alta` con explicación corta | Centros, presencia, recursos |
+| Confianza | `Baja`, `Media`, `Alta` con explicación corta | Incidentes, centros, presencia, recursos, SOS y disputas |
 | Riesgo | `Seguro`, `Precaución`, `Peligro`, `Solo roles entrenados` | Centros, rutas, recomendaciones |
 | Tracking | `Activo`, `Degradado`, `Pausado`, `Detenido` | Mapa, modo voluntario, panel de centro |
 
@@ -131,8 +131,8 @@ Al crear, mostrar claramente: `Incidente no verificado`.
 
 ### Criterios de diseño
 
-- Un incidente creado por usuario nace como `unverified`.
-- La pantalla debe sugerir posibles duplicados antes de crear uno nuevo.
+- Un incidente creado por usuario nace como `unverified`, con visibilidad/peso degradado si la confianza es baja.
+- La pantalla debe sugerir posibles duplicados antes de crear uno nuevo y permitir corroborar o disputar reportes operativos existentes; además debe aplicar rate limits/throttling, penalización Sybil y degradación de visibilidad/peso cuando la confianza sea baja.
 - No debe descargar todo el incidente; solo preparar celdas relevantes.
 
 ---
@@ -219,7 +219,7 @@ Al crear, mostrar claramente: `Incidente no verificado`.
 
 - `Crear centro`.
 - `Estoy disponible` / `Cambiar estado`.
-- `SOS` visible cuando aplica.
+- `SOS` visible para cualquier participante civil, con confirmación y límites claros.
 
 ### Criterios de diseño
 
@@ -295,7 +295,7 @@ Roles presentes: 12 total · 2 médicos · 4 logística
 4. Añade descripción breve y prioridad.
 5. Opcional: necesidades iniciales.
 6. Confirma creación.
-7. El centro aparece localmente como `pending` con sync pendiente.
+7. El centro aparece localmente como reporte operativo `pending`/no verificado con sync pendiente.
 
 ### Formulario mínimo
 
@@ -315,7 +315,7 @@ Roles presentes: 12 total · 2 médicos · 4 logística
 
 Mostrar:
 
-- `Centro creado en este dispositivo`.
+- `Centro reportado en este dispositivo`.
 - `Estado: pending`.
 - `Se activará solo con evidencia suficiente`.
 - `Operación firmada pendiente de sincronización` si no hay red.
@@ -323,8 +323,8 @@ Mostrar:
 ### Criterios de diseño
 
 - GPS por sí solo no debe comunicar “centro activo”.
-- Crear centro no debe sacar al usuario del mapa.
-- La pantalla debe invitar a corroboración sin gamificarla.
+- Crear centro no debe sacar al usuario del mapa y debe aplicar deduplicación, rate limits/throttling, penalización Sybil, disputas y degradación de visibilidad/peso cuando la confianza sea baja.
+- La pantalla debe invitar a corroboración o disputa sin gamificarla ni convertir votos en permisos.
 
 ---
 
@@ -397,7 +397,7 @@ Mostrar:
 
 ### Criterios de diseño
 
-- Los reportes deben mostrar frescura y confianza en el panel del centro.
+- Los reportes deben mostrar frescura, confianza, corroboraciones y disputas en el panel del centro.
 - La app no debe parecer marketplace comercial.
 - El matching debe presentarse como despacho humanitario asistido.
 
@@ -439,8 +439,8 @@ Mostrar:
 
 ### Acceso
 
-- Botón persistente para roles autorizados o usuarios en centro activo.
-- Acceso desde mapa y modo voluntario activo.
+- Botón persistente para cualquier participante civil.
+- Acceso desde mapa y modo voluntario activo, con deduplicación, rate limits/throttling, penalización Sybil, disputas posteriores, degradación de visibilidad/peso cuando la confianza sea baja y confirmación fuerte.
 
 ### Flujo
 
@@ -643,7 +643,7 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-  participant U as Rescatista
+  participant U as Participante civil
   participant A as App
   participant Q as Cola crítica
   participant S as Sync/Mesh
@@ -662,7 +662,7 @@ sequenceDiagram
 - [ ] El panel de centro muestra roles agregados, necesidades, sobrantes, confianza, frescura y riesgo.
 - [ ] Las recomendaciones explican su razón y no se presentan como órdenes.
 - [ ] Los estados no dependen solo del color.
-- [ ] SOS muestra última ubicación conocida, hora y precisión/radio, nunca profundidad exacta.
+- [ ] SOS está disponible para participantes civiles y muestra última ubicación conocida, hora y precisión/radio, nunca profundidad exacta ni promesa de rescate.
 - [ ] El usuario puede pausar tracking, hacer check-out o quedar fuera de servicio de forma visible.
 - [ ] La outbox confirma que las operaciones offline se conservaron y firmaron.
 - [ ] Reunificación familiar no aparece como flujo público del MVP.

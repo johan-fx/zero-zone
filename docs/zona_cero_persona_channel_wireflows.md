@@ -6,13 +6,13 @@ Este documento cruza los PRDs, transcripciones, checklist de slices, código y p
 
 ## Resumen ejecutivo
 
-Zona Cero ya tiene una base multi-canal fuerte: Telegram, Web UI, API, contratos compartidos y una base nativa offline-first con outbox, sync, mapas y SOS. Aun así, el estado no debe leerse como "todo terminado" sin matices.
+Zona Cero ya tiene una base multi-canal fuerte: Telegram, Web UI, API, contratos compartidos y una base nativa offline-first con outbox, sync, mapas y SOS. La lectura funcional debe ser social-first: los canales permiten que civiles creen reportes operativos y el sistema separa confianza contextual de permisos sensibles. Aun así, el estado no debe leerse como "todo terminado" sin matices.
 
 | Área | Estado de producto | Lectura honesta |
 |---|---|---|
 | Telegram + Web UI + API | Avanzado | Cubre onboarding, reportes, recursos, dispatch, SOS conectado, reunificación privada y routing de intención. |
 | App nativa | Parcial/avanzado por capacidades | Tiene piezas offline-first importantes, pero varios puntos siguen dependiendo de seams/dev-build o de validación nativa real. |
-| Reunificación familiar | Parcial por canal | Implementada sobre Telegram/Web/API; explícitamente fuera del SOS nativo. |
+| Reunificación familiar | Parcial por canal | Implementada sobre Telegram/Web/API; explícitamente fuera del SOS nativo y detrás de safeguarding/verificación. |
 | IA operativa | Parcial/controlada | Existe clasificación/prefill seguro en Telegram; no debe tratarse como autoridad operativa. |
 | Verificación actual | Ejecutada parcialmente en esta revisión | Se ejecutaron suites locales focalizadas de contracts, API intent/webhook y Telegram channel; staging/campo siguen pendientes. |
 | Checklist de slices | Reconciliado parcialmente | La tabla global ya alinea slices 11, 13, 14, 15 y 19 con sus cierres/evidencia; Slice 12 conserva Equipo C pendiente. |
@@ -48,10 +48,10 @@ Zona Cero ya tiene una base multi-canal fuerte: Telegram, Web UI, API, contratos
 |---|---|---|---|
 | Voluntario de campo | Reportar estado, necesidades, centros y disponibilidad bajo estrés. | App nativa / Telegram | Web UI |
 | Rescatista u operador crítico | Operar offline, enviar SOS, mantener presencia y sincronizar después. | App nativa | API |
-| Coordinador local | Ver mapa, priorizar centros, reasignar recursos y coordinar tareas. | Web UI | Telegram |
+| Coordinador local | Ver mapa, priorizar centros, revisar señales, resolver disputas contextuales y coordinar tareas sin rol de administrador global. | Web UI | Telegram |
 | Logística / motorizado | Reportar faltantes/sobrantes, aceptar traslados y cerrar entregas. | Telegram | Web UI / App nativa |
 | Familiar o enlace familiar | Buscar o reportar información sensible con minimización de datos. | Web privada | Telegram |
-| Personal verificado de organización | Revisar casos sensibles, validar accesos y evitar abuso. | Web UI / API | Telegram |
+| Personal verificado / safeguarding | Revisar casos sensibles, validar accesos restringidos y evitar abuso. | Web UI / API | Telegram |
 | Plataforma/API | Mantener contratos, auditoría, permisos, persistencia y fan-out. | API | Contratos compartidos |
 
 ## Wireflow 1: voluntario Telegram - alta y reportes rápidos
@@ -141,7 +141,7 @@ flowchart TD
 | Mapa operativo Web | `implemented` | `apps/web-ui/src/features/operations-map/*`, `e2e/operational-map.spec.ts`. | Smoke visual fresco. |
 | Centros de trabajo | `implemented` | Web/API contracts integration, API index tests. | Verificar contra staging. |
 | Recursos y dispatch | `implemented` | API, Telegram, contracts tests. | Confirmar flujo completo cross-channel con datos actuales. |
-| SOS visible con cautela | `implemented`/`partial` | API/Web/Telegram tests. | Revisión UX/legal de promesas y copy. |
+| SOS visible con cautela | `implemented`/`partial` | API/Web/Telegram tests. | Revisión UX/legal de promesas, apertura civil, rate limits y copy. |
 | Recomendación operacional general | `planned`/`partial` | Hay matching/recomendaciones acotadas; no motor general claro. | Definir alcance producto antes de construir más. |
 
 ## Wireflow 4: logística - matching y tareas de traslado
@@ -175,7 +175,7 @@ flowchart TD
 flowchart TD
   A[Persona: afectado, voluntario o rescatista] --> B{Canal}
   B -->|Telegram con red| C[/sos o lenguaje natural]
-  B -->|Mobile offline/degradado| D[SOS local-first]
+  B -->|Mobile offline/degradado| D[SOS local-first abierto a civil]
   B -->|Web| E[Formulario/acción conectada si aplica]
   C --> F[Confirmación fuerte antes de crear alerta]
   E --> F
@@ -270,7 +270,8 @@ flowchart TD
 |---|---|---|
 | Slice 12 conserva Equipo C como pendiente aunque el estado global sea `Implementado`. | Puede parecer cierre total mobile cuando la evidencia principal es Telegram/API. | Definir si Equipo C debe validar compatibilidad o si corresponde marcarlo como `N/A`. |
 | Telegram/Web no sustituyen el núcleo nativo offline-first. | Riesgo de prometer resiliencia que el canal conectado no puede dar. | Mantener separación explícita por canal. |
-| Reunificación familiar existe técnicamente, pero necesita gobernanza. | Riesgo legal/ético si se lanza sin organización verificadora. | Marcar como feature sensible con gate operativo. |
+| Reunificación familiar existe técnicamente, pero necesita safeguarding/gobernanza. | Riesgo legal/ético si se lanza sin organización verificadora. | Marcar como feature sensible con gate operativo. |
+| Modelo social-first puede confundirse con permisos por popularidad. | Riesgo de escalada si corroboración civil se trata como autorización. | Documentar que la confianza contextual sube/baja visibilidad y prioridad, no credenciales ni acceso sensible. |
 | IA aparece en briefings como deseo amplio. | Riesgo de usar IA como autoridad en zona de peligro. | Limitar a clasificación/prefill y exigir confirmación humana. |
 | Mobile tiene seams/dev-build para capacidades nativas. | Riesgo de confundir pruebas unitarias con readiness de campo. | Añadir smoke real de dispositivo/hardware antes de demo fuerte. |
 
