@@ -48,6 +48,7 @@ Usar este reparto como contrato de trabajo para todas las slices. La clave es qu
 | 18 | Telegram `/dispatch` natural-language assistant | 🟢 | 🟢 | 🟢 | Hecho |
 | 19 | Telegram `/start` + incident join natural-language onboarding | 🟢 | 🟢 | N/A | Hecho |
 | 20 | Social-first trust + dispute lifecycle | ✅ | ✅ | ✅ | Cerrado en `main` — staging, Cubic y E2E real validados |
+| 21 | Proactive social updates + channel verification UX | ⬜ | ⬜ | ⬜ | Propuesto — convierte trust lifecycle en comunicación accionable por canal |
 
 Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloqueado · N/A No aplica.
 
@@ -1214,6 +1215,74 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 - E2E real de staging validó Telegram → API/D1 → Web/API fallback y flujos naturales de SOS, reunificación familiar, dispatch e incident join: `pnpm e2e:staging:telegram` pasó 5/5.
 - E2E específico de Slice 20 validó comando/API y lenguaje natural dry-run para crear, corroborar, disputar y degradar confianza sin permisos sensibles: `pnpm e2e:slice20:social-trust` pasó.
 - Cubic AI terminó en `SUCCESS` tras la integración final y #22 se mergeó a `main` con `feat(slice-20): implement social-first trust lifecycle` (`a7f539e960d1843a19efabc8c16ba80888b1d40a`).
+
+
+## Slice 21 - Proactive social updates + channel verification UX
+
+**Objetivo:** convertir el trust lifecycle de Slice 20 en una experiencia social-first realmente accionable: cuando aparece un SOS, recurso, centro, requerimiento, disputa o match relevante, las personas afectadas se enteran por el canal adecuado y pueden corroborar, disputar, abrir detalle seguro o acusar recibo sin tener que revisar manualmente la Web UI.
+
+**Decisión de producto:** Telegram debe funcionar como inbox operativo proactivo para novedades conectadas y acciones rápidas; Web UI debe concentrar el detalle estructurado, privacidad, contexto y links firmados; Mobile debe seguir siendo el canal crítico/offline con materialización local, outbox, mapa y degradación clara.
+
+**Estado de implementación:** propuesto. Slice 20 dejó contratos y acciones de confianza/disputa, pero falta cerrar el contrato de comunicación: evento → audiencia → canal → TTL/retry → copy visible → acción rápida → link firmado → ACK/estado leído → límites de autoridad.
+
+**Principio UX:** en catástrofe, el usuario no debe tener que buscar constantemente si hay novedades. El sistema debe empujar solo lo relevante, explicar por qué llega, permitir una acción segura en pocos toques y nunca convertir una notificación social en autoridad oficial.
+
+### Reparto de ownership
+
+| Equipo | Owns | Consume de | No debe hacer | Handoff esperado |
+|---|---|---|---|---|
+| A | UX Telegram + Web UI para notificaciones operativas, acciones rápidas, links firmados, confirmaciones, estados de lectura/ACK y copy de límites. | Contrato de eventos/audiencia de B, estados de confianza de Slice 20 y necesidades de campo de C. | Convertir Telegram en panel complejo, enviar datos sensibles por chat o depender de que usuarios revisen manualmente la Web UI. | Flujos donde Telegram avisa, permite corroborar/disputar/abrir detalle y Web UI muestra contexto seguro con retorno claro al canal. |
+| B | Event router canónico, audience resolver, subscriptions por incidente/celda/rol, delivery jobs, deduplicación, rate limits, TTL/retry, auditoría y endpoints de ACK. | Casos UX de A, materialización/offline de C y reglas de permisos/trust existentes. | Hacer broadcast indiscriminado, filtrar datos sensibles en mensajes, duplicar lógica de confianza en colas o saltarse permisos por urgencia. | Contrato `operational_update` con delivery por canal, pruebas de audiencia/permisos y trazabilidad completa por evento. |
+| C | Materialización mobile de updates relevantes, inbox/local feed, estado offline/sync, push local si aplica y acciones desde mapa/detalle. | Event stream y sync pull de B, copy/estados compartidos con A. | Depender de Telegram para alertas críticas, ocultar estado offline o calcular prioridad divergente. | App nativa muestra novedades por proximidad/celda, conserva updates pendientes offline y sincroniza ACK/señales sin duplicar reglas. |
+| Todos | Matriz evento → audiencia → canal → acción → límite de autoridad. | PRD, wireflows, threat model, API contracts y Slice 20. | Diseñar “notificaciones” como spam o como sustituto de verificación humana. | Demo multi-canal: SOS/recurso/match/disputa generan update dirigido y acción verificable sin permisos sensibles. |
+
+| Equipo | Checklist |
+|---|---|
+| A | ⬜ Diseñar Telegram como inbox operativo proactivo: mensajes breves, motivo de relevancia, confianza/frescura y acciones rápidas. |
+| A | ⬜ Añadir acciones Telegram para corroborar, disputar, acusar recibo y abrir detalle Web UI con link firmado cuando Telegram no baste. |
+| A | ⬜ Añadir vistas Web UI de detalle seguro para SOS, recurso/match, centro y disputa con estado de confianza, auditoría mínima y retorno al canal. |
+| A | ⬜ Revisar copy crítico para que cada update diga qué se sabe, qué no se sabe, qué acción segura puede tomar el usuario y qué autoridad NO concede. |
+| B | ⬜ Definir contrato `OperationalUpdate` con entidad, severidad, audiencia, reason codes, TTL, retry policy, canal permitido, estado de delivery y audit trail. |
+| B | ⬜ Implementar audience resolver por incidente, celda, rol, membership, proximidad aproximada, permisos y opt-out/quieting cuando aplique. |
+| B | ⬜ Implementar delivery jobs para Telegram/Web/Mobile sin broadcast indiscriminado y con deduplicación/rate limits. |
+| B | ⬜ Añadir endpoints/operaciones para ACK, leído, abrir detalle, corroborar/disputar desde update y expiración segura de links. |
+| B | ⬜ Probar que updates no exponen datos sensibles ni desbloquean permisos `org_verified`, safeguarding o respuesta oficial. |
+| C | ⬜ Materializar operational updates en mobile como feed/inbox local vinculado al mapa y a entidades sincronizadas. |
+| C | ⬜ Soportar estado offline: update recibido, pendiente, expirado, acción en outbox, ACK pendiente y conflicto tras sync. |
+| C | ⬜ Alinear SOS crítico/local-first para que mobile no dependa de Telegram y pueda reconciliar fan-out/ACK cuando vuelva la red. |
+| Todos | ⬜ Actualizar `docs/zona_cero_persona_channel_wireflows.md` con flujos proactivos por persona y canal. |
+| Todos | ⬜ Actualizar `docs/zona_cero_api_contracts.md` con trust/dispute/update lifecycle como capability duradera, no solo checklist de Slice 20. |
+
+**Definition of Done**
+
+- Existe una matriz documental evento → audiencia → canal → acción → TTL/retry → ACK → límite de autoridad para SOS, centros, recursos/requerimientos, matches y disputas.
+- Un nuevo SOS conectado genera update dirigido a audiencia relevante por Telegram/Web/Mobile sin exponer datos sensibles ni prometer rescate.
+- Un nuevo recurso/sobrante compatible con una necesidad genera match explicable y update al demandante o actor logístico adecuado.
+- Una disputa o degradación de confianza genera update solo a actores afectados, con explicación y acción segura.
+- Telegram permite actuar rápido; Web UI permite revisar contexto estructurado; Mobile conserva comportamiento offline/local-first.
+- Todos los updates tienen auditoría, deduplicación, rate limits, estado de delivery, expiración y copia honesta de límites.
+- Social updates pueden subir/bajar atención, visibilidad o prioridad operativa, pero no conceden permisos sensibles ni autoridad oficial.
+
+**Riesgos y límites**
+
+- Convertir Telegram en spam o canal de pánico.
+- Enviar datos sensibles o ubicaciones exactas por chat.
+- Notificar a una audiencia demasiado amplia y crear saturación o desplazamientos peligrosos.
+- Confundir ACK/corroboración con rescate, autorización o verificación oficial.
+- Diseñar links firmados demasiado largos, reutilizables o sin scope mínimo.
+- Duplicar reglas de audiencia, confianza o prioridad en clientes.
+
+**Evidencia esperada de verificación**
+
+- `pnpm contracts:test:strict`
+- `pnpm --filter @zona-cero/api test -- src/index.test.ts`
+- `pnpm --filter @zona-cero/telegram-channel test:strict`
+- `pnpm --filter @zona-cero/web-ui test`
+- `pnpm mobile:test:strict`
+- E2E local: SOS → operational update → Telegram action → Web UI detail → ACK/audit.
+- E2E local: resource surplus/need match → targeted update → corroborate/dispute → trust state recalculated canonically.
+- E2E mobile/offline: update materialized locally, action queued in outbox, sync reconciles ACK/trust state.
+- Tests de seguridad: audience resolver no notifica a no-miembros, no filtra safeguarding/menores/datos sensibles y no concede permisos críticos.
 
 ## Gates antes de implementar cada slice
 
