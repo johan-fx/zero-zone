@@ -242,6 +242,26 @@ dd {
   cursor: not-allowed;
 }
 
+.operational-updates {
+  display: grid;
+  gap: 1rem;
+}
+
+.operational-update-list {
+  display: grid;
+  gap: 1rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.operational-update-card {
+  border: var(--zc-border-width) solid var(--zc-color-border);
+  border-radius: var(--zc-radius-card);
+  background: var(--zc-color-surface-muted);
+  padding: 1rem;
+}
+
 .sos-card {
   border-color: var(--zc-color-sos);
 }

@@ -2,6 +2,7 @@ export { createZonaCeroTelegramBot, registerZonaCeroTelegramFlows } from './bot'
 export { handleTelegramDispatchTaskFlow } from './dispatch-flow';
 export { handleTelegramFamilyReunificationFlow } from './family-reunification-flow';
 export { handleTelegramIncidentJoinFlow } from './incident-join-flow';
+export { createTelegramOperationalUpdateHttpPorts, handleTelegramOperationalUpdateCommand } from './operational-updates-flow';
 export { handleTelegramResourceReportFlow } from './resource-flow';
 export { handleTelegramSosFlow } from './sos-flow';
 export {
@@ -63,6 +64,11 @@ export type {
   TelegramWorkCenterReportPorts,
   TelegramWorkCenterReportState,
 } from './types';
+export type {
+  TelegramOperationalUpdateCommandResult,
+  TelegramOperationalUpdateHttpPortsOptions,
+  TelegramOperationalUpdatePorts,
+} from './operational-updates-flow';
 export { handleTelegramWebhookUpdate } from './webhook';
 export { handleTelegramWorkCenterReportFlow } from './work-center-flow';
 export { formatTelegramChannelLimitation } from './work-center-helpers';

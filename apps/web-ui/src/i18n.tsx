@@ -36,6 +36,10 @@ const localCatalogs = {
     'web.trust.visibility.elevated': 'Elevada',
     'web.trust.visibility.limited': 'Limitada',
     'web.trust.visibility.blocked': 'Bloqueada',
+    'web.nav.updates': 'Actualizaciones',
+    'web.updates.title': 'Actualizaciones operativas',
+    'web.home.updates.description': 'Revisa avisos breves de tu célula sin asumir autoridad ni rescate.',
+    'web.home.updates.action': 'Ver actualizaciones',
   },
   en: {
     'web.trust.title': 'Contextual trust',
@@ -62,6 +66,10 @@ const localCatalogs = {
     'web.trust.visibility.elevated': 'Elevated',
     'web.trust.visibility.limited': 'Limited',
     'web.trust.visibility.blocked': 'Blocked',
+    'web.nav.updates': 'Updates',
+    'web.updates.title': 'Operational updates',
+    'web.home.updates.description': 'Review brief cell updates without assuming authority or rescue.',
+    'web.home.updates.action': 'View updates',
   },
 } as const;
 
