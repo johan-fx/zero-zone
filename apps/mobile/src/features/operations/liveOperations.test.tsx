@@ -12,7 +12,7 @@ import type { ScopedOperationSyncService } from '@/infrastructure/sync';
 import type { MeshtasticSosAdapter } from '@/infrastructure/transport';
 import { OperationalThemeProvider } from '@/shared/theme';
 import { tamaguiConfig } from '../../../tamagui.config';
-import { LiveOperationalEntryScreen, cancelOfflineSosSignal, createOfflineResourceReport, createOfflineSosSignal, createOfflineWorkCenter } from './liveOperations';
+import { LiveOperationalEntryScreen, cancelOfflineSosSignal, createOfflineDispute, createOfflineResourceReport, createOfflineSosSignal, createOfflineTrustSignal, createOfflineWorkCenter } from './liveOperations';
 
 async function renderLiveOperations(input: {
   database?: ReturnType<typeof createInMemoryLocalOperationDatabase>;
@@ -302,6 +302,53 @@ describe('live operational flow wiring', () => {
     expect(screen.queryByText('volunteer-1')).toBeNull();
   });
 
+  it('exposes disputed work-center trust state without changing permission or activation semantics', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    await seedPreparedIncident(database);
+    await createOfflineWorkCenter({
+      database,
+      signer: new FakeOperationSigner('trust-center-tests'),
+      incidentId: 'incident-prepared',
+      cellId: 'cell-a7',
+      centerId: 'center-trust-1',
+    });
+    await createOfflineTrustSignal({
+      database,
+      signer: new FakeOperationSigner('trust-signal-tests'),
+      incidentId: 'incident-prepared',
+      cellId: 'cell-a7',
+      trustSignalId: 'trust-signal-center-1',
+      payload: {
+        channel: 'mobile',
+        externalId: 'actor-key-1',
+        subject: { entityType: 'work_center', entityId: 'center-trust-1', incidentId: 'incident-prepared' },
+        signalType: 'field_attestation',
+        sourceKind: 'field_actor',
+      },
+    });
+    await createOfflineDispute({
+      database,
+      signer: new FakeOperationSigner('trust-dispute-tests'),
+      incidentId: 'incident-prepared',
+      cellId: 'cell-a7',
+      disputeId: 'dispute-center-1',
+      payload: {
+        channel: 'mobile',
+        externalId: 'actor-key-2',
+        subject: { entityType: 'work_center', entityId: 'center-trust-1', incidentId: 'incident-prepared' },
+        reason: 'context_mismatch',
+      },
+    });
+
+    const { screen } = await renderLiveOperations({ database, initialIncidentId: 'incident-prepared' });
+
+    await waitFor(() => expect(screen.getByText('Trust: disputed · 1 signals · 1 disputes')).toBeTruthy());
+
+    expect(screen.getByText('State: pending')).toBeTruthy();
+    expect(screen.getByText('Activation: offline provisional')).toBeTruthy();
+    expect(screen.queryByText(/permission/i)).toBeNull();
+  });
+
   it('checks in to a selected center by creating a signed presence operation', async () => {
     const { screen, database } = await renderLiveOperations();
 
@@ -512,6 +559,71 @@ describe('live operational flow wiring', () => {
     expect(screen.getAllByText('Local pending · verify before acting')).toHaveLength(2);
   });
 
+  it('exposes trusted-by-context trust state on resource reports from canonical backend state', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    await seedPreparedIncident(database);
+    await createOfflineWorkCenter({
+      database,
+      signer: new FakeOperationSigner('resource-trust-center-tests'),
+      incidentId: 'incident-prepared',
+      cellId: 'cell-a7',
+      centerId: 'center-resource-trust-1',
+    });
+    await createOfflineResourceReport({
+      database,
+      signer: new FakeOperationSigner('resource-trust-report-tests'),
+      incidentId: 'incident-prepared',
+      cellId: 'cell-a7',
+      workCenterId: 'center-resource-trust-1',
+      reportId: 'report-trust-1',
+      payload: {
+        category: 'Water',
+        quantityApprox: '24 boxes',
+        urgency: 'high',
+        constraints: [],
+        reportKind: 'needed',
+      },
+    });
+    await appendSignedOperationAndMaterialize({
+      database,
+      signer: new FakeOperationSigner('resource-trust-signal-tests'),
+      input: {
+        actorKeyId: 'actor-key-1',
+        deviceId: 'device-1',
+        incidentId: 'incident-prepared',
+        cellId: 'cell-a7',
+        entityId: 'trust-signal-resource-1',
+        opType: 'trust_signal.create',
+        payload: {
+          channel: 'mobile',
+          externalId: 'actor-key-1',
+          subject: { entityType: 'resource_report', entityId: 'report-trust-1', incidentId: 'incident-prepared' },
+          signalType: 'context_corroboration',
+          sourceKind: 'system_context',
+          trustState: {
+            incidentId: 'incident-prepared',
+            subject: { entityType: 'resource_report', entityId: 'report-trust-1', incidentId: 'incident-prepared' },
+            status: 'trusted_by_context',
+            visibility: 'elevated',
+            priorityWeight: 0.8,
+            score: 0.8,
+            explanation: ['status:trusted_by_context'],
+            signalCount: 2,
+            disputeCount: 0,
+            updatedAt: '2026-06-29T09:05:00.000Z',
+          },
+        },
+        hlc: '2026-06-29T09:05:00.000Z-trust-signal-resource-1-device-1',
+        createdAtDevice: '2026-06-29T09:05:00.000Z',
+      },
+    });
+
+    const { screen } = await renderLiveOperations({ database, initialIncidentId: 'incident-prepared' });
+
+    await waitFor(() => expect(screen.getByText('Water · 24 boxes · high')).toBeTruthy());
+    expect(screen.getByText('Trust: trusted by context · 2 signals · 0 disputes')).toBeTruthy();
+  });
+
   it('creates a native local-first SOS and shows honest pending acknowledgement copy', async () => {
     const { screen, database } = await renderLiveOperations();
 
@@ -579,6 +691,39 @@ describe('live operational flow wiring', () => {
     expect(await database.views.sosSignals.findByIncident('incident-local')).toEqual([
       expect.objectContaining({ status: 'open', syncState: 'pending', provisional: true }),
     ]);
+  });
+
+  it('shows degraded SOS trust state while keeping local-first pending acknowledgement copy', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    await seedPreparedIncident(database);
+    await createOfflineSosSignal({
+      database,
+      signer: new FakeOperationSigner('sos-trust-create-tests'),
+      incidentId: 'incident-prepared',
+      cellId: 'cell-a7',
+      sosId: 'sos-trust-1',
+    });
+    await createOfflineTrustSignal({
+      database,
+      signer: new FakeOperationSigner('sos-trust-signal-tests'),
+      incidentId: 'incident-prepared',
+      cellId: 'cell-a7',
+      trustSignalId: 'trust-signal-sos-1',
+      payload: {
+        channel: 'mobile',
+        externalId: 'actor-key-1',
+        subject: { entityType: 'sos_alert', entityId: 'sos-trust-1', incidentId: 'incident-prepared' },
+        signalType: 'negative_report',
+        sourceKind: 'field_actor',
+      },
+    });
+
+    const { screen } = await renderLiveOperations({ database, initialIncidentId: 'incident-prepared' });
+
+    await waitFor(() => expect(screen.getByText('SOS open · critical')).toBeTruthy());
+    expect(screen.getByText('Saved on this device; will sync when transport is available; no acknowledgement yet.')).toBeTruthy();
+    expect(screen.getByText('Trust: degraded · 1 signals · 0 disputes')).toBeTruthy();
+    expect(screen.getAllByText(/no acknowledgement yet/i).length).toBeGreaterThan(0);
   });
 
   it('includes approximate last-known center location and can cancel a local SOS', async () => {

@@ -60,7 +60,9 @@
     "e2e:telegram:dry-run:family-reunification": "tsx e2e/telegram/staging-telegram-runner.ts dry-run --scenario family-reunification",
     "e2e:telegram:dry-run:dispatch": "tsx e2e/telegram/staging-telegram-runner.ts dry-run --scenario dispatch",
     "e2e:telegram:dry-run:incident-join": "tsx e2e/telegram/staging-telegram-runner.ts dry-run --scenario incident-join",
-    "e2e:staging:telegram:incident-join": "pnpm e2e:staging:telegram --grep \"incident join\""
+    "e2e:staging:telegram:incident-join": "pnpm e2e:staging:telegram --grep \"incident join\"",
+    "e2e:telegram:dry-run:social-trust": "tsx e2e/telegram/staging-telegram-runner.ts dry-run --scenario social-trust",
+    "e2e:slice20:social-trust": "playwright test e2e/social-trust.spec.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.0",

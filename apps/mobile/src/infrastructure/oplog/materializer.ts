@@ -1,5 +1,18 @@
-import { DispatchEventCreatePayloadSchema, DispatchEventUpdatePayloadSchema, ResourceReportPayloadSchema, type DispatchTaskStatus, type ResourceReportKind, type ResourceReportUrgency } from '@zona-cero/contracts';
-import { SosCreatePayloadSchema, WorkCenterCreatePayloadSchema, type SosLocation } from '@zona-cero/contracts';
+import {
+  DispatchEventCreatePayloadSchema,
+  DispatchEventUpdatePayloadSchema,
+  ResourceReportPayloadSchema,
+  SosCreatePayloadSchema,
+  TrustStateSchema,
+  WorkCenterCreatePayloadSchema,
+  type DispatchTaskStatus,
+  type ResourceReportKind,
+  type ResourceReportUrgency,
+  type SosLocation,
+  type TrustStatus,
+  type TrustSubject,
+  type TrustVisibility,
+} from '@zona-cero/contracts';
 import type { SignedOperation } from '@/infrastructure/security/operation-signer';
 
 export type IncidentView = {
@@ -22,6 +35,11 @@ export type WorkCenterMaterializedView = {
   initialNeed?: string;
   surplus?: string;
   location?: { latitude: number; longitude: number };
+  trustStatus?: LocalTrustStatus;
+  trustVisibility?: TrustVisibility;
+  trustSignalCount?: number;
+  trustDisputeCount?: number;
+  trustExplanation?: string[];
   status: 'pending';
   provisional: true;
   provisionalReason: 'offline_pending_sync';
@@ -50,6 +68,11 @@ export type ResourceReportView = {
   urgency: ResourceReportUrgency;
   constraints: string[];
   reportKind: ResourceReportKind;
+  trustStatus?: LocalTrustStatus;
+  trustVisibility?: TrustVisibility;
+  trustSignalCount?: number;
+  trustDisputeCount?: number;
+  trustExplanation?: string[];
   provisional: true;
   provisionalReason: 'offline_pending_sync';
   syncState: string;
@@ -82,8 +105,34 @@ export type SosSignalView = {
   location?: SosLocation;
   status: 'open' | 'cancelled';
   syncState: string;
+  trustStatus?: LocalTrustStatus;
+  trustVisibility?: TrustVisibility;
+  trustSignalCount?: number;
+  trustDisputeCount?: number;
+  trustExplanation?: string[];
   provisional: true;
   provisionalReason: 'offline_pending_sync';
+  updatedAt: string;
+};
+
+type LocalTrustStatus = TrustStatus | 'pending' | 'unverified';
+
+export type TrustStateView = {
+  trustStateId: string;
+  incidentId: string;
+  subject: TrustSubject;
+  subjectEntityType: TrustSubject['entityType'];
+  subjectEntityId: string;
+  status: LocalTrustStatus;
+  visibility: TrustVisibility;
+  priorityWeight: number;
+  score: number;
+  explanation: string[];
+  signalCount: number;
+  disputeCount: number;
+  syncState: string;
+  provisional: true;
+  provisionalReason: 'offline_pending_canonical_scoring' | 'local_dispute_pending_canonical_scoring' | 'server_canonical';
   updatedAt: string;
 };
 
@@ -103,6 +152,7 @@ export type MaterializedOperationViews = {
   resourceReports: ResourceReportView[];
   dispatchEvents: DispatchEventView[];
   sosSignals: SosSignalView[];
+  trustStates: TrustStateView[];
   localSummaries: LocalSummaryView[];
 };
 
@@ -114,6 +164,7 @@ export function materializeOperations(operations: readonly SignedOperation[]): M
   const resourceReports = new Map<string, ResourceReportView>();
   const dispatchEvents = new Map<string, DispatchEventView>();
   const sosSignals = new Map<string, SosSignalView>();
+  const trustStates = new Map<string, TrustStateView>();
 
   for (const operation of acceptedOperations) {
     const payload = asRecord(operation.payload);
@@ -211,9 +262,20 @@ export function materializeOperations(operations: readonly SignedOperation[]): M
         });
         break;
       }
+      case 'trust_signal.create':
+      case 'dispute.create': {
+        const trustState = materializeTrustOperation(operation, payload, trustStates);
+
+        if (trustState) {
+          trustStates.set(trustState.trustStateId, trustState);
+        }
+
+        break;
+      }
     }
   }
 
+  applyTrustStatesToSubjectViews(Array.from(trustStates.values()), { workCenters, resourceReports, sosSignals });
   const summaries = createLocalSummaries(acceptedOperations, Array.from(presence.values()));
 
   return {
@@ -223,8 +285,162 @@ export function materializeOperations(operations: readonly SignedOperation[]): M
     resourceReports: Array.from(resourceReports.values()),
     dispatchEvents: Array.from(dispatchEvents.values()),
     sosSignals: Array.from(sosSignals.values()),
+    trustStates: Array.from(trustStates.values()),
     localSummaries: summaries,
   };
+}
+
+function materializeTrustOperation(operation: SignedOperation, payload: Record<string, unknown>, existingTrustStates: ReadonlyMap<string, TrustStateView>): TrustStateView | null {
+  const subject = parseTrustSubject(payload.subject);
+
+  if (!subject) {
+    return null;
+  }
+
+  const canonical = TrustStateSchema.safeParse(payload.trustState);
+  const trustStateId = trustStateIdForSubject(operation.incidentId, subject);
+  const existing = existingTrustStates.get(trustStateId);
+
+  if (canonical.success) {
+    return {
+      trustStateId,
+      incidentId: canonical.data.incidentId,
+      subject: canonical.data.subject,
+      subjectEntityType: canonical.data.subject.entityType,
+      subjectEntityId: canonical.data.subject.entityId,
+      status: canonical.data.status,
+      visibility: canonical.data.visibility,
+      priorityWeight: canonical.data.priorityWeight,
+      score: canonical.data.score,
+      explanation: canonical.data.explanation,
+      signalCount: canonical.data.signalCount,
+      disputeCount: canonical.data.disputeCount,
+      syncState: operation.syncState,
+      provisional: true,
+      provisionalReason: 'server_canonical',
+      updatedAt: canonical.data.updatedAt,
+    };
+  }
+
+  if (operation.opType === 'dispute.create') {
+    return {
+      trustStateId,
+      incidentId: operation.incidentId,
+      subject,
+      subjectEntityType: subject.entityType,
+      subjectEntityId: subject.entityId,
+      status: 'disputed',
+      visibility: 'limited',
+      priorityWeight: 0,
+      score: 0,
+      explanation: ['local_dispute_pending_canonical_scoring'],
+      signalCount: existing?.signalCount ?? 0,
+      disputeCount: (existing?.disputeCount ?? 0) + 1,
+      syncState: operation.syncState,
+      provisional: true,
+      provisionalReason: 'local_dispute_pending_canonical_scoring',
+      updatedAt: operation.createdAtDevice,
+    };
+  }
+
+  const signalType = stringValue(payload.signalType, '');
+  const status: LocalTrustStatus = signalType === 'negative_report' ? 'degraded' : 'pending_corroboration';
+  const nextSignalCount = (existing?.signalCount ?? 0) + 1;
+
+  if (existing?.status === 'disputed' || existing?.status === 'degraded') {
+    return {
+      ...existing,
+      signalCount: nextSignalCount,
+      syncState: operation.syncState,
+      updatedAt: operation.createdAtDevice,
+    };
+  }
+
+  return {
+    trustStateId,
+    incidentId: operation.incidentId,
+    subject,
+    subjectEntityType: subject.entityType,
+    subjectEntityId: subject.entityId,
+    status,
+    visibility: status === 'degraded' ? 'limited' : 'normal',
+    priorityWeight: 0,
+    score: 0,
+    explanation: ['local_signal_pending_canonical_scoring'],
+    signalCount: nextSignalCount,
+    disputeCount: existing?.disputeCount ?? 0,
+    syncState: operation.syncState,
+    provisional: true,
+    provisionalReason: 'offline_pending_canonical_scoring',
+    updatedAt: operation.createdAtDevice,
+  };
+}
+
+function parseTrustSubject(value: unknown): TrustSubject | null {
+  const subject = asRecord(value);
+  const entityType = subject.entityType;
+  const entityId = subject.entityId;
+  const incidentId = subject.incidentId;
+  const displayRef = subject.displayRef;
+
+  if (!isTrustSubjectEntityType(entityType) || typeof entityId !== 'string' || entityId.length === 0 || typeof incidentId !== 'string' || incidentId.length === 0) {
+    return null;
+  }
+
+  return {
+    entityType,
+    entityId,
+    incidentId,
+    ...(typeof displayRef === 'string' && displayRef.length > 0 ? { displayRef } : {}),
+  };
+}
+
+function isTrustSubjectEntityType(value: unknown): value is TrustSubject['entityType'] {
+  return value === 'channel_identity' || value === 'incident_membership' || value === 'work_center' || value === 'resource_report' || value === 'dispatch_task' || value === 'sos_alert' || value === 'custom';
+}
+
+function applyTrustStatesToSubjectViews(
+  trustStates: TrustStateView[],
+  views: {
+    workCenters: Map<string, WorkCenterMaterializedView>;
+    resourceReports: Map<string, ResourceReportView>;
+    sosSignals: Map<string, SosSignalView>;
+  },
+): void {
+  for (const trustState of trustStates) {
+    const trustProjection = {
+      trustStatus: trustState.status,
+      trustVisibility: trustState.visibility,
+      trustSignalCount: trustState.signalCount,
+      trustDisputeCount: trustState.disputeCount,
+      trustExplanation: trustState.explanation,
+    };
+
+    if (trustState.subjectEntityType === 'work_center') {
+      const center = views.workCenters.get(trustState.subjectEntityId);
+      if (center) {
+        views.workCenters.set(center.centerId, { ...center, ...trustProjection });
+      }
+    }
+
+    if (trustState.subjectEntityType === 'resource_report') {
+      const report = views.resourceReports.get(trustState.subjectEntityId);
+      if (report) {
+        views.resourceReports.set(report.reportId, { ...report, ...trustProjection });
+      }
+    }
+
+    if (trustState.subjectEntityType === 'sos_alert') {
+      const signal = views.sosSignals.get(trustState.subjectEntityId);
+      if (signal) {
+        views.sosSignals.set(signal.sosId, { ...signal, ...trustProjection });
+      }
+    }
+  }
+}
+
+function trustStateIdForSubject(incidentId: string, subject: TrustSubject): string {
+  return `${incidentId}:${subject.entityType}:${subject.entityId}`;
 }
 
 function createLocalSummaries(operations: readonly SignedOperation[], presence: PresenceView[]): LocalSummaryView[] {

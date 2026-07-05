@@ -15,6 +15,7 @@ import type {
   SosAlertCreateResponse,
   SosAlertStatusResponse,
   SyncPullResponse,
+  TrustState,
 } from "@zona-cero/contracts";
 import {
   familyReunificationSearchResponseFixture,
@@ -154,6 +155,24 @@ const sosCreateFixture: SosAlertCreateResponse = {
     sosAlertId: "sos-web-critical-1",
     sourceChannel: "web-ui",
   },
+};
+
+const workCenterTrustStateFixture: TrustState = {
+  incidentId: "incident-zc-demo",
+  subject: {
+    entityType: "work_center",
+    entityId: "center-north-triage",
+    incidentId: "incident-zc-demo",
+    displayRef: "North triage point",
+  },
+  status: "trusted_by_context",
+  visibility: "normal",
+  priorityWeight: 0.72,
+  score: 0.86,
+  explanation: ["Two independent civil signals support this point."],
+  signalCount: 2,
+  disputeCount: 0,
+  updatedAt: "2026-07-05T10:00:00.000Z",
 };
 
 beforeEach(() => {
@@ -545,6 +564,110 @@ describe("web ui work center shell", () => {
     for (const copy of forbiddenSpanish) {
       expect(helpSection).not.toHaveTextContent(copy);
     }
+  });
+
+  it("renders canonical trust state and posts corroboration actions without client scoring", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/health"))
+        return jsonResponse({
+          service: "zona-cero-api",
+          ok: true,
+          version: "test",
+        });
+      if (
+        url.includes("/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull")
+      )
+        return jsonResponse(freshSyncPullFixture);
+      if (url.endsWith("/incidents/incident-zc-demo/work-centers"))
+        return jsonResponse({
+          workCenters: [
+            { ...workCenterListHappyFixture.workCenters[0]!, priority: "medium" },
+          ],
+        });
+      if (
+        url.endsWith(
+          "/incidents/incident-zc-demo/work-centers/center-north-triage",
+        )
+      )
+        return jsonResponse({
+          workCenter: {
+            ...workCenterDetailHappyFixture.workCenter,
+            priority: "medium",
+          },
+        });
+      if (url.endsWith("/incidents/incident-zc-demo/resource-reports"))
+        return jsonResponse(resourceReportListFixture);
+      if (url.endsWith("/incidents/incident-zc-demo/dispatch-tasks"))
+        return jsonResponse(dispatchTaskListFixture);
+      if (url.endsWith("/incidents/incident-zc-demo/sos"))
+        return jsonResponse(sosStatusFixture);
+      if (
+        url.includes("/incidents/incident-zc-demo/trust-state") &&
+        url.includes("entityType=work_center")
+      )
+        return jsonResponse({ trustState: workCenterTrustStateFixture });
+      if (
+        url.endsWith("/incidents/incident-zc-demo/trust-signals") &&
+        init?.method === "POST"
+      )
+        return jsonResponse({
+          trustSignal: {
+            trustSignalId: "trust-signal-web-1",
+            incidentId: "incident-zc-demo",
+            subject: workCenterTrustStateFixture.subject,
+            signalType: "context_corroboration",
+            sourceKind: "peer",
+            sourceChannel: "web-ui",
+            sourceExternalId: "web-demo-user",
+            confidence: 0.5,
+            createdAt: "2026-07-05T10:01:00.000Z",
+          },
+          trustState: {
+            ...workCenterTrustStateFixture,
+            signalCount: 3,
+            score: 0.9,
+            updatedAt: "2026-07-05T10:01:00.000Z",
+          },
+          audit: { auditEventId: "audit_trust_signal_created" },
+          idempotent: false,
+        });
+      return new Response("not found", { status: 404 });
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Puntos de ayuda" }));
+    expect(await screen.findAllByText("Confiable por contexto")).not.toHaveLength(0);
+    expect(screen.getAllByText("86%")).not.toHaveLength(0);
+    expect(
+      screen.getAllByText("Two independent civil signals support this point.")[0],
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Corroborar" })[0]!);
+
+    expect(
+      await screen.findAllByText(
+        "Señal enviada. El servidor recalculó la confianza contextual.",
+      ),
+    ).not.toHaveLength(0);
+    const postCall = fetchMock.mock.calls.find(
+      ([url, init]) =>
+        String(url).endsWith("/incidents/incident-zc-demo/trust-signals") &&
+        init?.method === "POST",
+    );
+    expect(postCall).toBeDefined();
+    expect(JSON.parse(String(postCall?.[1]?.body))).toMatchObject({
+      channel: "web-ui",
+      externalId: "web-user-1001",
+      subject: {
+        entityType: "work_center",
+        entityId: "center-north-triage",
+        incidentId: "incident-zc-demo",
+      },
+      signalType: "context_corroboration",
+    });
+    expect(screen.getAllByText("90%")).not.toHaveLength(0);
   });
 
   it("summarizes public map locations and hides technical help point names", async () => {

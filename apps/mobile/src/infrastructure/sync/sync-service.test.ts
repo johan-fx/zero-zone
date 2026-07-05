@@ -229,6 +229,146 @@ describe('scoped operation sync service', () => {
     expect(JSON.stringify(dispatchEvents[0])).not.toContain('llm-free-task-id');
   });
 
+  it('pushes trust signal operations and rematerializes fallback trust state without local scoring', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    const centerSeed = await appendSignedOperationAndMaterialize({
+      database,
+      signer: new FakeOperationSigner('sync-service-trust-tests'),
+      input: {
+        actorKeyId: 'actor-key-1',
+        deviceId: 'device-1',
+        incidentId: 'incident-1',
+        cellId: 'cell-a',
+        entityId: 'center-1',
+        opType: 'work_center.create',
+        payload: { name: 'Trust reviewed center' },
+        hlc: '2026-06-29T09:03:00.000Z-center-1-device-1',
+        createdAtDevice: '2026-06-29T09:03:00.000Z',
+      },
+    });
+    const trustOperation = await createSignedOperation(
+      {
+        actorKeyId: 'actor-key-1',
+        deviceId: 'device-1',
+        incidentId: 'incident-1',
+        cellId: 'cell-a',
+        entityId: 'trust-signal-local-1',
+        opType: 'trust_signal.create',
+        payload: {
+          channel: 'mobile',
+          externalId: 'actor-key-1',
+          subject: { entityType: 'work_center', entityId: 'center-1', incidentId: 'incident-1' },
+          signalType: 'field_attestation',
+          sourceKind: 'field_actor',
+        },
+        hlc: '2026-06-29T09:04:00.000Z-trust-signal-local-1-device-1',
+        createdAtDevice: '2026-06-29T09:04:00.000Z',
+      },
+      new FakeOperationSigner('sync-service-trust-tests'),
+    );
+    await database.syncOps.upsert(trustOperation);
+    const push = jest.fn<Promise<SyncPushResponse>, any>().mockResolvedValue({
+      results: [
+        { opId: centerSeed.operation.opId, status: 'accepted', serverVersion: 2, serverUpdatedAt: '2026-06-29T09:04:00.000Z' },
+        { opId: trustOperation.opId, status: 'accepted', serverVersion: 3, serverUpdatedAt: '2026-06-29T09:04:30.000Z' },
+      ],
+    });
+    const service = createScopedOperationSyncService({
+      database,
+      client: { push, pull: jest.fn().mockResolvedValue(emptyPullResponse()) },
+      clock: () => '2026-06-29T09:05:00.000Z',
+    });
+
+    const result = await service.sync({ incidentId: 'incident-1', cellId: 'cell-a' });
+
+    expect(result).toMatchObject({ pushed: 2, confirmed: 2 });
+    expect(push).toHaveBeenCalledWith(expect.objectContaining({ operations: [centerSeed.operation, trustOperation] }));
+    expect(await database.views.workCenters.findByIncident('incident-1')).toEqual([
+      expect.objectContaining({
+        centerId: 'center-1',
+        trustStatus: 'pending_corroboration',
+        trustSignalCount: 1,
+        trustDisputeCount: 0,
+      }),
+    ]);
+  });
+
+  it('pulls canonical trust state and projects it onto resource views', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    const resource = await createSignedOperation(
+      {
+        actorKeyId: 'actor-key-1',
+        deviceId: 'device-1',
+        incidentId: 'incident-1',
+        cellId: 'cell-a',
+        entityId: 'report-server-1',
+        opType: 'resource_report.create',
+        payload: { category: 'Water', quantityApprox: '24 boxes', urgency: 'high', constraints: [], reportKind: 'needed' },
+        hlc: '2026-06-29T09:04:00.000Z-report-server-1-device-1',
+        createdAtDevice: '2026-06-29T09:04:00.000Z',
+      },
+      new FakeOperationSigner('sync-service-trust-tests'),
+    );
+    const trustSignal = await createSignedOperation(
+      {
+        actorKeyId: 'actor-key-1',
+        deviceId: 'device-1',
+        incidentId: 'incident-1',
+        cellId: 'cell-a',
+        entityId: 'trust-signal-server-1',
+        opType: 'trust_signal.create',
+        payload: {
+          channel: 'mobile',
+          externalId: 'actor-key-1',
+          subject: { entityType: 'resource_report', entityId: 'report-server-1', incidentId: 'incident-1' },
+          signalType: 'context_corroboration',
+          sourceKind: 'system_context',
+          trustState: {
+            incidentId: 'incident-1',
+            subject: { entityType: 'resource_report', entityId: 'report-server-1', incidentId: 'incident-1' },
+            status: 'trusted_by_context',
+            visibility: 'elevated',
+            priorityWeight: 0.8,
+            score: 0.8,
+            explanation: ['status:trusted_by_context'],
+            signalCount: 2,
+            disputeCount: 0,
+            updatedAt: '2026-06-29T09:05:00.000Z',
+          },
+        },
+        hlc: '2026-06-29T09:05:00.000Z-trust-signal-server-1-device-1',
+        createdAtDevice: '2026-06-29T09:05:00.000Z',
+      },
+      new FakeOperationSigner('sync-service-trust-tests'),
+    );
+    const service = createScopedOperationSyncService({
+      database,
+      client: {
+        push: jest.fn(),
+        pull: jest.fn().mockResolvedValue(
+          emptyPullResponse({
+            operations: [
+              { sequence: 1, serverVersion: 3, serverUpdatedAt: '2026-06-29T09:04:30.000Z', operation: resource },
+              { sequence: 2, serverVersion: 4, serverUpdatedAt: '2026-06-29T09:05:30.000Z', operation: trustSignal },
+            ],
+          }),
+        ),
+      },
+      clock: () => '2026-06-29T09:06:00.000Z',
+    });
+
+    await service.sync({ incidentId: 'incident-1', cellId: 'cell-a' });
+
+    expect(await database.views.resourceReports.findByIncident('incident-1')).toEqual([
+      expect.objectContaining({
+        reportId: 'report-server-1',
+        trustStatus: 'trusted_by_context',
+        trustSignalCount: 2,
+        trustDisputeCount: 0,
+      }),
+    ]);
+  });
+
   it('emits aggregate sync observability metrics without raw error messages', async () => {
     const { database, operation } = await seedOperation();
     const events: unknown[] = [];
