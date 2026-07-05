@@ -999,6 +999,7 @@ describe("web ui work center shell", () => {
       workCenters: [
         {
           ...workCenterListHappyFixture.workCenters[0],
+          name: "Sector7LogisticsHub",
           status: "active",
           activationState: "needs_review",
           freshness: "expired",
@@ -1047,6 +1048,8 @@ describe("web ui work center shell", () => {
     await waitFor(() =>
       expect(screen.getAllByText("Revisar antes de ir").length).toBeGreaterThan(0),
     );
+    expect(screen.getAllByText("Sector7LogisticsHub").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Punto de ayuda pendiente de nombre público")).not.toBeInTheDocument();
     expect(screen.getAllByText("Reportado").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Sin confirmar").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Alta").length).toBeGreaterThan(0);

@@ -378,7 +378,7 @@ function isTechnicalWorkCenterName(name: string): boolean {
   if (uuidPattern.test(trimmed)) return true;
 
   const longGeneratedTokenPattern =
-    /\b(?=[a-z0-9_-]*[a-z])(?=[a-z0-9_-]*\d)[a-z0-9][a-z0-9_-]{13,}\b/i;
+    /^(?=.{14,}$)(?=.*[a-z])(?=.*\d)(?=.*[-_])[a-z0-9][a-z0-9_-]*$/i;
   return longGeneratedTokenPattern.test(trimmed);
 }
 

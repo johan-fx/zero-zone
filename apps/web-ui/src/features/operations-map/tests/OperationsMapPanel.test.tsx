@@ -292,6 +292,8 @@ describe('OperationsMapPanel', () => {
     expect(maplibreMocks.markers[2]?.element.querySelector('.operations-map-marker__label')).toHaveTextContent('SOS alert');
     expect(maplibreMocks.markers[1]?.element.innerHTML).toContain('Help point · Published');
     expect(maplibreMocks.markers[1]?.element.innerHTML).not.toContain('work_center · reported');
+    expect(maplibreMocks.markers[1]?.popup?.html).toContain('<strong>Help point</strong>');
+    expect(maplibreMocks.markers[1]?.popup?.html).not.toContain('<strong>North triage point</strong>');
     expect(maplibreMocks.markers[1]?.popup?.html).toContain('Priority need: high');
     expect(maplibreMocks.markers[1]?.popup?.html).not.toContain('Priority high');
     expect(screen.queryByText('Operational map')).not.toBeInTheDocument();

@@ -408,7 +408,8 @@ function defaultMarkerLabel(marker: OperationalMapMarker, variant: ReturnType<ty
 }
 
 function createPopupHtml(marker: OperationalMapMarker, description: OperationsMapMarkerDescription): string {
-  return `<strong>${escapeHtml(marker.label)}</strong><br />${escapeHtml(description.metadata)}<br />${escapeHtml(description.detail)}`;
+  const label = description.label ?? marker.label;
+  return `<strong>${escapeHtml(label)}</strong><br />${escapeHtml(description.metadata)}<br />${escapeHtml(description.detail)}`;
 }
 
 function defaultMarkerDescription(marker: OperationalMapMarker): OperationsMapMarkerDescription {
