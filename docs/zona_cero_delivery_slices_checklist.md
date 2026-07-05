@@ -47,6 +47,7 @@ Usar este reparto como contrato de trabajo para todas las slices. La clave es qu
 | 17 | Telegram `/reunificacion` natural-language assistant | 🟢 | 🟢 | 🟢 | Hecho |
 | 18 | Telegram `/dispatch` natural-language assistant | 🟢 | 🟢 | 🟢 | Hecho |
 | 19 | Telegram `/start` + incident join natural-language onboarding | 🟢 | 🟢 | N/A | Hecho |
+| 20 | Social-first trust + dispute lifecycle | ✅ | ✅ | ✅ | Implementado/validado — sync canónico trust/dispute remediado |
 
 Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloqueado · N/A No aplica.
 
@@ -1142,6 +1143,68 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 - Equipo C aprobó no-op mobile/offline: `IncidentJoinRequest.role` y permisos siguen viniendo de inputs confirmados y backend.
 - E2E targeted añadido en `/e2e` para comando `/start` y onboarding natural con `pnpm e2e:telegram:dry-run:incident-join` y grep staging `incident join`.
 - Evidencia ejecutada: `pnpm contracts:test:strict`, `pnpm --filter @zona-cero/api test -- src/index.test.ts src/telegram-intent-classifier.test.ts`, `pnpm --filter @zona-cero/telegram-channel test:strict`, `pnpm --filter @zona-cero/i18n test`, `pnpm e2e:telegram:typecheck`, `pnpm e2e:telegram:dry-run:incident-join`, `pnpm e2e:staging:telegram --grep "incident join"`, y Equipo C `pnpm mobile:test:strict`.
+
+## Slice 20 - Social-first trust + dispute lifecycle
+
+**Objetivo:** convertir la alineación social-first en comportamiento verificable: cualquier participante civil puede crear reportes operativos de incidentes, centros, recursos, disputas o SOS, y esos reportes ganan o pierden confianza contextual sin conceder permisos sensibles.
+
+**Decisión de producto:** confianza social/contextual afecta visibilidad, prioridad, peso operativo y explicación de estado; no otorga credenciales profesionales, safeguarding, entrega de menores, acceso a datos sensibles ni permisos críticos.
+
+**Estado de implementación:** implementado y validado. La remediación crítica cerró el bypass donde sync push aceptaba `trust_signal.create` y `dispute.create` por fallback genérico; ahora pasan por validación/membership/rate-limit/auditoría/scoring canónico.
+
+**Principio de seguridad:** apertura civil no significa autoridad automática. Toda creación abierta debe incluir deduplicación, rate limits/throttling, penalización Sybil, auditoría, disputas y degradación clara cuando la confianza sea baja.
+
+### Reparto de ownership
+
+| Equipo | Owns | Consume de | No debe hacer | Handoff esperado |
+|---|---|---|---|---|
+| A | UX de confianza/disputa en Telegram + Web UI: estados visibles, copy honesto, acciones de corroborar/disputar y SOS civil conectado. | Contratos, errores estables, scoring y permisos de B. | Calcular autoridad localmente, convertir votos en permisos o prometer rescate/verificación oficial. | Flows y pantallas que muestran confianza, límites, disputas y estados sin romper copy crítico. |
+| B | Contratos, dominio, APIs, scoring canónico, deduplicación, rate limits, auditoría, permisos y eventos de disputa. | Casos UX de A y operaciones offline/señales nativas de C. | Delegar permisos sensibles a clientes o tratar popularidad como autorización. | Modelo compartido de confianza/disputa reusable por canales, tests anti-abuso y permisos duros. |
+| C | Materialización local/offline de confianza y disputas, SOS civil local-first, outbox y UX nativa de reportes degradados. | Contratos/scoring de B y copy/estados compartidos con A. | Inventar reglas divergentes de confianza, activar centros/SOS por una señal o depender de red para reportar. | App nativa muestra reportes no verificados, disputados o confiables de forma consistente y sincroniza señales. |
+| Todos | Matriz de permisos y límites social-first. | PRD funcional, threat model y wireflows actualizados. | Reabrir jerarquía de administradores globales. | Demo multi-canal donde confianza contextual sube/baja sin desbloquear permisos sensibles. |
+
+| Equipo | Checklist |
+|---|---|
+| A | ✅ Mostrar estados de confianza y disputa en Telegram/Web para centros, recursos y SOS. |
+| A | ✅ Añadir acciones UX para corroborar, disputar, marcar falso/duplicado/peligroso/resuelto cuando aplique. |
+| A | ✅ Revisar copy crítico: SOS civil abierto, sin promesa de rescate ni autoridad oficial. |
+| B | ✅ Definir contratos compartidos para confianza contextual, señales, disputas y estados derivados. |
+| B | ✅ Implementar scoring canónico con frescura, diversidad de fuentes, presencia, reputación contextual y señales negativas. |
+| B | ✅ Añadir deduplicación, rate limits/throttling, penalización Sybil y auditoría para creación civil abierta, incluido sync push `trust_signal.create`/`dispute.create`. |
+| B | ✅ Probar que confianza social no desbloquea permisos críticos, safeguarding ni datos sensibles. |
+| C | ✅ Materializar localmente reportes `pending`/no verificados, disputados y degradados por baja confianza. |
+| C | ✅ Alinear SOS civil local-first con confirmación fuerte, cola crítica, deduplicación y estado de confianza. |
+| C | ✅ Sincronizar señales/disputas desde outbox usando validación canónica de backend, sin inventar reglas locales paralelas. |
+| Todos | ✅ Resolver la lectura de Slice 12 Equipo C: validación mobile pendiente o `N/A`. |
+| Todos | ✅ Fresh review independiente antes de cerrar la slice; remediación crítica de sync canónico validada. |
+
+**Definition of Done**
+
+- Incidentes, centros, recursos, disputas y SOS comparten un ciclo de confianza documentado y contratado.
+- Cualquier participante civil puede crear reportes operativos, pero la UI marca confianza, frescura, límites y disputas.
+- Deduplicación, rate limits, penalización Sybil y auditoría cubren creación civil abierta.
+- Social trust sube/baja visibilidad, prioridad y peso operativo, pero no concede permisos sensibles ni autoridad de safeguarding.
+- SOS civil se crea con confirmación fuerte, estado honesto, sin prometer rescate ni precisión falsa.
+- Canales conectados y app nativa muestran estados equivalentes sin duplicar reglas críticas.
+
+**Riesgos y límites**
+
+- Confundir corroboración social con autorización.
+- Convertir reputación contextual en ranking opaco o injusto.
+- Bajar fricción de SOS hasta permitir spam o falsas emergencias.
+- Duplicar scoring en clientes y backend.
+- Reabrir administración global bajo otro nombre.
+
+**Evidencia esperada de verificación**
+
+- `pnpm contracts:test:strict`
+- `pnpm --filter @zona-cero/api test -- src/index.test.ts`
+- `pnpm --filter @zona-cero/telegram-channel test:strict`
+- `pnpm --filter @zona-cero/web-ui test`
+- `pnpm mobile:test:strict`
+- E2E/smoke multi-canal para crear, corroborar, disputar y degradar un reporte operativo.
+- Tests de permisos: `self_declared`, `field_attested` y `trusted_by_context` no acceden a datos sensibles ni acciones de safeguarding.
+- Remediación crítica Slice 20 ejecutada: `pnpm --filter @zona-cero/api test -- src/index.test.ts`, `pnpm e2e:slice20:social-trust` y `pnpm test:strict` pasan tras cubrir sync canónico para `trust_signal.create`/`dispute.create`.
 
 ## Gates antes de implementar cada slice
 
