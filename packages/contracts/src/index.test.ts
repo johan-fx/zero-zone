@@ -27,7 +27,10 @@ import {
   DisputeCreateResponseSchema,
   TrustSignalCreateRequestSchema,
   TrustSignalCreateResponseSchema,
+  TrustSignalSchema,
+  DisputeSchema,
   TrustStateResponseSchema,
+  TrustStateSchema,
   TrustSubjectSchema,
   DispatchEventUpdatePayloadSchema,
   DispatchTaskConnectedCreateRequestSchema,
@@ -401,6 +404,7 @@ describe('contracts package', () => {
     } as const;
     expect(TrustStateResponseSchema.parse({ trustState }).trustState.status).toBe('field_attested');
     expect(TrustStateResponseSchema.safeParse({ trustState: { ...trustState, permissions: { canManageMedical: true } } }).success).toBe(false);
+    expect(TrustStateSchema.safeParse({ ...trustState, subject: { ...subject, incidentId: 'incident-other' } }).success).toBe(false);
     expect(TrustSignalCreateResponseSchema.parse({
       trustSignal: {
         trustSignalId: 'trust-signal-1',

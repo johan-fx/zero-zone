@@ -451,7 +451,11 @@ export const TrustSignalSchema = z.object({
   createdAt: z.string().min(1),
   evidenceRef: z.string().min(1).max(240).optional(),
   metadata: JsonObjectPayloadSchema.optional(),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  if (value.incidentId !== value.subject.incidentId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'incidentId must match subject.incidentId', path: ['subject', 'incidentId'] });
+  }
+});
 export type TrustSignal = z.infer<typeof TrustSignalSchema>;
 
 export const DisputeSchema = z.object({
@@ -464,7 +468,11 @@ export const DisputeSchema = z.object({
   description: z.string().min(1).max(500).optional(),
   createdAt: z.string().min(1),
   metadata: JsonObjectPayloadSchema.optional(),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  if (value.incidentId !== value.subject.incidentId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'incidentId must match subject.incidentId', path: ['subject', 'incidentId'] });
+  }
+});
 export type Dispute = z.infer<typeof DisputeSchema>;
 
 export const TrustStateSchema = z.object({
@@ -478,7 +486,11 @@ export const TrustStateSchema = z.object({
   signalCount: z.number().int().nonnegative(),
   disputeCount: z.number().int().nonnegative(),
   updatedAt: z.string().min(1),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  if (value.incidentId !== value.subject.incidentId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'incidentId must match subject.incidentId', path: ['subject', 'incidentId'] });
+  }
+});
 export type TrustState = z.infer<typeof TrustStateSchema>;
 
 export const TrustSignalCreateRequestSchema = z.object({
