@@ -82,6 +82,64 @@ dl {
   margin: 0;
 }
 
+
+.help-points-map-first {
+  border: var(--zc-border-width) solid var(--zc-color-border);
+  border-radius: var(--zc-radius-card);
+  background: var(--zc-color-surface-muted);
+  margin: 1rem 0;
+  padding: 1rem;
+}
+
+.help-points-map-first:focus,
+.help-points-list:focus {
+  outline: 3px solid var(--zc-color-info);
+  outline-offset: 0.25rem;
+}
+
+.help-points-public-summary {
+  border: var(--zc-border-width) solid var(--zc-color-border);
+  border-radius: var(--zc-radius-card);
+  display: grid;
+  gap: 0.35rem;
+  margin: 1rem 0;
+  padding: 0.85rem 1rem;
+}
+
+.help-points-public-summary p {
+  margin: 0;
+}
+
+.help-points-list {
+  border-top: var(--zc-border-width) solid var(--zc-color-border);
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+.help-points-list__heading {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.inline-jump-link {
+  background: transparent;
+  border: 0;
+  color: var(--zc-color-info);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 800;
+  padding: 0.25rem 0;
+  text-decoration: underline;
+}
+
+.inline-jump-link:focus-visible {
+  outline: 3px solid var(--zc-color-info);
+  outline-offset: 0.2rem;
+}
+
 .work-center-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -133,8 +191,14 @@ dd {
 
 .map-lite li {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 1rem;
+}
+
+.map-lite small {
+  color: var(--zc-color-text-muted);
+  flex-basis: 100%;
 }
 
 @media (max-width: 900px) {
@@ -453,10 +517,16 @@ dd {
 
 .operations-map-panel__toolbar {
   align-items: end;
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: 1rem;
-  justify-content: space-between;
+  grid-template-columns: minmax(0, 1fr) minmax(14rem, 18rem);
+}
+
+.operations-map-panel__summary {
+  color: var(--zc-color-text-muted);
+  grid-column: 1 / -1;
+  line-height: 1.6;
+  margin-bottom: 0;
 }
 
 .country-filter {
@@ -929,6 +999,10 @@ dd {
 }
 
 @media (max-width: 720px) {
+  .operations-map-panel__toolbar {
+    grid-template-columns: 1fr;
+  }
+
   .shell {
     gap: 1rem;
     padding: 1rem;

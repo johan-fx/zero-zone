@@ -56,6 +56,7 @@ import {
 } from "./telemetry";
 import { I18nProvider, LanguageSelector, useI18n } from "./i18n";
 import { type AppThemeOverride, useAppThemeMode } from "./themeMode";
+import type { OperationsMapPanelCopy } from "./features/operations-map/OperationsMapPanel";
 
 type AppThemeController = ReturnType<typeof useAppThemeMode>;
 import {
@@ -78,6 +79,11 @@ const OperationsMapPanel = lazy(() =>
     default: module.OperationsMapPanel,
   })),
 );
+
+type Translate = ReturnType<typeof useI18n>["t"];
+type CivilOperationsMapMarker = Parameters<
+  OperationsMapPanelCopy["markerMetadata"]
+>[0];
 
 type HealthState =
   | { status: "loading" }
@@ -223,6 +229,181 @@ const defaultWebExternalId = "web-user-1001";
 const defaultWebDisplayName = "Field Web";
 const strongSosConfirmation = "CONFIRM SOS";
 
+function createCivilOperationsMapCopy(t: Translate): OperationsMapPanelCopy {
+  return {
+    eyebrow: t("web.map.civil.eyebrow"),
+    title: t("web.map.civil.title"),
+    summary: t("web.map.civil.summary"),
+    markerCountLabel: (count) =>
+      t("web.map.civil.marker_count", { count }),
+    loadingCountries: t("web.map.civil.loading_countries"),
+    emptyCountries: t("web.map.civil.empty_countries"),
+    loadingMap: t("web.map.civil.loading_map"),
+    countsAriaLabel: t("web.map.civil.counts_aria"),
+    incidentsLabel: (count) => t("web.map.civil.incidents", { count }),
+    workCentersLabel: (count) =>
+      t("web.map.civil.work_centers", { count }),
+    sosAlertsLabel: (count) => t("web.map.civil.sos_alerts", { count }),
+    withoutLocationLabel: (count) =>
+      t("web.map.civil.without_location", { count }),
+    emptyMapItems: (countryName) =>
+      t("web.map.civil.empty_items", { countryName }),
+    listTitle: t("web.map.civil.list_title"),
+    mapAriaLabel: (countryName) =>
+      t("web.map.civil.map_aria", { countryName }),
+    markerLabel: (marker) => civilMarkerKindLabel(t, marker),
+    markerMetadata: (marker) =>
+      `${civilMarkerKindLabel(t, marker)} · ${civilMarkerStatusLabel(
+        t,
+        marker.status,
+      )}`,
+    markerDetail: (marker) => civilMarkerDetail(t, marker),
+  };
+}
+
+function civilMarkerKindLabel(
+  t: Translate,
+  marker: CivilOperationsMapMarker,
+): string {
+  switch (marker.kind) {
+    case "incident":
+      return t("web.map.civil.kind.incident");
+    case "work_center":
+      return t("web.map.civil.kind.work_center");
+    case "sos":
+      return t("web.map.civil.kind.sos");
+  }
+}
+
+function civilMarkerStatusLabel(t: Translate, status: string): string {
+  switch (status.toLowerCase()) {
+    case "active":
+      return t("web.map.civil.status.active");
+    case "reported":
+      return t("web.map.civil.status.reported");
+    case "open":
+      return t("web.map.civil.status.open");
+    case "resolved":
+    case "closed":
+      return t("web.map.civil.status.closed");
+    default:
+      return t("web.map.civil.status.followup");
+  }
+}
+
+function civilMarkerDetail(
+  t: Translate,
+  marker: CivilOperationsMapMarker,
+): string {
+  if (marker.kind === "work_center") {
+    return t("web.map.civil.detail.work_center", {
+      priority: civilPriorityLabel(t, marker.priority),
+    });
+  }
+
+  if (marker.kind === "sos") {
+    return t("web.map.civil.detail.sos", {
+      severity: civilSeverityLabel(t, marker.severity),
+    });
+  }
+
+  return marker.detail;
+}
+
+function civilPriorityLabel(
+  t: Translate,
+  priority: string | undefined,
+): string {
+  switch (priority?.toLowerCase()) {
+    case "critical":
+      return t("web.map.civil.priority.critical");
+    case "high":
+      return t("web.map.civil.priority.high");
+    case "medium":
+      return t("web.map.civil.priority.medium");
+    case "low":
+      return t("web.map.civil.priority.low");
+    default:
+      return t("web.map.civil.priority.unknown");
+  }
+}
+
+function civilSeverityLabel(
+  t: Translate,
+  severity: string | undefined,
+): string {
+  switch (severity?.toLowerCase()) {
+    case "critical":
+      return t("web.map.civil.severity.critical");
+    case "high":
+      return t("web.map.civil.severity.high");
+    case "medium":
+      return t("web.map.civil.severity.medium");
+    case "low":
+      return t("web.map.civil.severity.low");
+    default:
+      return t("web.map.civil.severity.unknown");
+  }
+}
+
+type CivilWorkCenterDisplayName = {
+  label: string;
+  hasPublicName: boolean;
+};
+
+function getCivilWorkCenterDisplayName(
+  workCenter: Pick<WorkCenterSummary, "name">,
+  t: Translate,
+): CivilWorkCenterDisplayName {
+  if (isTechnicalWorkCenterName(workCenter.name)) {
+    return {
+      label: t("web.help.public_name.pending"),
+      hasPublicName: false,
+    };
+  }
+
+  return { label: workCenter.name.trim(), hasPublicName: true };
+}
+
+function isTechnicalWorkCenterName(name: string): boolean {
+  const trimmed = name.trim();
+  if (!trimmed) return true;
+
+  const normalized = trimmed.toLowerCase();
+  if (normalized.startsWith("e2e-") || normalized.startsWith("name:")) {
+    return true;
+  }
+
+  const uuidPattern = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
+  if (uuidPattern.test(trimmed)) return true;
+
+  const longGeneratedTokenPattern =
+    /^(?=.{14,}$)(?=.*[a-z])(?=.*\d)(?=.*[-_])[a-z0-9][a-z0-9_-]*$/i;
+  return longGeneratedTokenPattern.test(trimmed);
+}
+
+function countHelpPointsWithPublicLocation(
+  workCenters: readonly WorkCenterSummary[],
+): number {
+  return workCenters.filter((workCenter) => workCenter.location).length;
+}
+
+function scrollToHelpPointElement(targetId: string): void {
+  const target = document.getElementById(targetId);
+  if (!target) return;
+
+  const prefersReducedMotion =
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  target.scrollIntoView({
+    block: "start",
+    behavior: prefersReducedMotion ? "auto" : "smooth",
+  });
+  if (target instanceof HTMLElement) {
+    target.focus({ preventScroll: true });
+  }
+}
+
 function reportWebTelemetry(
   action: WebTelemetryAction,
   result: "accepted" | "rejected" | "bypassed",
@@ -329,6 +510,7 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
     string | null
   >(null);
   const [route, navigate] = useHubRoute();
+  const civilOperationsMapCopy = createCivilOperationsMapCopy(t);
 
   useEffect(() => {
     let active = true;
@@ -612,16 +794,50 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
               ) : null
             }
           />
+          <p className="summary">{t("web.help.summary")}</p>
 
-          {workCenterState.status === "loading" ? (
-            <p>{t("web.help.loading")}</p>
-          ) : null}
-          {workCenterState.status === "error" ? (
-            <p role="alert">{workCenterState.message}</p>
-          ) : null}
-          {workCenterState.status === "ready" ? (
-            <WorkCenterOnlineView state={workCenterState} />
-          ) : null}
+          <div
+            id="help-points-map"
+            className="help-points-map-first"
+            tabIndex={-1}
+          >
+            <Suspense fallback={<p>{t("web.map.loading")}</p>}>
+              <OperationsMapPanel
+                styleName={theme.resolvedMode}
+                copy={civilOperationsMapCopy}
+              />
+            </Suspense>
+            <HelpPointJumpButton
+              label={t("web.help.jump.view_list")}
+              targetId="help-points-list"
+            />
+          </div>
+
+          <HelpPointsPublicLocationSummary state={workCenterState} />
+
+          <section
+            id="help-points-list"
+            className="help-points-list"
+            aria-labelledby="help-points-list-title"
+            tabIndex={-1}
+          >
+            <div className="help-points-list__heading">
+              <h3 id="help-points-list-title">{t("web.help.list.title")}</h3>
+              <HelpPointJumpButton
+                label={t("web.help.jump.back_to_map")}
+                targetId="help-points-map"
+              />
+            </div>
+            {workCenterState.status === "loading" ? (
+              <p>{t("web.help.loading")}</p>
+            ) : null}
+            {workCenterState.status === "error" ? (
+              <p role="alert">{workCenterState.message}</p>
+            ) : null}
+            {workCenterState.status === "ready" ? (
+              <WorkCenterOnlineView state={workCenterState} />
+            ) : null}
+          </section>
         </section>
       ) : null}
 
@@ -800,7 +1016,6 @@ const hubNavTabs: {
   { route: "home", labelKey: "web.nav.home", Icon: Home },
   { route: "volunteer", labelKey: "web.nav.volunteer", Icon: HandHeart },
   { route: "help-points", labelKey: "web.nav.help_points", Icon: MapPin },
-  { route: "map", labelKey: "web.nav.map", Icon: MapPin },
   {
     route: "resource-report",
     labelKey: "web.nav.resource_report",
@@ -1050,10 +1265,15 @@ function HomeHelpMapPreview({ state }: { state: WorkCenterState }) {
       aria-label={t("web.home.map.aria")}
     >
       {state.workCenters.slice(0, 4).map((workCenter) => (
-        <li key={workCenter.workCenterId}>
-          <span>{workCenter.name}</span>
-          <strong>{formatLocation(workCenter.location)}</strong>
-        </li>
+        (() => {
+          const displayName = getCivilWorkCenterDisplayName(workCenter, t);
+          return (
+            <li key={workCenter.workCenterId}>
+              <span>{displayName.label}</span>
+              <strong>{formatHelpPointLocation(workCenter.location, t)}</strong>
+            </li>
+          );
+        })()
       ))}
     </ol>
   );
@@ -1651,6 +1871,8 @@ function SosAlertList({ alerts }: { alerts: SosAlert[] }) {
 }
 
 function ChannelFreshnessBanner({ state }: { state: ChannelFreshnessState }) {
+  const { t } = useI18n();
+
   if (state.status === "loading") return null;
 
   if (state.status === "error") {
@@ -1661,25 +1883,22 @@ function ChannelFreshnessBanner({ state }: { state: ChannelFreshnessState }) {
         aria-live="polite"
       >
         <SectionHeader
-          eyebrow="Aviso"
-          title="No pudimos comprobar si hay cambios nuevos"
+          eyebrow={t("web.channel_warning.eyebrow")}
+          title={t("web.channel_warning.unavailable.title")}
           trailing={
             <StatePill
               tone="warning"
-              label="Revisar antes de actuar"
+              label={t("web.channel_warning.unavailable.state")}
               Icon={AlertTriangle}
             />
           }
         />
-        <p>
-          Usa esta pantalla como orientación y vuelve a intentar si vas a tomar
-          una decisión importante.
-        </p>
+        <p>{t("web.channel_warning.unavailable.body")}</p>
       </section>
     );
   }
 
-  const warning = describeChannelFreshnessWarning(state.freshness);
+  const warning = describeChannelFreshnessWarning(state.freshness, t);
   if (!warning) return null;
 
   return (
@@ -1689,7 +1908,7 @@ function ChannelFreshnessBanner({ state }: { state: ChannelFreshnessState }) {
       aria-live="polite"
     >
       <SectionHeader
-        eyebrow="Aviso"
+        eyebrow={t("web.channel_warning.eyebrow")}
         title={warning.title}
         trailing={
           <StatePill
@@ -1702,20 +1921,22 @@ function ChannelFreshnessBanner({ state }: { state: ChannelFreshnessState }) {
       <p>{warning.body}</p>
       {state.freshness.cursorLag > 0 ? (
         <p>
-          {state.freshness.cursorLag} cambios recientes todavía no aparecen
-          aquí.
+          {t("web.channel_warning.cursor_lag", {
+            count: state.freshness.cursorLag,
+          })}
         </p>
       ) : null}
       {state.freshness.hasConflicts ? (
-        <p>Hay datos que un coordinador debe revisar antes de actuar.</p>
+        <p>{t("web.channel_warning.conflicts")}</p>
       ) : null}
-      <p>Actualiza la pantalla antes de moverte o aceptar un encargo.</p>
+      <p>{t("web.channel_warning.refresh")}</p>
     </section>
   );
 }
 
 function describeChannelFreshnessWarning(
   freshness: SyncFreshness,
+  t: Translate,
 ): { title: string; body: string; stateLabel: string } | null {
   if (
     freshness.status === "fresh" &&
@@ -1726,25 +1947,76 @@ function describeChannelFreshnessWarning(
 
   if (freshness.status === "missing") {
     return {
-      title: "Falta una comprobación de cambios",
-      body: "La pantalla puede estar incompleta porque no recibimos la señal de actualización.",
-      stateLabel: "Comprobación pendiente",
+      title: t("web.channel_warning.missing.title"),
+      body: t("web.channel_warning.missing.body"),
+      stateLabel: t("web.channel_warning.missing.state"),
     };
   }
 
   if (freshness.status === "expired") {
     return {
-      title: "La información puede estar desactualizada",
-      body: "Ha pasado demasiado tiempo desde la última comprobación correcta.",
-      stateLabel: "Revisar",
+      title: t("web.channel_warning.expired.title"),
+      body: t("web.channel_warning.expired.body"),
+      stateLabel: t("web.channel_warning.expired.state"),
     };
   }
 
   return {
-    title: "Puede haber cambios recientes",
-    body: "Algunas acciones nuevas podrían no aparecer todavía en esta pantalla.",
-    stateLabel: "Actualizar",
+    title: t("web.channel_warning.stale.title"),
+    body: t("web.channel_warning.stale.body"),
+    stateLabel: t("web.channel_warning.stale.state"),
   };
+}
+
+function HelpPointJumpButton({
+  label,
+  targetId,
+}: {
+  label: string;
+  targetId: string;
+}) {
+  return (
+    <button
+      type="button"
+      className="inline-jump-link"
+      onClick={() => scrollToHelpPointElement(targetId)}
+    >
+      {label}
+    </button>
+  );
+}
+
+function HelpPointsPublicLocationSummary({
+  state,
+}: {
+  state: WorkCenterState;
+}) {
+  const { t } = useI18n();
+
+  if (state.status !== "ready") return null;
+
+  const withPublicLocation = countHelpPointsWithPublicLocation(
+    state.workCenters,
+  );
+  const withoutPublicLocation =
+    state.workCenters.length - withPublicLocation;
+
+  return (
+    <div className="help-points-public-summary" role="status">
+      <p>
+        {t("web.help.public_locations.with_count", {
+          count: withPublicLocation,
+        })}
+      </p>
+      {withoutPublicLocation > 0 ? (
+        <p>
+          {t("web.help.public_locations.without_count", {
+            count: withoutPublicLocation,
+          })}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function WorkCenterOnlineView({
@@ -1752,57 +2024,71 @@ function WorkCenterOnlineView({
 }: {
   state: Extract<WorkCenterState, { status: "ready" }>;
 }) {
+  const { t } = useI18n();
+
   if (state.workCenters.length === 0) {
-    return <p>Todavía no hay puntos de ayuda registrados.</p>;
+    return <p>{t("web.help.empty")}</p>;
   }
 
   return (
     <div className="work-center-grid">
       <div>
-        <h3>Lista</h3>
+        <h3>{t("web.help.list.cards_title")}</h3>
         <ul className="work-center-list">
-          {state.workCenters.map((workCenter) => (
-            <li key={workCenter.workCenterId}>
-              <Card tone={activationStateTone(workCenter.activationState)}>
-                <div className="card-title-row">
-                  <h4>{workCenter.name}</h4>
-                  <StatePill
-                    tone={activationStateTone(workCenter.activationState)}
-                    label={describeWorkCenterAvailability(workCenter)}
-                    Icon={CircleDot}
-                  />
-                </div>
-                <p>
-                  {workCenter.centerType ?? "Punto de ayuda"} · Prioridad{" "}
-                  {describePriority(workCenter.priority)}
-                </p>
-              </Card>
-            </li>
-          ))}
+          {state.workCenters.map((workCenter) => {
+            const displayName = getCivilWorkCenterDisplayName(workCenter, t);
+            return (
+              <li key={workCenter.workCenterId}>
+                <Card tone={activationStateTone(workCenter.activationState)}>
+                  <div className="card-title-row">
+                    <h4>{displayName.label}</h4>
+                    <StatePill
+                      tone={activationStateTone(workCenter.activationState)}
+                      label={describeWorkCenterAvailability(workCenter, t)}
+                      Icon={CircleDot}
+                    />
+                  </div>
+                  {!displayName.hasPublicName ? (
+                    <p>{t("web.help.public_name.note")}</p>
+                  ) : null}
+                  <p>
+                    {workCenter.centerType ?? t("web.help.center_type.default")} ·{" "}
+                    {t("web.help.priority.label")} {describePriority(workCenter.priority, t)}
+                  </p>
+                </Card>
+              </li>
+            );
+          })}
         </ul>
       </div>
 
       <div>
-        <h3>Detalle</h3>
+        <h3>{t("web.help.detail.title")}</h3>
         {state.selected ? (
           <WorkCenterDetailCard workCenter={state.selected} />
         ) : (
-          <p>Elige un punto de ayuda para ver más detalle.</p>
+          <p>{t("web.help.detail.choose")}</p>
         )}
       </div>
 
       <div>
-        <h3>Mapa simple</h3>
+        <h3>{t("web.help.locations.title")}</h3>
         <ol
           className="map-lite"
-          aria-label="Ubicación aproximada de puntos de ayuda"
+          aria-label={t("web.help.locations.aria")}
         >
-          {state.workCenters.map((workCenter) => (
-            <li key={workCenter.workCenterId}>
-              <span>{workCenter.name}</span>
-              <strong>{formatLocation(workCenter.location)}</strong>
-            </li>
-          ))}
+          {state.workCenters.map((workCenter) => {
+            const displayName = getCivilWorkCenterDisplayName(workCenter, t);
+            return (
+              <li key={workCenter.workCenterId}>
+                <span>{displayName.label}</span>
+                <strong>{formatHelpPointLocation(workCenter.location, t)}</strong>
+                {!displayName.hasPublicName ? (
+                  <small>{t("web.help.public_name.note")}</small>
+                ) : null}
+              </li>
+            );
+          })}
         </ol>
       </div>
     </div>
@@ -1957,18 +2243,25 @@ function confirmDispatchCancellation(task: DispatchTask): boolean {
   );
 }
 
-function describeWorkCenterAvailability(workCenter: WorkCenterSummary): string {
-  if (workCenter.activationState === "active") return "Recibiendo ayuda";
+function describeWorkCenterAvailability(
+  workCenter: WorkCenterSummary,
+  t: Translate,
+): string {
+  if (workCenter.activationState === "active")
+    return t("web.help.activation.active");
   if (workCenter.activationState === "needs_review")
-    return "Revisar antes de ir";
-  return "Pendiente de confirmar";
+    return t("web.help.activation.needs_review");
+  return t("web.help.activation.pending");
 }
 
-function describePriority(priority: WorkCenterSummary["priority"]): string {
-  if (priority === "critical") return "muy alta";
-  if (priority === "high") return "alta";
-  if (priority === "medium") return "media";
-  return "baja";
+function describePriority(
+  priority: WorkCenterSummary["priority"],
+  t: Translate,
+): string {
+  if (priority === "critical") return t("web.help.priority.critical");
+  if (priority === "high") return t("web.help.priority.high");
+  if (priority === "medium") return t("web.help.priority.medium");
+  return t("web.help.priority.low");
 }
 
 function describeUrgency(
@@ -1992,39 +2285,57 @@ function describeDispatchStatus(
   return t("web.dispatch.status.pending");
 }
 
-function describeWorkCenterStatus(status: WorkCenterSummary["status"]): string {
-  if (status === "inactive") return "Sin actividad reciente";
-  if (status === "archived") return "Archivado";
-  return "Reportado";
+function describeWorkCenterStatus(
+  status: WorkCenterSummary["status"],
+  t: Translate,
+): string {
+  if (status === "inactive") return t("web.help.work_center.status.inactive");
+  if (status === "archived") return t("web.help.work_center.status.archived");
+  return t("web.help.work_center.status.reported");
 }
 
-function describeFreshness(freshness: WorkCenterSummary["freshness"]): string {
-  if (freshness === "fresh") return "Reciente";
-  if (freshness === "stale") return "Puede estar desactualizado";
-  return "Sin confirmar";
+function describeFreshness(
+  freshness: WorkCenterSummary["freshness"],
+  t: Translate,
+): string {
+  if (freshness === "fresh") return t("web.help.freshness.fresh");
+  if (freshness === "stale") return t("web.help.freshness.stale");
+  return t("web.help.freshness.unconfirmed");
 }
 
-function describeConfidence(confidence: WorkCenterSummary["confidence"]): string {
-  if (confidence === "high") return "Alta";
-  if (confidence === "medium") return "Media";
-  return "Baja";
+function describeConfidence(
+  confidence: WorkCenterSummary["confidence"],
+  t: Translate,
+): string {
+  if (confidence === "high") return t("web.help.confidence.high");
+  if (confidence === "medium") return t("web.help.confidence.medium");
+  return t("web.help.confidence.low");
 }
 
-function describeRisk(risk: WorkCenterSummary["risk"]): string {
-  if (risk === "high") return "Alta";
-  if (risk === "medium") return "Media";
-  return "Baja";
+function describeRisk(
+  risk: WorkCenterSummary["risk"],
+  t: Translate,
+): string {
+  if (risk === "high") return t("web.help.risk.high");
+  if (risk === "medium") return t("web.help.risk.medium");
+  return t("web.help.risk.low");
 }
 
-function describeSignalSummary(workCenter: WorkCenterDetail): string {
-  return `${workCenter.signalCount} avisos · ${workCenter.corroboratingSignalCount} coinciden`;
+function describeSignalSummary(
+  workCenter: WorkCenterDetail,
+  t: Translate,
+): string {
+  return t("web.help.detail.signals.summary", {
+    signalCount: workCenter.signalCount,
+    corroboratingSignalCount: workCenter.corroboratingSignalCount,
+  });
 }
 
-function describeSignalType(signalType: string): string {
-  if (signalType === "creator_report") return "Aviso inicial";
-  if (signalType === "corroboration") return "Aviso coincidente";
-  if (signalType === "status_update") return "Actualización";
-  return "Aviso";
+function describeSignalType(signalType: string, t: Translate): string {
+  if (signalType === "creator_report") return t("web.help.signal.creator_report");
+  if (signalType === "corroboration") return t("web.help.signal.corroboration");
+  if (signalType === "status_update") return t("web.help.signal.status_update");
+  return t("web.help.signal.default");
 }
 
 function describeSourceChannel(
@@ -2061,6 +2372,7 @@ function WorkCenterDetailCard({
   workCenter: WorkCenterDetail;
 }) {
   const { t } = useI18n();
+  const displayName = getCivilWorkCenterDisplayName(workCenter, t);
 
   return (
     <Card
@@ -2069,28 +2381,31 @@ function WorkCenterDetailCard({
       tone={activationStateTone(workCenter.activationState)}
     >
       <div className="card-title-row">
-        <h4>{workCenter.name}</h4>
+        <h4>{displayName.label}</h4>
         <StatusBadge
           tone={activationStateTone(workCenter.activationState)}
-          label={describeWorkCenterAvailability(workCenter)}
+          label={describeWorkCenterAvailability(workCenter, t)}
         />
       </div>
+      {!displayName.hasPublicName ? (
+        <p>{t("web.help.public_name.note")}</p>
+      ) : null}
       <StatusStrip workCenter={workCenter} />
       <dl>
-        <dt>Descripción</dt>
-        <dd>{workCenter.description ?? "Sin descripción disponible"}</dd>
-        <dt>Hace falta</dt>
-        <dd>{workCenter.initialNeed ?? "No se informó una necesidad inicial"}</dd>
-        <dt>Sobra</dt>
-        <dd>{workCenter.surplus ?? "No se informó sobrante"}</dd>
-        <dt>Avisos recibidos</dt>
-        <dd>{describeSignalSummary(workCenter)}</dd>
+        <dt>{t("web.help.detail.description.label")}</dt>
+        <dd>{workCenter.description ?? t("web.help.detail.description.default")}</dd>
+        <dt>{t("web.help.detail.initial_need.label")}</dt>
+        <dd>{workCenter.initialNeed ?? t("web.help.detail.initial_need.default")}</dd>
+        <dt>{t("web.help.detail.surplus.label")}</dt>
+        <dd>{workCenter.surplus ?? t("web.help.detail.surplus.default")}</dd>
+        <dt>{t("web.help.detail.signals.label")}</dt>
+        <dd>{describeSignalSummary(workCenter, t)}</dd>
       </dl>
-      <ul className="signal-list" aria-label="Últimos avisos recibidos">
+      <ul className="signal-list" aria-label={t("web.help.detail.latest_signals.aria")}>
         {workCenter.latestSignals.map((signal) => (
           <li key={signal.signalId}>
             {t("web.work_center.signal.source", {
-              signalType: describeSignalType(signal.signalType),
+              signalType: describeSignalType(signal.signalType, t),
               source: describeSourceChannel(signal.sourceChannel, t),
             })}
           </li>
@@ -2105,38 +2420,41 @@ function StatusStrip({
 }: {
   workCenter: WorkCenterSummary | WorkCenterDetail;
 }) {
+  const { t } = useI18n();
+  const displayName = getCivilWorkCenterDisplayName(workCenter, t);
+
   return (
     <MetaRow
-      aria-label={`${workCenter.name} estado para voluntarios`}
+      aria-label={t("web.help.status.aria", { name: displayName.label })}
       items={[
         {
           key: "status",
-          label: "Situación",
-          value: describeWorkCenterStatus(workCenter.status),
+          label: t("web.help.status.label"),
+          value: describeWorkCenterStatus(workCenter.status, t),
           tone: workCenterStatusTone(workCenter.status),
         },
         {
           key: "activation",
-          label: "Uso",
-          value: describeWorkCenterAvailability(workCenter),
+          label: t("web.help.activation.label"),
+          value: describeWorkCenterAvailability(workCenter, t),
           tone: activationStateTone(workCenter.activationState),
         },
         {
           key: "freshness",
-          label: "Actualización",
-          value: describeFreshness(workCenter.freshness),
+          label: t("web.help.freshness.label"),
+          value: describeFreshness(workCenter.freshness, t),
           tone: freshnessTone(workCenter.freshness),
         },
         {
           key: "confidence",
-          label: "Confianza",
-          value: describeConfidence(workCenter.confidence),
+          label: t("web.help.confidence.label"),
+          value: describeConfidence(workCenter.confidence, t),
           tone: confidenceTone(workCenter.confidence),
         },
         {
           key: "risk",
-          label: "Precaución",
-          value: describeRisk(workCenter.risk),
+          label: t("web.help.risk.label"),
+          value: describeRisk(workCenter.risk, t),
           tone: riskTone(workCenter.risk),
         },
       ]}
@@ -2144,9 +2462,15 @@ function StatusStrip({
   );
 }
 
-function formatLocation(location: WorkCenterSummary["location"]): string {
-  if (!location) return "No coordinates";
-  return `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`;
+function formatHelpPointLocation(
+  location: WorkCenterSummary["location"],
+  t: Translate,
+): string {
+  if (!location) return t("web.help.location.not_public");
+  return t("web.help.location.coordinates", {
+    latitude: location.latitude.toFixed(4),
+    longitude: location.longitude.toFixed(4),
+  });
 }
 
 function formatSosAlertLocation(

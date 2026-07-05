@@ -40,6 +40,12 @@ const localizedNameExpression: ExpressionSpecification = ['coalesce', ['get', 'n
 
 export type OperationsMapStyleName = 'day' | 'night';
 
+export type OperationsMapMarkerDescription = {
+  label?: string;
+  metadata: string;
+  detail: string;
+};
+
 type OperationsMapStyleConfig = {
   className: string;
   style: StyleSpecification;
@@ -84,7 +90,17 @@ const markerLabelByVariant: Record<ReturnType<typeof resolveOperationalMarkerVar
   dangerous_zone: 'Dangerous zone',
 };
 
-export function OperationsMap({ map, styleName = defaultMapStyle }: { map: OperationalMapResponse; styleName?: OperationsMapStyleName }) {
+export function OperationsMap({
+  map,
+  styleName = defaultMapStyle,
+  ariaLabel,
+  describeMarker = defaultMarkerDescription,
+}: {
+  map: OperationalMapResponse;
+  styleName?: OperationsMapStyleName;
+  ariaLabel?: string;
+  describeMarker?: (marker: OperationalMapMarker) => OperationsMapMarkerDescription;
+}) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markerRefs = useRef<Array<{ marker: Marker; popup: Popup }>>([]);
@@ -147,8 +163,9 @@ export function OperationsMap({ map, styleName = defaultMapStyle }: { map: Opera
       const selected = markerData.id === selectedCenterId;
       const variant = resolveOperationalMarkerVariant(markerData, selected);
       const placement = resolveMarkerPlacement(markerData, longitudeCenter);
-      const popup = new Popup({ closeButton: true, closeOnClick: true, maxWidth: '18rem' }).setHTML(createPopupHtml(markerData));
-      const marker = new Marker({ element: createMarkerElement(markerData, variant, selected, placement), anchor: 'bottom' })
+      const markerDescription = describeMarker(markerData);
+      const popup = new Popup({ closeButton: true, closeOnClick: true, maxWidth: '18rem' }).setHTML(createPopupHtml(markerData, markerDescription));
+      const marker = new Marker({ element: createMarkerElement(markerData, variant, selected, placement, markerDescription), anchor: 'bottom' })
         .setLngLat([markerData.longitude, markerData.latitude])
         .setPopup(popup)
         .addTo(operationalMap);
@@ -174,10 +191,10 @@ export function OperationsMap({ map, styleName = defaultMapStyle }: { map: Opera
       });
       markerRefs.current = [];
     };
-  }, [bounds, center, longitudeCenter, markers, selectedCenterId]);
+  }, [bounds, center, describeMarker, longitudeCenter, markers, selectedCenterId]);
 
   return (
-    <div className="operations-map" aria-label={`Operational map for ${map.countryName}`}>
+    <div className="operations-map" aria-label={ariaLabel ?? `Operational map for ${map.countryName}`}>
       <div ref={containerRef} data-testid="maplibre-map" className={`operations-map__canvas maplibregl-map ${styleConfig.className}`} />
       <p className="operations-map__attribution">Map data © OpenStreetMap, OpenMapTiles, OpenFreeMap</p>
     </div>
@@ -369,11 +386,12 @@ function createMarkerElement(
   variant: ReturnType<typeof resolveOperationalMarkerVariant>,
   selected: boolean,
   placement: 'west' | 'center' | 'east',
+  description: OperationsMapMarkerDescription,
 ): HTMLElement {
   const variantClass = variant.replaceAll('_', '-');
-  const label = variant === 'selected_center' ? marker.label : markerLabelByVariant[variant];
+  const label = description.label ?? defaultMarkerLabel(marker, variant);
   const safeLabel = escapeHtml(label);
-  const safeDetail = escapeHtml(`${marker.kind.replace('_', ' ')} · ${marker.status} · ${marker.detail}`);
+  const safeDetail = escapeHtml(`${description.metadata} · ${description.detail}`);
   const [width, height] = selected ? [164, 96] : [140, 78];
   const element = document.createElement('div');
 
@@ -385,8 +403,20 @@ function createMarkerElement(
   return element;
 }
 
-function createPopupHtml(marker: OperationalMapMarker): string {
-  return `<strong>${escapeHtml(marker.label)}</strong><br />${escapeHtml(marker.kind.replace('_', ' '))} · ${escapeHtml(marker.status)}<br />${escapeHtml(marker.detail)}`;
+function defaultMarkerLabel(marker: OperationalMapMarker, variant: ReturnType<typeof resolveOperationalMarkerVariant>): string {
+  return variant === 'selected_center' ? marker.label : markerLabelByVariant[variant];
+}
+
+function createPopupHtml(marker: OperationalMapMarker, description: OperationsMapMarkerDescription): string {
+  const label = description.label ?? marker.label;
+  return `<strong>${escapeHtml(label)}</strong><br />${escapeHtml(description.metadata)}<br />${escapeHtml(description.detail)}`;
+}
+
+function defaultMarkerDescription(marker: OperationalMapMarker): OperationsMapMarkerDescription {
+  return {
+    metadata: `${marker.kind.replace('_', ' ')} · ${marker.status}`,
+    detail: marker.detail,
+  };
 }
 
 function renderMarkerIcon(Icon: LucideIcon): string {

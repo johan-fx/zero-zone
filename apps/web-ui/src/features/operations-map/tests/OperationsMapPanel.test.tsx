@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CountryListResponse, OperationalMapResponse } from '@zona-cero/contracts';
-import { OperationsMapPanel } from '../OperationsMapPanel';
+import { OperationsMapPanel, type OperationsMapPanelCopy } from '../OperationsMapPanel';
 
 type CapturedLayer = { id?: string; type?: string; source?: string; 'source-layer'?: string; paint?: Record<string, unknown> };
 
@@ -154,6 +154,40 @@ const portugalEmptyMapFixture: OperationalMapResponse = {
   counts: { incidents: 0, workCenters: 0, sosAlerts: 0, withoutLocation: 1 },
 };
 
+const englishCivilCopy: OperationsMapPanelCopy = {
+  eyebrow: 'Public country map',
+  title: 'Country help map',
+  summary:
+    'Shows public country-level information: response areas, help points, and SOS alerts. Some items hide the exact location for safety. This is not a personalized view or a real-time nearby-points view.',
+  markerCountLabel: (count) => `${count} published markers`,
+  loadingCountries: 'Loading country map…',
+  emptyCountries: 'No countries have a public map available yet.',
+  loadingMap: 'Loading country help map…',
+  countsAriaLabel: 'Public country map summary',
+  incidentsLabel: (count) => `${count} response areas`,
+  workCentersLabel: (count) => `${count} help points`,
+  sosAlertsLabel: (count) => `${count} SOS alerts`,
+  withoutLocationLabel: (count) => `${count} with protected location`,
+  emptyMapItems: (countryName) => `No public geolocated help items for ${countryName} yet.`,
+  listTitle: 'Published points and safe details',
+  mapAriaLabel: (countryName) => `Public country help map for ${countryName}`,
+  markerLabel: (marker) => {
+    if (marker.kind === 'incident') return 'Response area';
+    if (marker.kind === 'work_center') return 'Help point';
+    return 'SOS alert';
+  },
+  markerMetadata: (marker) => {
+    if (marker.kind === 'incident') return 'Response area · Active';
+    if (marker.kind === 'work_center') return 'Help point · Published';
+    return 'SOS alert · Open';
+  },
+  markerDetail: (marker) => {
+    if (marker.kind === 'work_center') return `Priority need: ${marker.priority}`;
+    if (marker.kind === 'sos') return `Urgency: ${marker.severity}`;
+    return marker.detail;
+  },
+};
+
 beforeEach(() => {
   vi.restoreAllMocks();
   maplibreMocks.maps.length = 0;
@@ -184,6 +218,8 @@ describe('OperationsMapPanel', () => {
     expect(fetcher).toHaveBeenCalledWith('http://127.0.0.1:8787/map/countries');
     expect(fetcher).toHaveBeenCalledWith('http://127.0.0.1:8787/map?countryCode=ES');
     expect(maplibreMocks.workerUrl).toHaveBeenCalledWith('/mock-maplibre-worker.js');
+    expect(screen.getByRole('region', { name: 'Map overview' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Operational map for Spain')).toBeInTheDocument();
     expect(screen.getByText('1 incidents')).toBeInTheDocument();
     expect(screen.getByText('1 work centers')).toBeInTheDocument();
     expect(screen.getByText('1 SOS alerts')).toBeInTheDocument();
@@ -221,6 +257,48 @@ describe('OperationsMapPanel', () => {
     expect(maplibreMocks.markers[2]?.popup?.html).toContain('SOS sos-mobile-critical-1');
   });
 
+
+  it('uses passed English civil copy for the help-points surface without changing map loading', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/map/countries')) return jsonResponse(countriesFixture);
+      if (url.endsWith('/map?countryCode=ES')) return jsonResponse(spainMapFixture);
+      return new Response('not found', { status: 404 });
+    });
+
+    render(<OperationsMapPanel styleName="day" copy={englishCivilCopy} />);
+
+    expect(screen.getByText('Loading country map…')).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Country help map' })).toBeInTheDocument();
+    expect(screen.getByText('Public country map')).toBeInTheDocument();
+    expect(screen.getByText(/not a personalized view/i)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText('Public country help map for Spain')).toBeInTheDocument());
+    expect(screen.getByText('3 published markers')).toBeInTheDocument();
+    expect(screen.getByText('1 response areas')).toBeInTheDocument();
+    expect(screen.getByText('1 help points')).toBeInTheDocument();
+    expect(screen.getByText('2 with protected location')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Published points and safe details' })).toBeInTheDocument();
+    expect(screen.getByText('Help point · Published')).toBeInTheDocument();
+    expect(screen.getByText('Priority need: high')).toBeInTheDocument();
+    expect(screen.getByText('SOS alert · Open')).toBeInTheDocument();
+    expect(screen.getByText('Urgency: critical')).toBeInTheDocument();
+    expect(screen.queryByText('work_center · reported')).not.toBeInTheDocument();
+    expect(screen.queryByText('sos · open')).not.toBeInTheDocument();
+    await waitFor(() => expect(maplibreMocks.markers).toHaveLength(3));
+    expect(maplibreMocks.markers[0]?.element.querySelector('.operations-map-marker__label')).toHaveTextContent('Response area');
+    expect(maplibreMocks.markers[0]?.element.querySelector('.operations-map-marker__label')).not.toHaveTextContent('Active');
+    expect(maplibreMocks.markers[1]?.element.querySelector('.operations-map-marker__label')).toHaveTextContent('Help point');
+    expect(maplibreMocks.markers[1]?.element.querySelector('.operations-map-marker__label')).not.toHaveTextContent('North triage point');
+    expect(maplibreMocks.markers[2]?.element.querySelector('.operations-map-marker__label')).toHaveTextContent('SOS alert');
+    expect(maplibreMocks.markers[1]?.element.innerHTML).toContain('Help point · Published');
+    expect(maplibreMocks.markers[1]?.element.innerHTML).not.toContain('work_center · reported');
+    expect(maplibreMocks.markers[1]?.popup?.html).toContain('<strong>Help point</strong>');
+    expect(maplibreMocks.markers[1]?.popup?.html).not.toContain('<strong>North triage point</strong>');
+    expect(maplibreMocks.markers[1]?.popup?.html).toContain('Priority need: high');
+    expect(maplibreMocks.markers[1]?.popup?.html).not.toContain('Priority high');
+    expect(screen.queryByText('Operational map')).not.toBeInTheDocument();
+    expect(screen.queryByText('Mapa de ayuda por país')).not.toBeInTheDocument();
+  });
 
   it('uses the global styleName prop and switches to day without dropping markers', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {

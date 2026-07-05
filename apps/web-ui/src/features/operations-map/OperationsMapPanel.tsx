@@ -4,8 +4,8 @@ import type { CountryOption, OperationalMapResponse } from '@zona-cero/contracts
 import { SectionHeader, StatusBadge } from '@zona-cero/ui/web';
 import { fetchMapCountries, fetchOperationalMap } from '../../api';
 import { CountryFilter } from './CountryFilter';
-import { OperationsMap, type OperationsMapStyleName } from './OperationsMap';
-import { countMapMarkers, flattenOperationalMapMarkers } from './mapData';
+import { OperationsMap, type OperationsMapMarkerDescription, type OperationsMapStyleName } from './OperationsMap';
+import { countMapMarkers, flattenOperationalMapMarkers, type OperationalMapMarker } from './mapData';
 
 type CountriesState =
   | { status: 'loading' }
@@ -17,7 +17,53 @@ type MapState =
   | { status: 'ready'; map: OperationalMapResponse }
   | { status: 'error'; message: string };
 
-export function OperationsMapPanel({ styleName }: { styleName: OperationsMapStyleName }) {
+export type OperationsMapPanelCopy = {
+  eyebrow: string;
+  title: string;
+  summary?: string;
+  markerCountLabel(count: number): string;
+  loadingCountries: string;
+  emptyCountries: string;
+  loadingMap: string;
+  countsAriaLabel: string;
+  incidentsLabel(count: number): string;
+  workCentersLabel(count: number): string;
+  sosAlertsLabel(count: number): string;
+  withoutLocationLabel(count: number): string;
+  emptyMapItems(countryName: string): string;
+  listTitle: string;
+  mapAriaLabel(countryName: string): string;
+  markerLabel?(marker: OperationalMapMarker): string;
+  markerMetadata(marker: OperationalMapMarker): string;
+  markerDetail(marker: OperationalMapMarker): string;
+};
+
+const operationalMapCopy: OperationsMapPanelCopy = {
+  eyebrow: 'Operational map',
+  title: 'Map overview',
+  markerCountLabel: (count) => `${count} markers`,
+  loadingCountries: 'Loading countries…',
+  emptyCountries: 'No countries with operational map data yet.',
+  loadingMap: 'Loading operational map…',
+  countsAriaLabel: 'Operational map counts',
+  incidentsLabel: (count) => `${count} incidents`,
+  workCentersLabel: (count) => `${count} work centers`,
+  sosAlertsLabel: (count) => `${count} SOS alerts`,
+  withoutLocationLabel: (count) => `${count} without location`,
+  emptyMapItems: (countryName) => `No public geolocated map items for ${countryName} yet.`,
+  listTitle: 'Map items',
+  mapAriaLabel: (countryName) => `Operational map for ${countryName}`,
+  markerMetadata: (marker) => `${marker.kind.replace('_', ' ')} · ${marker.status}`,
+  markerDetail: (marker) => marker.detail,
+};
+
+export function OperationsMapPanel({
+  styleName,
+  copy = operationalMapCopy,
+}: {
+  styleName: OperationsMapStyleName;
+  copy?: OperationsMapPanelCopy;
+}) {
   const mapTitleId = useId();
   const [countriesState, setCountriesState] = useState<CountriesState>({ status: 'loading' });
   const [selectedCountryCode, setSelectedCountryCode] = useState('');
@@ -70,10 +116,10 @@ export function OperationsMapPanel({ styleName }: { styleName: OperationsMapStyl
     <div className="operations-map-panel" role="region" aria-labelledby={mapTitleId} data-testid="operations-map-panel">
       <div className="operations-map-panel__toolbar">
         <SectionHeader
-          eyebrow="Operational map"
-          title="Map overview"
+          eyebrow={copy.eyebrow}
+          title={copy.title}
           titleId={mapTitleId}
-          trailing={selectedCountry ? <StatusBadge tone="info" label={`${selectedCountry.markerCount} markers`} /> : null}
+          trailing={selectedCountry ? <StatusBadge tone="info" label={copy.markerCountLabel(selectedCountry.markerCount)} /> : null}
         />
         <CountryFilter
           countries={countries}
@@ -81,59 +127,74 @@ export function OperationsMapPanel({ styleName }: { styleName: OperationsMapStyl
           onChange={setSelectedCountryCode}
           disabled={countriesState.status !== 'ready'}
         />
+        {copy.summary ? <p className="operations-map-panel__summary">{copy.summary}</p> : null}
       </div>
 
-      {countriesState.status === 'loading' ? <p>Loading countries…</p> : null}
+      {countriesState.status === 'loading' ? <p>{copy.loadingCountries}</p> : null}
       {countriesState.status === 'error' ? <p role="alert">{countriesState.message}</p> : null}
       {countriesState.status === 'ready' && countries.length === 0 ? (
-        <p role="status">No countries with operational map data yet.</p>
+        <p role="status">{copy.emptyCountries}</p>
       ) : null}
 
-      {countries.length > 0 ? <MapStateView state={mapState} styleName={styleName} /> : null}
+      {countries.length > 0 ? <MapStateView state={mapState} styleName={styleName} copy={copy} /> : null}
     </div>
   );
 }
 
-function MapStateView({ state, styleName }: { state: MapState; styleName: OperationsMapStyleName }) {
+function MapStateView({ state, styleName, copy }: { state: MapState; styleName: OperationsMapStyleName; copy: OperationsMapPanelCopy }) {
   switch (state.status) {
     case 'idle':
       return null;
     case 'loading':
-      return <p>Loading operational map…</p>;
+      return <p>{copy.loadingMap}</p>;
     case 'error':
       return <p role="alert">{state.message}</p>;
     case 'ready':
-      return <OperationalMapReadyView map={state.map} styleName={styleName} />;
+      return <OperationalMapReadyView map={state.map} styleName={styleName} copy={copy} />;
   }
 }
 
-function OperationalMapReadyView({ map, styleName }: { map: OperationalMapResponse; styleName: OperationsMapStyleName }) {
+function OperationalMapReadyView({ map, styleName, copy }: { map: OperationalMapResponse; styleName: OperationsMapStyleName; copy: OperationsMapPanelCopy }) {
   const mapListTitleId = useId();
   const markers = useMemo(() => flattenOperationalMapMarkers(map), [map]);
   const markerCount = countMapMarkers(map);
+  const describeMarker = useMemo(
+    () =>
+      (marker: OperationalMapMarker): OperationsMapMarkerDescription => ({
+        label: copy.markerLabel?.(marker),
+        metadata: copy.markerMetadata(marker),
+        detail: copy.markerDetail(marker),
+      }),
+    [copy],
+  );
 
   return (
     <div className="operations-map-panel__content">
-      <div className="map-summary" aria-label="Operational map counts">
-        <StatusBadge tone="info" label={`${map.counts.incidents} incidents`} />
-        <StatusBadge tone="success" label={`${map.counts.workCenters} work centers`} />
-        <StatusBadge tone={map.counts.sosAlerts > 0 ? 'sos' : 'info'} label={`${map.counts.sosAlerts} SOS alerts`} />
-        <StatusBadge tone={map.counts.withoutLocation > 0 ? 'warning' : 'success'} label={`${map.counts.withoutLocation} without location`} />
+      <div className="map-summary" aria-label={copy.countsAriaLabel}>
+        <StatusBadge tone="info" label={copy.incidentsLabel(map.counts.incidents)} />
+        <StatusBadge tone="success" label={copy.workCentersLabel(map.counts.workCenters)} />
+        <StatusBadge tone={map.counts.sosAlerts > 0 ? 'sos' : 'info'} label={copy.sosAlertsLabel(map.counts.sosAlerts)} />
+        <StatusBadge tone={map.counts.withoutLocation > 0 ? 'warning' : 'success'} label={copy.withoutLocationLabel(map.counts.withoutLocation)} />
       </div>
 
       {markerCount === 0 ? (
-        <p role="status">No public geolocated map items for {map.countryName} yet.</p>
+        <p role="status">{copy.emptyMapItems(map.countryName)}</p>
       ) : (
         <>
-          <OperationsMap map={map} styleName={styleName} />
+          <OperationsMap
+            map={map}
+            styleName={styleName}
+            ariaLabel={copy.mapAriaLabel(map.countryName)}
+            describeMarker={describeMarker}
+          />
           <section className="map-accessible-list" aria-labelledby={mapListTitleId}>
-            <h3 id={mapListTitleId}>Map items</h3>
+            <h3 id={mapListTitleId}>{copy.listTitle}</h3>
             <ul>
               {markers.map((marker) => (
                 <li key={marker.id}>
-                  <strong>{marker.label}</strong>
-                  <span>{marker.kind.replace('_', ' ')} · {marker.status}</span>
-                  <span>{marker.detail}</span>
+                  <strong>{copy.markerLabel?.(marker) ?? marker.label}</strong>
+                  <span>{copy.markerMetadata(marker)}</span>
+                  <span>{copy.markerDetail(marker)}</span>
                   <span>{marker.latitude.toFixed(4)}, {marker.longitude.toFixed(4)}</span>
                 </li>
               ))}
