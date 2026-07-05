@@ -4,6 +4,8 @@ import type {
   SosAlertStatus,
   SosFanoutJobStatus,
   SyncFreshnessStatus,
+  TrustStatus,
+  TrustVisibility,
   WorkCenterActivationState,
   WorkCenterConfidence,
   WorkCenterFreshness,
@@ -95,6 +97,38 @@ export function urgencyTone(urgency: ResourceReportUrgency): StatusTone {
       return 'risk';
     case 'critical':
       return 'sos';
+    default:
+      return 'info';
+  }
+}
+
+export function trustStatusTone(status: TrustStatus): StatusTone {
+  switch (status) {
+    case 'field_attested':
+    case 'trusted_by_context':
+      return 'success';
+    case 'pending_corroboration':
+    case 'self_declared':
+      return 'pending';
+    case 'degraded':
+      return 'warning';
+    case 'disputed':
+      return 'conflict';
+    default:
+      return 'info';
+  }
+}
+
+export function trustVisibilityTone(visibility: TrustVisibility): StatusTone {
+  switch (visibility) {
+    case 'normal':
+      return 'success';
+    case 'elevated':
+      return 'warning';
+    case 'limited':
+      return 'risk';
+    case 'blocked':
+      return 'conflict';
     default:
       return 'info';
   }

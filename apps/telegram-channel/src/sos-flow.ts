@@ -66,7 +66,7 @@ export async function handleTelegramSosFlow(
             request,
             preferredLocale: locale,
           },
-          responseText: formatSosConfirmation(locale, incident),
+          responseText: `${formatSosConfirmation(locale, incident)}\n${sosTrustContextCopy(locale, 'confirmation')}`,
         };
       }
 
@@ -84,7 +84,7 @@ export async function handleTelegramSosFlow(
 
         try {
           const response = await ports.createSosAlert(state.incident.incidentId, state.request);
-          return { state: { step: 'submitted', response }, responseText: formatSosSuccess(locale, response) };
+          return { state: { step: 'submitted', response }, responseText: `${formatSosSuccess(locale, response)}\n${sosTrustContextCopy(locale, 'success')}` };
         } catch (error) {
           return { state, responseText: formatSosError(locale, error) };
         }
@@ -95,6 +95,18 @@ export async function handleTelegramSosFlow(
   );
 
   return withTelegramSosFlowContextPreface(result, flowContext);
+}
+
+function sosTrustContextCopy(locale: SupportedLocale, phase: 'confirmation' | 'success'): string {
+  if (locale === 'es') {
+    return phase === 'confirmation'
+      ? 'Seguridad: SOS avisa a la red civil conectada, pero no promete rescate ni autoridad oficial. Confirma solo si necesitas registrar el aviso crítico.'
+      : 'Confianza contextual: este SOS puede ser corroborado o disputado después; sigue buscando ayuda local segura si puedes.';
+  }
+
+  return phase === 'confirmation'
+    ? 'Safety: SOS notifies the connected civil network, but it does not promise rescue or official authority. Confirm only if you need to register the critical alert.'
+    : 'Contextual trust: this SOS can be corroborated or disputed later; keep seeking safe local help if you can.';
 }
 
 async function startSosIncidentSelection(
