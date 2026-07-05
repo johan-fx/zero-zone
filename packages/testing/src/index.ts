@@ -264,6 +264,31 @@ export const webLinkFlowFixtures = {
       },
     },
   },
+  'operational_update.detail': {
+    happy: {
+      ...validWebLinkRequestFixture,
+      scope: 'operational_update.detail',
+      entityId: 'upd-fixture',
+      correlationId: 'corr-operational-update-detail-1',
+      returnState: 'web-ui:update:upd-fixture',
+      auditContext: {
+        channel: 'web-ui',
+        command: 'operational_update.detail',
+        messageId: 'web-session-fixture',
+      },
+    },
+    error: {
+      ...validWebLinkRequestFixture,
+      scope: 'operational_update.detail',
+      entityId: '',
+      correlationId: 'corr-operational-update-detail-1',
+      auditContext: {
+        channel: 'web-ui',
+        command: 'operational_update.detail',
+        messageId: 'web-session-fixture',
+      },
+    },
+  },
 } as const;
 
 export const privateFamilyReunificationIssueRequestFixture: PrivateWebLinkIssueRequest = {

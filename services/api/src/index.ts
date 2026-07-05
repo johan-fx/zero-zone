@@ -35,6 +35,13 @@ import {
   IncidentListResponseSchema,
   CountryListResponseSchema,
   OperationalMapResponseSchema,
+  OperationalUpdateActionRequestSchema,
+  OperationalUpdateActionResponseSchema,
+  OperationalUpdateCorroborateRequestSchema,
+  OperationalUpdateDisputeRequestSchema,
+  OperationalUpdateLinkRequestSchema,
+  OperationalUpdateLinkResponseSchema,
+  OperationalUpdatePullResponseSchema,
   OperationalEventSchema,
   PendingSignedOperationSchema,
   PrivateWebLinkConsumeRequestSchema,
@@ -59,6 +66,15 @@ import {
   type SupportedLocale,
   type OperationalEvent,
   type OperationalEventType,
+  type OperationalUpdate,
+  type OperationalUpdateActionReceipt,
+  type OperationalUpdateActionRequest,
+  type OperationalUpdateCorroborateRequest,
+  type OperationalUpdateDisputeRequest,
+  type OperationalUpdateActionType,
+  type OperationalUpdateLinkResponse,
+  type OperationalUpdateType,
+  type OperationalUpdateUrgency,
   type PermissionSnapshot,
   type PendingSignedOperation,
   type PrivateWebLinkConsumeRequest,
@@ -140,6 +156,7 @@ import {
   handleTelegramDispatchTaskFlow,
   handleTelegramFamilyReunificationFlow,
   handleTelegramIncidentJoinFlow,
+  handleTelegramOperationalUpdateCommand,
   handleTelegramResourceReportFlow,
   handleTelegramSosFlow,
   handleTelegramWorkCenterReportFlow,
@@ -164,6 +181,7 @@ import {
   type TelegramFamilyReunificationState,
   type TelegramIncidentJoinPorts,
   type TelegramIncidentJoinState,
+  type TelegramOperationalUpdatePorts,
   type TelegramResourceReportPorts,
   type TelegramResourceReportState,
   type TelegramSosPorts,
@@ -347,6 +365,53 @@ app.post('/private-links/consume', async (c) => {
       audit: { auditEventId: result.auditEventId },
     }),
   );
+});
+
+app.post('/private-links/operational-updates/detail', async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsed = PrivateWebLinkValidateRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    await auditPrivateWebLinkAttempt(c.env.DB, createRejectedAttemptInput(c, body, 'operational_update.detail', 'invalid_payload'));
+    return c.json({ error: 'invalid_payload', issues: parsed.error.issues }, 400);
+  }
+
+  if (parsed.data.scope !== 'operational_update.detail') {
+    return c.json({ error: 'invalid_link_scope' }, 400);
+  }
+
+  const validation = await validatePrivateWebLink(c.env.DB, c.req.raw, parsed.data, 'consume');
+  if (!validation.success) {
+    return c.json({ error: validation.error }, privateWebLinkErrorStatus(validation.error));
+  }
+  const debit = await debitPrivateWebLinkUse(c.env.DB, c.req.raw, parsed.data, validation, 'consume');
+  if (!debit.success) {
+    return c.json({ error: debit.error }, privateWebLinkErrorStatus(debit.error));
+  }
+
+  const metadata = parseJsonObject(validation.link.metadataJson);
+  const nestedMetadata = metadata.metadata && typeof metadata.metadata === 'object' && !Array.isArray(metadata.metadata)
+    ? (metadata.metadata as Record<string, unknown>)
+    : {};
+  const updateId = typeof nestedMetadata.updateId === 'string' ? nestedMetadata.updateId : null;
+  if (!updateId) {
+    return c.json({ error: 'invalid_payload' }, 400);
+  }
+
+  const update = await getOperationalUpdate(c.env.DB, validation.link.incidentId, updateId);
+  if (!update) {
+    return c.json({ error: 'not_found' }, 404);
+  }
+
+  return c.json({
+    valid: true,
+    linkId: validation.link.linkId,
+    scope: validation.link.scope,
+    incidentId: validation.link.incidentId,
+    correlationId: validation.link.correlationId,
+    expiresAt: validation.link.expiresAt,
+    update,
+    audit: { auditEventId: validation.auditEventId },
+  });
 });
 
 app.post('/private-links/family-reunification/search', async (c) => {
@@ -874,6 +939,105 @@ app.get('/incidents/:incidentId/trust-state', async (c) => {
   return c.json(TrustStateResponseSchema.parse({ trustState }));
 });
 
+app.get('/incidents/:incidentId/cells/:cellId/updates', async (c) => {
+  const incident = await findIncident(c.env.DB, c.req.param('incidentId'));
+  if (!incident) {
+    return c.json({ error: 'not_found' }, 404);
+  }
+
+  const actor = await resolveOperationalUpdateActor(c.env.DB, incident.incidentId, c.req.query('channel'), c.req.query('externalId'));
+  if (!actor.success) {
+    return c.json({ error: actor.error }, actor.status);
+  }
+
+  const limit = parseOperationalUpdateLimit(c.req.query('limit'));
+  if (!limit.valid) {
+    return c.json({ error: 'invalid_payload', issues: [{ message: 'limit must be an integer between 1 and 50' }] }, 400);
+  }
+
+  const response = await listOperationalUpdates(c.env.DB, incident.incidentId, c.req.param('cellId'), c.req.query('cursor') ?? null, limit.value, actor.actor);
+  if (!response.success) {
+    return c.json({ error: response.error, message: response.message }, 400);
+  }
+
+  return c.json(OperationalUpdatePullResponseSchema.parse(response.body));
+});
+
+app.post('/incidents/:incidentId/updates/:updateId/ack', async (c) => {
+  return handleOperationalUpdateBasicAction(c.env.DB, c.req.param('incidentId'), c.req.param('updateId'), 'ack', await c.req.json().catch(() => null));
+});
+
+app.post('/incidents/:incidentId/updates/:updateId/read', async (c) => {
+  return handleOperationalUpdateBasicAction(c.env.DB, c.req.param('incidentId'), c.req.param('updateId'), 'read', await c.req.json().catch(() => null));
+});
+
+app.post('/incidents/:incidentId/updates/:updateId/open', async (c) => {
+  return handleOperationalUpdateBasicAction(c.env.DB, c.req.param('incidentId'), c.req.param('updateId'), 'open', await c.req.json().catch(() => null));
+});
+
+app.post('/incidents/:incidentId/updates/:updateId/corroborate', async (c) => {
+  return handleOperationalUpdateCorroborateAction(c.env.DB, c.req.param('incidentId'), c.req.param('updateId'), await c.req.json().catch(() => null));
+});
+
+app.post('/incidents/:incidentId/updates/:updateId/dispute', async (c) => {
+  return handleOperationalUpdateDisputeAction(c.env.DB, c.req.param('incidentId'), c.req.param('updateId'), await c.req.json().catch(() => null));
+});
+
+app.post('/incidents/:incidentId/updates/:updateId/links', async (c) => {
+  const incident = await findIncident(c.env.DB, c.req.param('incidentId'));
+  if (!incident) {
+    return c.json({ error: 'not_found' }, 404);
+  }
+
+  const update = await getOperationalUpdate(c.env.DB, incident.incidentId, c.req.param('updateId'));
+  if (!update) {
+    return c.json({ error: 'not_found' }, 404);
+  }
+
+  const parsed = OperationalUpdateLinkRequestSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
+    return c.json({ error: 'invalid_payload', issues: parsed.error.issues }, 400);
+  }
+
+  const actor = await resolveOperationalUpdateActor(c.env.DB, incident.incidentId, parsed.data.channel, parsed.data.externalId);
+  if (!actor.success) {
+    return c.json({ error: actor.error }, actor.status);
+  }
+  if (!await isOperationalUpdateTargetedToActor(c.env.DB, update, actor.actor)) {
+    return c.json({ error: 'permission_denied' }, 403);
+  }
+
+  const action = await recordOperationalUpdateAction(c.env.DB, update, 'link', parsed.data);
+  const correlationId = `operational_update:${update.updateId}:${parsed.data.idempotencyKey ?? crypto.randomUUID()}`;
+  const privateLink = await issuePrivateWebLink(c.env.DB, incident, {
+    scope: 'operational_update.detail',
+    channel: parsed.data.channel,
+    externalId: parsed.data.externalId,
+    displayName: parsed.data.displayName,
+    correlationId,
+    returnState: parsed.data.returnState,
+    ttlSeconds: 15 * 60,
+    maxUses: 1,
+    metadata: { updateId: update.updateId },
+  }, actor.actor.membership);
+  const params = new URLSearchParams({
+    token: privateLink.token,
+    scope: privateLink.scope,
+    correlationId: privateLink.correlationId,
+  });
+  const response: OperationalUpdateLinkResponse = {
+    update: await getOperationalUpdate(c.env.DB, incident.incidentId, update.updateId, actor.actor) ?? update,
+    action,
+    link: {
+      href: `/operational-updates/private-detail#${params.toString()}`,
+      scope: 'operational_update.detail',
+      expiresAt: privateLink.expiresAt,
+    },
+  };
+
+  return c.json(OperationalUpdateLinkResponseSchema.parse(response));
+});
+
 app.post('/sync/push', async (c) => {
   const startedAt = Date.now();
   const body = await c.req.json().catch(() => null);
@@ -1020,9 +1184,15 @@ type SyncChangeLogRow = {
 
 type SyncScopeStats = { maxSequence: number; latestServerUpdatedAt: string | null };
 
-type IncidentMembershipLookup = { channelIdentityId: string; incidentMembershipId: string };
+type IncidentMembershipLookup = { channelIdentityId: string; incidentMembershipId: string; role: IncidentRole };
 
 type IncidentMembershipWithPermissions = IncidentMembershipLookup & { permissions: PermissionSnapshot };
+
+type OperationalUpdateActor = {
+  channel: Channel;
+  externalId: string;
+  membership: IncidentMembershipWithPermissions;
+};
 
 type PrivateWebLinkRow = {
   linkId: string;
@@ -1109,6 +1279,44 @@ type WorkCenterSignalRow = { signalId: string; signalType: WorkCenterSignalType;
 type TrustAuditEventRow = { eventType: string; payloadJson: string; createdAt: string };
 
 type TrustAuditEventType = 'trust_signal.accepted' | 'trust_signal.degraded' | 'trust_signal.rejected' | 'dispute.created' | 'dispute.rejected';
+
+type OperationalUpdateRow = {
+  updateId: string;
+  incidentId: string;
+  cellId: string;
+  updateType: OperationalUpdateType;
+  urgency: OperationalUpdateUrgency;
+  title: string;
+  summary: string;
+  body: string | null;
+  sourceKind: OperationalUpdate['source']['kind'];
+  sourceEntityId: string | null;
+  subjectEntityType: TrustSubject['entityType'] | null;
+  subjectEntityId: string | null;
+  subjectDisplayRef: string | null;
+  metadataJson: string;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string | null;
+};
+
+type OperationalUpdateCursor = { incidentId: string; cellId: string; updatedAt: string; updateId: string; issuedAt: string };
+
+type OperationalUpdateSeed = {
+  updateId: string;
+  incidentId: string;
+  cellId: string;
+  type: OperationalUpdateType;
+  urgency: OperationalUpdateUrgency;
+  title: string;
+  summary: string;
+  body?: string;
+  source: OperationalUpdate['source'];
+  subject?: TrustSubject;
+  createdAt: string;
+  updatedAt: string;
+  metadata?: Record<string, string | number | boolean | null>;
+};
 
 export type TelegramNeedRecommendation = {
   incidentId: string;
@@ -2309,7 +2517,7 @@ async function findIncidentMembershipForChannel(
 ): Promise<IncidentMembershipLookup | null> {
   return db
     .prepare(
-      `SELECT ci.channel_identity_id AS channelIdentityId, im.incident_membership_id AS incidentMembershipId
+      `SELECT ci.channel_identity_id AS channelIdentityId, im.incident_membership_id AS incidentMembershipId, im.role
        FROM channel_identities ci
        JOIN incident_memberships im ON im.channel_identity_id = ci.channel_identity_id
        WHERE im.incident_id = ? AND ci.channel = ? AND ci.external_id = ?
@@ -2328,7 +2536,7 @@ async function findIncidentMembershipWithPermissions(
 ): Promise<IncidentMembershipWithPermissions | null> {
   const row = await db
     .prepare(
-      `SELECT ci.channel_identity_id AS channelIdentityId, im.incident_membership_id AS incidentMembershipId, im.permissions_json AS permissionsJson
+      `SELECT ci.channel_identity_id AS channelIdentityId, im.incident_membership_id AS incidentMembershipId, im.role, im.permissions_json AS permissionsJson
        FROM channel_identities ci
        JOIN incident_memberships im ON im.channel_identity_id = ci.channel_identity_id
        WHERE im.incident_id = ? AND ci.channel = ? AND ci.external_id = ?
@@ -2345,6 +2553,7 @@ async function findIncidentMembershipWithPermissions(
   return {
     channelIdentityId: row.channelIdentityId,
     incidentMembershipId: row.incidentMembershipId,
+    role: row.role,
     permissions: parsePermissionSnapshot(row.permissionsJson),
   };
 }
@@ -2746,7 +2955,7 @@ async function hashOptionalHeader(value: string | null): Promise<string | null> 
 }
 
 function isWebLinkScope(value: string): value is WebLinkScope {
-  return value === 'incident.join' || value === 'work_center.detail' || value === 'family_reunification.search';
+  return value === 'incident.join' || value === 'work_center.detail' || value === 'family_reunification.search' || value === 'operational_update.detail';
 }
 
 
@@ -2807,6 +3016,25 @@ async function createTrustSignal(
     subjectRef: `${request.subject.entityType}:${request.subject.entityId}`,
   });
 
+  if (insert.meta.changes > 0) {
+    const publicTrustSignalRef = await publicOperationalRef('trust_signal', trustSignal.trustSignalId);
+    const publicSubjectRef = await publicOperationalRef(request.subject.entityType, request.subject.entityId);
+    await upsertOperationalUpdate(db, {
+      updateId: `upd_${publicTrustSignalRef}`,
+      incidentId,
+      cellId: defaultOperationalCellId,
+      type: request.signalType === 'negative_report' ? 'dispute' : 'trust_signal',
+      urgency: request.signalType === 'negative_report' ? 'high' : 'medium',
+      title: request.signalType === 'negative_report' ? 'Trust signal needs review' : 'Trust signal received',
+      summary: request.signalType === 'negative_report' ? 'A negative trust signal was recorded for an operational subject.' : 'A trust signal was recorded for an operational subject.',
+      source: { kind: 'trust_signal', entityId: publicTrustSignalRef },
+      subject: { ...request.subject, entityId: publicSubjectRef },
+      createdAt,
+      updatedAt: createdAt,
+      metadata: { signalType: request.signalType },
+    });
+  }
+
   return { trustSignal, trustState: await getTrustState(db, incidentId, request.subject), audit: { auditEventId }, idempotent: insert.meta.changes === 0 };
 }
 
@@ -2853,6 +3081,25 @@ async function createDispute(
     action: 'created',
     subjectRef: `${request.subject.entityType}:${request.subject.entityId}`,
   });
+
+  if (insert.meta.changes > 0) {
+    const publicDisputeRef = await publicOperationalRef('dispute', dispute.disputeId);
+    const publicSubjectRef = await publicOperationalRef(request.subject.entityType, request.subject.entityId);
+    await upsertOperationalUpdate(db, {
+      updateId: `upd_${publicDisputeRef}`,
+      incidentId,
+      cellId: defaultOperationalCellId,
+      type: 'dispute',
+      urgency: 'high',
+      title: 'Dispute requires review',
+      summary: 'A dispute was recorded for an operational subject.',
+      source: { kind: 'dispute', entityId: publicDisputeRef },
+      subject: { ...request.subject, entityId: publicSubjectRef },
+      createdAt,
+      updatedAt: createdAt,
+      metadata: { reason: request.reason },
+    });
+  }
 
   return { dispute, trustState: await getTrustState(db, incidentId, request.subject), audit: { auditEventId }, idempotent: insert.meta.changes === 0 };
 }
@@ -2923,6 +3170,516 @@ function parseTrustAuditPayload(payloadJson: string): { trustSignal?: TrustSigna
     return {};
   }
   return {};
+}
+
+function parseOperationalUpdateLimit(rawLimit: string | undefined): { valid: true; value: number } | { valid: false } {
+  if (rawLimit === undefined) {
+    return { valid: true, value: 25 };
+  }
+
+  if (!/^\d+$/.test(rawLimit)) {
+    return { valid: false };
+  }
+
+  const value = Number(rawLimit);
+  return Number.isInteger(value) && value >= 1 && value <= 50 ? { valid: true, value } : { valid: false };
+}
+
+function encodeOperationalUpdateCursor(cursor: OperationalUpdateCursor): string {
+  return btoa(JSON.stringify(cursor))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/u, '');
+}
+
+function decodeOperationalUpdateCursor(encodedCursor: string | null): { success: true; cursor: OperationalUpdateCursor | null } | { success: false; message: string } {
+  if (!encodedCursor) {
+    return { success: true, cursor: null };
+  }
+
+  try {
+    const padded = encodedCursor.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(encodedCursor.length / 4) * 4, '=');
+    const decoded = JSON.parse(atob(padded)) as Partial<OperationalUpdateCursor>;
+    if (
+      typeof decoded.incidentId !== 'string'
+      || typeof decoded.cellId !== 'string'
+      || typeof decoded.updatedAt !== 'string'
+      || typeof decoded.updateId !== 'string'
+      || typeof decoded.issuedAt !== 'string'
+    ) {
+      return { success: false, message: 'cursor payload is invalid' };
+    }
+
+    return { success: true, cursor: decoded as OperationalUpdateCursor };
+  } catch {
+    return { success: false, message: 'cursor is not a valid update cursor' };
+  }
+}
+
+async function listOperationalUpdates(
+  db: D1Database,
+  incidentId: string,
+  cellId: string,
+  encodedCursor: string | null,
+  limit: number,
+  actor: OperationalUpdateActor,
+): Promise<{ success: true; body: { updates: OperationalUpdate[]; cursor: string | null; hasMore: boolean } } | { success: false; error: ContractErrorCode; message: string }> {
+  const decodedCursor = decodeOperationalUpdateCursor(encodedCursor);
+  if (!decodedCursor.success) {
+    return { success: false, error: 'stale_cursor', message: decodedCursor.message };
+  }
+  if (decodedCursor.cursor && (decodedCursor.cursor.incidentId !== incidentId || decodedCursor.cursor.cellId !== cellId)) {
+    return { success: false, error: 'scope_mismatch', message: 'cursor scope does not match request scope' };
+  }
+
+  const cursor = decodedCursor.cursor;
+  const actorHash = await hashString(`${actor.channel}:${actor.externalId}`);
+  const audienceAndDeliverySql = `AND EXISTS (
+      SELECT 1
+      FROM operational_update_audiences aud
+      WHERE aud.update_id = operational_updates.update_id
+        AND aud.incident_id = ?
+        AND aud.cell_id = ?
+        AND (aud.channel IS NULL OR aud.channel = ?)
+        AND (aud.role IS NULL OR aud.role = ?)
+    )
+    AND EXISTS (
+      SELECT 1
+      FROM operational_update_deliveries del
+      WHERE del.update_id = operational_updates.update_id
+        AND del.incident_id = ?
+        AND del.channel = ?
+        AND (del.target_hash IS NULL OR del.target_hash = ?)
+    )`;
+  const query = cursor
+    ? `${operationalUpdateSelectSql()} WHERE incident_id = ? AND cell_id = ? ${audienceAndDeliverySql} AND (updated_at < ? OR (updated_at = ? AND update_id < ?)) ORDER BY updated_at DESC, update_id DESC LIMIT ?`
+    : `${operationalUpdateSelectSql()} WHERE incident_id = ? AND cell_id = ? ${audienceAndDeliverySql} ORDER BY updated_at DESC, update_id DESC LIMIT ?`;
+  const bound = cursor
+    ? db.prepare(query).bind(
+        incidentId,
+        cellId,
+        incidentId,
+        cellId,
+        actor.channel,
+        actor.membership.role,
+        incidentId,
+        actor.channel,
+        actorHash,
+        cursor.updatedAt,
+        cursor.updatedAt,
+        cursor.updateId,
+        limit + 1,
+      )
+    : db.prepare(query).bind(incidentId, cellId, incidentId, cellId, actor.channel, actor.membership.role, incidentId, actor.channel, actorHash, limit + 1);
+  const { results } = await bound.all<OperationalUpdateRow>();
+  const page = results.slice(0, limit);
+  const last = page.at(-1);
+  const updates = await Promise.all(page.map(async (row) => attachOperationalUpdateDelivery(db, rowToOperationalUpdate(row), actor)));
+
+  return {
+    success: true,
+    body: {
+      updates,
+      cursor: last ? encodeOperationalUpdateCursor({ incidentId, cellId, updatedAt: last.updatedAt, updateId: last.updateId, issuedAt: new Date().toISOString() }) : encodedCursor,
+      hasMore: results.length > limit,
+    },
+  };
+}
+
+async function getOperationalUpdate(db: D1Database, incidentId: string, updateId: string, actor?: OperationalUpdateActor | OperationalUpdateActionRequest): Promise<OperationalUpdate | null> {
+  const row = await db.prepare(`${operationalUpdateSelectSql()} WHERE incident_id = ? AND update_id = ?`).bind(incidentId, updateId).first<OperationalUpdateRow>();
+  const update = row ? rowToOperationalUpdate(row) : null;
+  if (!update || !actor) {
+    return update;
+  }
+
+  const resolvedActor = 'membership' in actor ? actor : await resolveOperationalUpdateActor(db, incidentId, actor.channel, actor.externalId);
+  if ('success' in resolvedActor && !resolvedActor.success) {
+    return update;
+  }
+
+  return attachOperationalUpdateDelivery(db, update, 'success' in resolvedActor ? resolvedActor.actor : resolvedActor);
+}
+
+async function attachOperationalUpdateDelivery(db: D1Database, update: OperationalUpdate, actor: OperationalUpdateActor): Promise<OperationalUpdate> {
+  const actorHash = await hashString(`${actor.channel}:${actor.externalId}`);
+  const delivery = await db.prepare(
+    `SELECT channel, status, delivered_at AS deliveredAt, read_at AS readAt, acked_at AS ackedAt, attempt_count AS attemptCount
+     FROM operational_update_deliveries
+     WHERE update_id = ?
+       AND incident_id = ?
+       AND channel = ?
+       AND (target_hash IS NULL OR target_hash = ?)
+     ORDER BY target_hash DESC
+     LIMIT 1`,
+  ).bind(update.updateId, update.incidentId, actor.channel, actorHash).first<{
+    channel: Channel;
+    status: NonNullable<OperationalUpdate['delivery']>['status'];
+    deliveredAt: string | null;
+    readAt: string | null;
+    ackedAt: string | null;
+    attemptCount: number;
+  }>();
+
+  if (!delivery) {
+    return update;
+  }
+
+  return {
+    ...update,
+    delivery: {
+      channel: delivery.channel,
+      status: delivery.status,
+      attemptCount: delivery.attemptCount,
+      ...(delivery.deliveredAt ? { deliveredAt: delivery.deliveredAt } : {}),
+      ...(delivery.readAt ? { readAt: delivery.readAt } : {}),
+      ...(delivery.ackedAt ? { ackedAt: delivery.ackedAt } : {}),
+    },
+  };
+}
+
+async function isOperationalUpdateTargetedToActor(db: D1Database, update: OperationalUpdate, actor: OperationalUpdateActor): Promise<boolean> {
+  const actorHash = await hashString(`${actor.channel}:${actor.externalId}`);
+  const audience = await db.prepare(
+    `SELECT 1
+     FROM operational_update_audiences
+     WHERE update_id = ?
+       AND incident_id = ?
+       AND cell_id = ?
+       AND (channel IS NULL OR channel = ?)
+       AND (role IS NULL OR role = ?)
+     LIMIT 1`,
+  ).bind(update.updateId, update.incidentId, update.cellId, actor.channel, actor.membership.role).first();
+  if (!audience) {
+    return false;
+  }
+
+  const delivery = await db.prepare(
+    `SELECT 1
+     FROM operational_update_deliveries
+     WHERE update_id = ?
+       AND incident_id = ?
+       AND channel = ?
+       AND (target_hash IS NULL OR target_hash = ?)
+     LIMIT 1`,
+  ).bind(update.updateId, update.incidentId, actor.channel, actorHash).first();
+
+  return Boolean(delivery);
+}
+
+async function resolveOperationalUpdateActor(
+  db: D1Database,
+  incidentId: string,
+  channelValue: string | undefined,
+  externalId: string | undefined,
+): Promise<{ success: true; actor: OperationalUpdateActor } | { success: false; status: 400 | 403; error: ContractErrorCode }> {
+  if (!channelValue || !externalId) {
+    return { success: false, status: 400, error: 'invalid_payload' };
+  }
+
+  if (!isChannel(channelValue)) {
+    return { success: false, status: 400, error: 'invalid_payload' };
+  }
+
+  const membership = await findIncidentMembershipWithPermissions(db, incidentId, channelValue, externalId);
+  if (!membership?.permissions.canReadIncident) {
+    return { success: false, status: 403, error: 'permission_denied' };
+  }
+
+  return { success: true, actor: { channel: channelValue, externalId, membership } };
+}
+
+function isChannel(value: string): value is Channel {
+  return channels.includes(value as Channel);
+}
+
+function operationalUpdateSelectSql(): string {
+  return `SELECT update_id AS updateId, incident_id AS incidentId, cell_id AS cellId, update_type AS updateType,
+    urgency, title, summary, body, source_kind AS sourceKind, source_entity_id AS sourceEntityId,
+    subject_entity_type AS subjectEntityType, subject_entity_id AS subjectEntityId, subject_display_ref AS subjectDisplayRef,
+    metadata_json AS metadataJson, created_at AS createdAt, updated_at AS updatedAt, expires_at AS expiresAt
+    FROM operational_updates`;
+}
+
+function rowToOperationalUpdate(row: OperationalUpdateRow): OperationalUpdate {
+  const subject = row.subjectEntityType && row.subjectEntityId
+    ? {
+        entityType: row.subjectEntityType,
+        entityId: row.subjectEntityId,
+        incidentId: row.incidentId,
+        ...(row.subjectDisplayRef ? { displayRef: row.subjectDisplayRef } : {}),
+      }
+    : undefined;
+  return {
+    updateId: row.updateId,
+    incidentId: row.incidentId,
+    cellId: row.cellId,
+    type: row.updateType,
+    urgency: row.urgency,
+    title: row.title,
+    summary: row.summary,
+    ...(row.body ? { body: row.body } : {}),
+    source: { kind: row.sourceKind, ...(row.sourceEntityId ? { entityId: row.sourceEntityId } : {}) },
+    ...(subject ? { subject } : {}),
+    actions: defaultOperationalUpdateActions(row.updateType),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    ...(row.expiresAt ? { expiresAt: row.expiresAt } : {}),
+    metadata: parseJsonObject(row.metadataJson),
+  };
+}
+
+function defaultOperationalUpdateActions(type: OperationalUpdateType): OperationalUpdate['actions'] {
+  const base = [
+    { type: 'read', label: 'Mark as read', messageCode: 'updates.action.read' },
+    { type: 'ack', label: 'Acknowledge', messageCode: 'updates.action.ack' },
+    { type: 'open', label: 'Open detail', messageCode: 'updates.action.open' },
+    { type: 'link', label: 'Create link', messageCode: 'updates.action.link' },
+  ] satisfies OperationalUpdate['actions'];
+  if (type === 'system_notice') {
+    return base;
+  }
+  return [
+    ...base,
+    { type: 'corroborate', label: 'Corroborate', messageCode: 'updates.action.corroborate' },
+    { type: 'dispute', label: 'Dispute', messageCode: 'updates.action.dispute' },
+  ];
+}
+
+function parseJsonObject(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+async function publicOperationalRef(prefix: string, value: string): Promise<string> {
+  const digest = await hashString(value);
+  return `${slug(prefix)}_${digest.slice(0, 20)}`;
+}
+
+async function upsertOperationalUpdate(db: D1Database, input: OperationalUpdateSeed): Promise<void> {
+  await db.prepare(
+    `INSERT INTO operational_updates (
+       update_id, incident_id, cell_id, update_type, urgency, title, summary, body, source_kind, source_entity_id,
+       subject_entity_type, subject_entity_id, subject_display_ref, metadata_json, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(update_id) DO UPDATE SET
+       urgency = excluded.urgency,
+       title = excluded.title,
+       summary = excluded.summary,
+       body = excluded.body,
+       metadata_json = excluded.metadata_json,
+       updated_at = excluded.updated_at`,
+  ).bind(
+    input.updateId,
+    input.incidentId,
+    input.cellId,
+    input.type,
+    input.urgency,
+    input.title,
+    input.summary,
+    input.body ?? null,
+    input.source.kind,
+    input.source.entityId ?? null,
+    input.subject?.entityType ?? null,
+    input.subject?.entityId ?? null,
+    input.subject?.displayRef ?? null,
+    JSON.stringify(input.metadata ?? {}),
+    input.createdAt,
+    input.updatedAt,
+  ).run();
+
+  for (const channel of channels) {
+    await db.prepare(
+      `INSERT OR IGNORE INTO operational_update_audiences (audience_id, update_id, incident_id, cell_id, channel, role)
+       VALUES (?, ?, ?, ?, ?, NULL)`,
+    ).bind(`aud_${slug(input.updateId)}_${channel}`, input.updateId, input.incidentId, input.cellId, channel).run();
+    await db.prepare(
+      `INSERT OR IGNORE INTO operational_update_deliveries (delivery_id, update_id, incident_id, channel, status, target_hash, attempt_count)
+       VALUES (?, ?, ?, ?, ?, NULL, 0)`,
+    ).bind(`del_${slug(input.updateId)}_${channel}`, input.updateId, input.incidentId, channel, 'pending').run();
+  }
+}
+
+async function recordOperationalUpdateAction(
+  db: D1Database,
+  update: OperationalUpdate,
+  actionType: OperationalUpdateActionType,
+  request: OperationalUpdateActionRequest,
+): Promise<OperationalUpdateActionReceipt> {
+  const actorHash = await hashString(`${request.channel}:${request.externalId}`);
+  const idempotencyKey = request.idempotencyKey ?? `${actionType}:${update.updateId}`;
+  const actionId = `oua_${slug(update.updateId)}_${slug(actionType)}_${actorHash.slice(0, 16)}_${slug(idempotencyKey)}`;
+  const createdAt = request.occurredAt ?? new Date().toISOString();
+  const insert = await db.prepare(
+    `INSERT OR IGNORE INTO operational_update_actions (
+       action_id, update_id, incident_id, action_type, channel, actor_hash, idempotency_key, status, payload_json, created_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    actionId,
+    update.updateId,
+    update.incidentId,
+    actionType,
+    request.channel,
+    actorHash,
+    idempotencyKey,
+    'accepted',
+    JSON.stringify({ note: request.note ?? null }),
+    createdAt,
+  ).run();
+
+  if (actionType === 'read' || actionType === 'ack' || actionType === 'open') {
+    const field = actionType === 'ack' ? 'acked_at' : 'read_at';
+    const status = actionType === 'ack' ? 'acked' : 'read';
+    const deliveryId = `del_${slug(update.updateId)}_${slug(request.channel)}_${actorHash.slice(0, 16)}`;
+    await db.prepare(
+      `INSERT INTO operational_update_deliveries (
+         delivery_id, update_id, incident_id, channel, status, target_hash, ${field}, attempt_count, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
+       ON CONFLICT(update_id, channel, target_hash) DO UPDATE SET
+         status = excluded.status,
+         ${field} = excluded.${field},
+         updated_at = excluded.updated_at`,
+    )
+      .bind(deliveryId, update.updateId, update.incidentId, request.channel, status, actorHash, createdAt, createdAt)
+      .run();
+  }
+
+  return { actionId, updateId: update.updateId, actionType, status: 'accepted', idempotent: insert.meta.changes === 0, createdAt };
+}
+
+async function handleOperationalUpdateBasicAction(
+  db: D1Database,
+  incidentId: string,
+  updateId: string,
+  actionType: 'ack' | 'read' | 'open',
+  body: unknown,
+): Promise<Response> {
+  const incident = await findIncident(db, incidentId);
+  if (!incident) {
+    return Response.json({ error: 'not_found' }, { status: 404 });
+  }
+
+  const update = await getOperationalUpdate(db, incident.incidentId, updateId);
+  if (!update) {
+    return Response.json({ error: 'not_found' }, { status: 404 });
+  }
+
+  const parsed = OperationalUpdateActionRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    return Response.json({ error: 'invalid_payload', issues: parsed.error.issues }, { status: 400 });
+  }
+
+  const actor = await resolveOperationalUpdateActor(db, incident.incidentId, parsed.data.channel, parsed.data.externalId);
+  if (!actor.success) {
+    return Response.json({ error: actor.error }, { status: actor.status });
+  }
+  if (!await isOperationalUpdateTargetedToActor(db, update, actor.actor)) {
+    return Response.json({ error: 'permission_denied' }, { status: 403 });
+  }
+
+  const action = await recordOperationalUpdateAction(db, update, actionType, parsed.data);
+  return Response.json(OperationalUpdateActionResponseSchema.parse({ update: await getOperationalUpdate(db, incident.incidentId, update.updateId, actor.actor) ?? update, action }));
+}
+
+
+async function handleOperationalUpdateCorroborateAction(
+  db: D1Database,
+  incidentId: string,
+  updateId: string,
+  body: unknown,
+): Promise<Response> {
+  const incident = await findIncident(db, incidentId);
+  if (!incident) {
+    return Response.json({ error: 'not_found' }, { status: 404 });
+  }
+
+  const update = await getOperationalUpdate(db, incident.incidentId, updateId);
+  if (!update) {
+    return Response.json({ error: 'not_found' }, { status: 404 });
+  }
+  if (!update.subject) {
+    return Response.json({ error: 'invalid_payload', issues: [{ message: 'update has no trust subject' }] }, { status: 400 });
+  }
+
+  const parsed = OperationalUpdateCorroborateRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    return Response.json({ error: 'invalid_payload', issues: parsed.error.issues }, { status: 400 });
+  }
+
+  const actor = await resolveOperationalUpdateActor(db, incident.incidentId, parsed.data.channel, parsed.data.externalId);
+  if (!actor.success) {
+    return Response.json({ error: actor.error }, { status: actor.status });
+  }
+  if (!await isOperationalUpdateTargetedToActor(db, update, actor.actor)) {
+    return Response.json({ error: 'permission_denied' }, { status: 403 });
+  }
+
+  const trust = await createTrustSignal(db, incident.incidentId, {
+    channel: parsed.data.channel,
+    externalId: parsed.data.externalId,
+    displayName: parsed.data.displayName,
+    subject: update.subject,
+    signalType: 'context_corroboration',
+    sourceKind: 'field_actor',
+    reason: parsed.data.note ?? `Corroborated operational update ${update.updateId}`,
+    confidence: parsed.data.confidence ?? 0.7,
+    occurredAt: parsed.data.occurredAt,
+    metadata: { updateId: update.updateId },
+  }, actor.actor.membership);
+  const action = await recordOperationalUpdateAction(db, update, 'corroborate', parsed.data);
+
+  return Response.json(OperationalUpdateActionResponseSchema.parse({ update: await getOperationalUpdate(db, incident.incidentId, update.updateId, actor.actor) ?? update, action, trustState: trust.trustState, audit: trust.audit }));
+}
+
+async function handleOperationalUpdateDisputeAction(
+  db: D1Database,
+  incidentId: string,
+  updateId: string,
+  body: unknown,
+): Promise<Response> {
+  const incident = await findIncident(db, incidentId);
+  if (!incident) {
+    return Response.json({ error: 'not_found' }, { status: 404 });
+  }
+
+  const update = await getOperationalUpdate(db, incident.incidentId, updateId);
+  if (!update) {
+    return Response.json({ error: 'not_found' }, { status: 404 });
+  }
+  if (!update.subject) {
+    return Response.json({ error: 'invalid_payload', issues: [{ message: 'update has no trust subject' }] }, { status: 400 });
+  }
+
+  const parsed = OperationalUpdateDisputeRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    return Response.json({ error: 'invalid_payload', issues: parsed.error.issues }, { status: 400 });
+  }
+
+  const actor = await resolveOperationalUpdateActor(db, incident.incidentId, parsed.data.channel, parsed.data.externalId);
+  if (!actor.success) {
+    return Response.json({ error: actor.error }, { status: actor.status });
+  }
+  if (!await isOperationalUpdateTargetedToActor(db, update, actor.actor)) {
+    return Response.json({ error: 'permission_denied' }, { status: 403 });
+  }
+
+  const dispute = await createDispute(db, incident.incidentId, {
+    channel: parsed.data.channel,
+    externalId: parsed.data.externalId,
+    displayName: parsed.data.displayName,
+    subject: update.subject,
+    reason: parsed.data.reason,
+    description: parsed.data.note,
+    occurredAt: parsed.data.occurredAt,
+    metadata: { updateId: update.updateId },
+  }, actor.actor.membership);
+  const action = await recordOperationalUpdateAction(db, update, 'dispute', parsed.data);
+
+  return Response.json(OperationalUpdateActionResponseSchema.parse({ update: await getOperationalUpdate(db, incident.incidentId, update.updateId, actor.actor) ?? update, action, trustState: dispute.trustState, audit: dispute.audit }));
 }
 
 function isSameTrustSubject(left: TrustSubject, right: TrustSubject): boolean {
@@ -3235,7 +3992,7 @@ async function insertResourceReport(
   timestamp: string,
 ): Promise<void> {
   const state = deriveResourceReportState({ updatedAt: timestamp, reportKind: payload.reportKind, urgency: payload.urgency, constraints: payload.constraints });
-  await db.prepare(
+  const insert = await db.prepare(
     `INSERT OR IGNORE INTO resource_reports (
        resource_report_id, incident_id, cell_id, work_center_id, category, quantity_approx, urgency, constraints_json,
        report_kind, freshness, confidence, risk, source_channel, source_operation_id, actor_key_id, created_at, updated_at
@@ -3259,6 +4016,25 @@ async function insertResourceReport(
     timestamp,
     timestamp,
   ).run();
+
+  if (insert.meta.changes > 0) {
+    const kind = payload.reportKind === 'needed' ? 'resource_need' : 'resource_offer';
+    const publicResourceRef = await publicOperationalRef('resource_report', resourceReportId);
+    await upsertOperationalUpdate(db, {
+      updateId: `upd_${publicResourceRef}`,
+      incidentId,
+      cellId,
+      type: kind,
+      urgency: payload.urgency,
+      title: payload.reportKind === 'needed' ? 'Resource need reported' : 'Resource offer reported',
+      summary: `${payload.reportKind === 'needed' ? 'Need' : 'Offer'} reported for ${payload.category}.`,
+      source: { kind: 'resource_report', entityId: publicResourceRef },
+      subject: { entityType: 'resource_report', entityId: publicResourceRef, incidentId, displayRef: payload.category },
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      metadata: { reportKind: payload.reportKind, urgency: payload.urgency },
+    });
+  }
 }
 
 async function listResourceReports(db: D1Database, incidentId: string): Promise<ResourceReportSummary[]> {
@@ -3837,6 +4613,23 @@ async function insertSosAlert(
     payload,
   );
   await enqueueCriticalFanoutJobs(db, sosAlertId, incidentId, 'sos.created', timestamp, payload);
+  if (insert.meta.changes > 0) {
+    const publicSosRef = await publicOperationalRef('sos_alert', sosAlertId);
+    await upsertOperationalUpdate(db, {
+      updateId: `upd_${publicSosRef}`,
+      incidentId,
+      cellId,
+      type: 'sos_alert',
+      urgency: payload.severity === 'critical' || payload.severity === 'medical' || payload.severity === 'trapped' ? 'critical' : 'high',
+      title: 'SOS alert reported',
+      summary: `SOS alert reported with ${payload.severity} severity.`,
+      source: { kind: 'sos_alert', entityId: publicSosRef },
+      subject: { entityType: 'sos_alert', entityId: publicSosRef, incidentId, displayRef: `SOS ${payload.severity}` },
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      metadata: { severity: payload.severity },
+    });
+  }
   return insert.meta.changes > 0;
 }
 
@@ -4480,6 +5273,19 @@ async function routeExplicitTelegramCommand(
   stateKeys: TelegramConversationStateKeys,
   telemetry?: ChannelTelemetryPort,
 ): Promise<string | null> {
+  const operationalUpdateCommand = await handleTelegramOperationalUpdateCommand(update, createTelegramOperationalUpdateApiPorts(db));
+  if (operationalUpdateCommand.handled) {
+    await deleteTelegramConversationStates(db, [
+      stateKeys.joinStateKey,
+      stateKeys.workCenterStateKey,
+      stateKeys.resourceStateKey,
+      stateKeys.dispatchStateKey,
+      stateKeys.sosStateKey,
+      stateKeys.familyStateKey,
+    ]);
+    return operationalUpdateCommand.responseText;
+  }
+
   if (command === '/start') {
     await deleteTelegramConversationStates(db, [
       stateKeys.workCenterStateKey,
@@ -4523,6 +5329,80 @@ async function routeExplicitTelegramCommand(
   }
 
   return null;
+}
+
+function createTelegramOperationalUpdateApiPorts(db: D1Database): TelegramOperationalUpdatePorts {
+  return {
+    async listUpdates(incidentId, cellId, input) {
+      const actor = await resolveOperationalUpdateActor(db, incidentId, input?.channel, input?.externalId);
+      if (!actor.success) {
+        throw new Error(actor.error);
+      }
+
+      const response = await listOperationalUpdates(db, incidentId, cellId, input?.cursor ?? null, input?.limit ?? 5, actor.actor);
+      if (!response.success) {
+        throw new Error(response.error);
+      }
+
+      return OperationalUpdatePullResponseSchema.parse(response.body);
+    },
+    async ackUpdate(incidentId, updateId, request) {
+      return callOperationalUpdateAction(db, incidentId, updateId, 'ack', request);
+    },
+    async openUpdate(incidentId, updateId, request) {
+      return callOperationalUpdateAction(db, incidentId, updateId, 'open', request);
+    },
+    async corroborateUpdate(incidentId, updateId, request) {
+      return callOperationalUpdateCorroborateAction(db, incidentId, updateId, request);
+    },
+    async disputeUpdate(incidentId, updateId, request) {
+      return callOperationalUpdateDisputeAction(db, incidentId, updateId, request);
+    },
+  };
+}
+
+async function callOperationalUpdateAction(
+  db: D1Database,
+  incidentId: string,
+  updateId: string,
+  actionType: 'ack' | 'open',
+  request: OperationalUpdateActionRequest,
+) {
+  const response = await handleOperationalUpdateBasicAction(db, incidentId, updateId, actionType, request);
+  if (!response.ok) {
+    throw new Error(`operational_update_${actionType}_failed`);
+  }
+
+  return OperationalUpdateActionResponseSchema.parse(await response.json());
+}
+
+
+async function callOperationalUpdateCorroborateAction(
+  db: D1Database,
+  incidentId: string,
+  updateId: string,
+  request: OperationalUpdateCorroborateRequest,
+) {
+  const response = await handleOperationalUpdateCorroborateAction(db, incidentId, updateId, request);
+  if (!response.ok) {
+    throw new Error('operational_update_corroborate_failed');
+  }
+
+  return OperationalUpdateActionResponseSchema.parse(await response.json());
+}
+
+async function callOperationalUpdateDisputeAction(
+  db: D1Database,
+  incidentId: string,
+  updateId: string,
+  request: OperationalUpdateDisputeRequest,
+) {
+  const response = await handleOperationalUpdateDisputeAction(db, incidentId, updateId, request);
+  if (!response.ok) {
+    throw new Error('operational_update_dispute_failed');
+  }
+
+  return OperationalUpdateActionResponseSchema.parse(await response.json());
 }
 
 async function routeClassifiedTelegramIntent(

@@ -20,6 +20,14 @@ import {
   OperationalMapResponseSchema,
   IncidentRoleSchema,
   OperationInputSchema,
+  OperationalUpdateActionRequestSchema,
+  OperationalUpdateActionResponseSchema,
+  OperationalUpdateCorroborateRequestSchema,
+  OperationalUpdateDisputeRequestSchema,
+  OperationalUpdateLinkRequestSchema,
+  OperationalUpdateLinkResponseSchema,
+  OperationalUpdatePullResponseSchema,
+  OperationalUpdateSchema,
   OperationalEventSchema,
   OperationRejectedSchema,
   DispatchEventCreatePayloadSchema,
@@ -90,6 +98,11 @@ import {
   contractErrorSemantics,
   incidentRoles,
   operationFamilies,
+  operationalUpdateActionTypes,
+  operationalUpdateDeliveryStatuses,
+  operationalUpdateSourceKinds,
+  operationalUpdateTypes,
+  operationalUpdateUrgencies,
   operationalEventTypes,
   operationTypeFamilies,
   operationTypes,
@@ -453,6 +466,70 @@ describe('contracts package', () => {
     }).dispute.reason).toBe('false_claim');
   });
 
+  it('validates canonical operational update contracts without sensitive payload leakage', () => {
+    expect(operationalUpdateTypes).toEqual(['sos_alert', 'resource_need', 'resource_offer', 'trust_signal', 'dispute', 'system_notice']);
+    expect(operationalUpdateUrgencies).toEqual(['low', 'medium', 'high', 'critical']);
+    expect(operationalUpdateSourceKinds).toEqual(['sos_alert', 'resource_report', 'trust_signal', 'dispute', 'system']);
+    expect(operationalUpdateActionTypes).toEqual(['ack', 'read', 'open', 'corroborate', 'dispute', 'link']);
+    expect(operationalUpdateDeliveryStatuses).toEqual(['pending', 'delivered', 'read', 'acked', 'failed']);
+
+    const subject = TrustSubjectSchema.parse({
+      entityType: 'sos_alert',
+      entityId: 'sos-1',
+      incidentId: 'incident-1',
+      displayRef: 'SOS alert',
+    });
+    const update = OperationalUpdateSchema.parse({
+      updateId: 'upd-1',
+      incidentId: 'incident-1',
+      cellId: 'cell-a',
+      type: 'sos_alert',
+      urgency: 'critical',
+      title: 'Critical SOS nearby',
+      summary: 'A critical SOS requires acknowledgement and corroboration.',
+      source: { kind: 'sos_alert', entityId: 'sos-1' },
+      subject,
+      actions: [
+        { type: 'ack', label: 'Acknowledge', messageCode: 'updates.action.ack' },
+        { type: 'corroborate', label: 'Corroborate' },
+        { type: 'dispute', label: 'Dispute' },
+      ],
+      delivery: { channel: 'mobile', status: 'pending', attemptCount: 0 },
+      createdAt: '2026-07-05T12:00:00.000Z',
+      updatedAt: '2026-07-05T12:00:00.000Z',
+      metadata: { source: 'fanout' },
+    });
+
+    expect(update.actions.map((action) => action.type)).toEqual(['ack', 'corroborate', 'dispute']);
+    expect(OperationalUpdateSchema.safeParse({ ...update, exactLocation: { latitude: 41.38, longitude: 2.17 } }).success).toBe(false);
+    expect(OperationalUpdateSchema.safeParse({ ...update, sourceExternalId: 'telegram-user-1' }).success).toBe(false);
+    expect(OperationalUpdatePullResponseSchema.parse({ updates: [update], cursor: null, hasMore: false }).updates[0]?.updateId).toBe('upd-1');
+
+    const actionRequest = OperationalUpdateActionRequestSchema.parse({ channel: 'telegram', externalId: 'telegram-user-1', idempotencyKey: 'ack-1' });
+    expect(actionRequest.channel).toBe('telegram');
+    expect(OperationalUpdateActionRequestSchema.safeParse({ ...actionRequest, phone: '+34 600 000 000' }).success).toBe(false);
+    expect(OperationalUpdateCorroborateRequestSchema.parse({ ...actionRequest, confidence: 0.8 }).confidence).toBe(0.8);
+    expect(OperationalUpdateDisputeRequestSchema.parse({ ...actionRequest }).reason).toBe('context_mismatch');
+    expect(OperationalUpdateLinkRequestSchema.parse({ ...actionRequest, returnState: 'mobile:update:upd-1' }).returnState).toBe('mobile:update:upd-1');
+
+    const receipt = {
+      actionId: 'act-1',
+      updateId: update.updateId,
+      actionType: 'ack',
+      status: 'accepted',
+      idempotent: false,
+      createdAt: '2026-07-05T12:01:00.000Z',
+    } as const;
+    expect(OperationalUpdateActionResponseSchema.parse({ update, action: receipt }).action.actionType).toBe('ack');
+    expect(
+      OperationalUpdateLinkResponseSchema.parse({
+        update,
+        action: { ...receipt, actionType: 'link' },
+        link: { href: '/incidents/incident-1/updates/upd-1', scope: 'operational_update.detail', expiresAt: '2026-07-05T12:16:00.000Z' },
+      }).link.scope,
+    ).toBe('operational_update.detail');
+  });
+
   it('validates supported locale contracts without accepting arbitrary locale tags', () => {
     expect(supportedLocales).toEqual(['es', 'en']);
     expect(defaultSupportedLocale).toBe('es');
@@ -731,7 +808,7 @@ describe('contracts package', () => {
   });
 
   it('validates stable web link scopes and request/session contracts', () => {
-    expect(webLinkScopes).toEqual(['incident.join', 'work_center.detail', 'family_reunification.search']);
+    expect(webLinkScopes).toEqual(['incident.join', 'work_center.detail', 'family_reunification.search', 'operational_update.detail']);
 
     const request = WebLinkRequestSchema.parse({
       scope: 'work_center.detail',
@@ -750,6 +827,7 @@ describe('contracts package', () => {
     });
 
     expect(request.scope).toBe('work_center.detail');
+    expect(WebLinkRequestSchema.parse({ ...request, scope: 'operational_update.detail', entityId: 'upd-1' }).scope).toBe('operational_update.detail');
     const { ttlSeconds: _ttlSeconds, ...sessionRequest } = request;
     expect(WebLinkSessionSchema.parse({ ...sessionRequest, token: 'opaque-token-1', expiresAt: '2026-06-30T12:00:00.000Z' }).token).toBe(
       'opaque-token-1',

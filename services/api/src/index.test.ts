@@ -25,6 +25,7 @@ import {
   DisputeCreateResponseSchema,
   CountryListResponseSchema,
   IncidentJoinResponseSchema,
+  OperationalUpdatePullResponseSchema,
   OperationalMapResponseSchema,
   OperationalEventSchema,
   FamilyReunificationSearchResponseSchema,
@@ -516,6 +517,35 @@ describe('api worker', () => {
     await expect(response.json()).resolves.toMatchObject({ accepted: true, command: '/start', responseText: expect.stringContaining('Choose an incident') });
   });
 
+  it('routes Telegram operational update commands through the real webhook path', async () => {
+    const telegramUserId = 24021;
+    await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...telegramIncidentJoinRequestFixture, externalId: String(telegramUserId), role: 'volunteer' }),
+    });
+    await request('/incidents/incident-zc-demo/sos', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ channel: 'telegram', externalId: String(telegramUserId), payload: { severity: 'critical' } }),
+    });
+
+    const list = await postTelegramMessage(telegramUserId, '/updates incident-zc-demo connected-telegram', 'Operational');
+    expect(list).toMatchObject({ accepted: true, command: '/updates' });
+    expect(list.responseText).toContain('Operational updates for incident-zc-demo/connected-telegram');
+    expect(list.responseText).toContain('/ack incident-zc-demo');
+
+    const updates = OperationalUpdatePullResponseSchema.parse(
+      await (await request(`/incidents/incident-zc-demo/cells/connected-telegram/updates?channel=telegram&externalId=${telegramUserId}`)).json(),
+    );
+    const update = updates.updates[0];
+    if (!update) throw new Error('Expected webhook-listable operational update');
+
+    const ack = await postTelegramMessage(telegramUserId, `/ack incident-zc-demo ${update.updateId}`, 'Operational');
+    expect(ack).toMatchObject({ accepted: true, command: '/ack' });
+    expect(ack.responseText).toContain('ACK is not rescue');
+  });
+
   it('accepts Telegram webhook requests with a valid secret token', async () => {
     const mutableEnv = env as Env;
     const previousSecret = mutableEnv.TELEGRAM_WEBHOOK_SECRET_TOKEN;
@@ -800,6 +830,76 @@ describe('api worker', () => {
       .bind(stateKey)
       .first<{ count: number }>();
     expect(terminalState?.count).toBe(0);
+  });
+
+  it('rejects Telegram webhook corroborate and dispute commands when the actor is not in the update audience', async () => {
+    const targetTelegramUserId = 25301;
+    const nonTargetTelegramUserId = 25302;
+
+    await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...telegramIncidentJoinRequestFixture, externalId: String(targetTelegramUserId), displayName: 'Target Actor', role: 'volunteer' }),
+    });
+    await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...telegramIncidentJoinRequestFixture, externalId: String(nonTargetTelegramUserId), displayName: 'Non Target Actor', role: 'logistics' }),
+    });
+
+    const sosResponse = await request('/incidents/incident-zc-demo/sos', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ channel: 'telegram', externalId: String(targetTelegramUserId), payload: { severity: 'critical' } }),
+    });
+    expect(sosResponse.status).toBe(200);
+
+    const updates = OperationalUpdatePullResponseSchema.parse(
+      await (await request(`/incidents/incident-zc-demo/cells/connected-telegram/updates?channel=telegram&externalId=${targetTelegramUserId}`)).json(),
+    );
+    const sosUpdate = updates.updates.find((update) => update.type === 'sos_alert');
+    if (!sosUpdate) throw new Error('Expected SOS operational update');
+
+    await (env as Env).DB.prepare('UPDATE operational_update_audiences SET role = ? WHERE update_id = ? AND channel = ?')
+      .bind('volunteer', sosUpdate.updateId, 'telegram')
+      .run();
+
+    const nonTargetPull = OperationalUpdatePullResponseSchema.parse(
+      await (await request(`/incidents/incident-zc-demo/cells/connected-telegram/updates?channel=telegram&externalId=${nonTargetTelegramUserId}`)).json(),
+    );
+    expect(nonTargetPull.updates.some((update) => update.updateId === sosUpdate.updateId)).toBe(false);
+
+    const trustAuditBefore = await (env as Env).DB.prepare(
+      "SELECT COUNT(*) AS count FROM audit_events WHERE incident_id = ? AND event_type IN ('trust_signal.accepted', 'dispute.created')",
+    )
+      .bind('incident-zc-demo')
+      .first<{ count: number }>();
+    const actionsBefore = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM operational_update_actions WHERE update_id = ?')
+      .bind(sosUpdate.updateId)
+      .first<{ count: number }>();
+
+    await expect(postTelegramMessage(nonTargetTelegramUserId, `/corroborate incident-zc-demo ${sosUpdate.updateId} 0.8`, 'NonTarget')).resolves.toMatchObject({
+      accepted: true,
+      command: '/corroborate',
+      responseText: expect.stringContaining('Action was not accepted'),
+    });
+    await expect(postTelegramMessage(nonTargetTelegramUserId, `/dispute incident-zc-demo ${sosUpdate.updateId} context_mismatch`, 'NonTarget')).resolves.toMatchObject({
+      accepted: true,
+      command: '/dispute',
+      responseText: expect.stringContaining('Action was not accepted'),
+    });
+
+    const trustAuditAfter = await (env as Env).DB.prepare(
+      "SELECT COUNT(*) AS count FROM audit_events WHERE incident_id = ? AND event_type IN ('trust_signal.accepted', 'dispute.created')",
+    )
+      .bind('incident-zc-demo')
+      .first<{ count: number }>();
+    const actionsAfter = await (env as Env).DB.prepare('SELECT COUNT(*) AS count FROM operational_update_actions WHERE update_id = ?')
+      .bind(sosUpdate.updateId)
+      .first<{ count: number }>();
+
+    expect(trustAuditAfter?.count).toBe(trustAuditBefore?.count);
+    expect(actionsAfter?.count).toBe(actionsBefore?.count);
   });
 
   it('does not call the Telegram intent classifier for explicit /resource commands', async () => {
