@@ -13,6 +13,18 @@ import {
   DispatchTaskConnectedUpdateRequestSchema,
   DispatchTaskListResponseSchema,
   DispatchTaskResponseSchema,
+  type TrustSubject,
+  type TrustState,
+  type TrustSignalCreateRequest,
+  type TrustSignal,
+  type DisputeCreateRequest,
+  type Dispute,
+  TrustStateResponseSchema,
+  TrustSubjectSchema,
+  TrustSignalCreateResponseSchema,
+  TrustSignalCreateRequestSchema,
+  DisputeCreateResponseSchema,
+  DisputeCreateRequestSchema,
   type DispatchEventCreatePayload,
   type DispatchEventUpdatePayload,
   type DispatchTask,
@@ -116,6 +128,7 @@ import {
 } from '@zona-cero/contracts';
 import {
   deriveResourceReportState,
+  deriveCanonicalTrustState,
   deriveWorkCenterState,
   matchResourceReports,
   normalizeResourceCategory,
@@ -762,6 +775,105 @@ app.get('/incidents/:incidentId/sos', async (c) => {
   );
 });
 
+
+
+app.post('/incidents/:incidentId/trust-signals', async (c) => {
+  const incidentId = c.req.param('incidentId');
+  const incident = await findIncident(c.env.DB, incidentId);
+  if (!incident) {
+    return c.json({ error: 'not_found' }, 404);
+  }
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = TrustSignalCreateRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: 'invalid_payload', issues: parsed.error.issues }, 400);
+  }
+
+  if (parsed.data.subject.incidentId !== incident.incidentId) {
+    return c.json({ error: 'scope_mismatch' }, 400);
+  }
+
+  const membership = await findIncidentMembershipForChannel(c.env.DB, incident.incidentId, parsed.data.channel, parsed.data.externalId);
+  if (!membership) {
+    return c.json({ error: 'permission_denied' }, 403);
+  }
+
+  const limit = await checkRateLimit(c.env.DB, {
+    scope: 'trust_signal.create',
+    key: `${incident.incidentId}:${parsed.data.channel}:${parsed.data.externalId}:trust_signal.create`,
+    limit: 30,
+    windowSeconds: 60,
+    incidentId: incident.incidentId,
+    channel: parsed.data.channel,
+    action: 'trust_signal.create',
+  });
+  if (!limit.allowed) {
+    await recordTrustRejectedAudit(c.env.DB, incident.incidentId, membership, parsed.data.channel, parsed.data.externalId, 'trust_signal.rejected', 'rate_limited', parsed.data.subject);
+    return c.json({ error: limit.error, resetAt: limit.resetAt }, 429);
+  }
+
+  const response = await createTrustSignal(c.env.DB, incident.incidentId, parsed.data, membership);
+  return c.json(TrustSignalCreateResponseSchema.parse(response));
+});
+
+app.post('/incidents/:incidentId/disputes', async (c) => {
+  const incidentId = c.req.param('incidentId');
+  const incident = await findIncident(c.env.DB, incidentId);
+  if (!incident) {
+    return c.json({ error: 'not_found' }, 404);
+  }
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = DisputeCreateRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: 'invalid_payload', issues: parsed.error.issues }, 400);
+  }
+
+  if (parsed.data.subject.incidentId !== incident.incidentId) {
+    return c.json({ error: 'scope_mismatch' }, 400);
+  }
+
+  const membership = await findIncidentMembershipForChannel(c.env.DB, incident.incidentId, parsed.data.channel, parsed.data.externalId);
+  if (!membership) {
+    return c.json({ error: 'permission_denied' }, 403);
+  }
+
+  const limit = await checkRateLimit(c.env.DB, {
+    scope: 'dispute.create',
+    key: `${incident.incidentId}:${parsed.data.channel}:${parsed.data.externalId}:dispute.create`,
+    limit: 20,
+    windowSeconds: 60,
+    incidentId: incident.incidentId,
+    channel: parsed.data.channel,
+    action: 'dispute.create',
+  });
+  if (!limit.allowed) {
+    await recordTrustRejectedAudit(c.env.DB, incident.incidentId, membership, parsed.data.channel, parsed.data.externalId, 'dispute.rejected', 'rate_limited', parsed.data.subject);
+    return c.json({ error: limit.error, resetAt: limit.resetAt }, 429);
+  }
+
+  const response = await createDispute(c.env.DB, incident.incidentId, parsed.data, membership);
+  return c.json(DisputeCreateResponseSchema.parse(response));
+});
+
+app.get('/incidents/:incidentId/trust-state', async (c) => {
+  const incident = await findIncident(c.env.DB, c.req.param('incidentId'));
+  if (!incident) {
+    return c.json({ error: 'not_found' }, 404);
+  }
+
+  const entityType = c.req.query('entityType');
+  const entityId = c.req.query('entityId');
+  const subjectParse = TrustSubjectSchema.safeParse({ entityType, entityId, incidentId: incident.incidentId });
+  if (!subjectParse.success) {
+    return c.json({ error: 'invalid_payload', issues: subjectParse.error.issues }, 400);
+  }
+
+  const trustState = await getTrustState(c.env.DB, incident.incidentId, subjectParse.data);
+  return c.json(TrustStateResponseSchema.parse({ trustState }));
+});
+
 app.post('/sync/push', async (c) => {
   const startedAt = Date.now();
   const body = await c.req.json().catch(() => null);
@@ -993,6 +1105,10 @@ type WorkCenterRow = {
 };
 
 type WorkCenterSignalRow = { signalId: string; signalType: WorkCenterSignalType; sourceChannel: Channel; sourceId: string; createdAt: string };
+
+type TrustAuditEventRow = { eventType: string; payloadJson: string; createdAt: string };
+
+type TrustAuditEventType = 'trust_signal.accepted' | 'trust_signal.degraded' | 'trust_signal.rejected' | 'dispute.created' | 'dispute.rejected';
 
 export type TelegramNeedRecommendation = {
   incidentId: string;
@@ -1427,6 +1543,14 @@ async function handleSyncPushOperation(db: D1Database, rawOperation: unknown, st
     return handleSosSyncOperation(db, parsed.data, startedAt);
   }
 
+  if (parsed.data.opType === 'trust_signal.create') {
+    return handleTrustSignalSyncOperation(db, parsed.data, startedAt);
+  }
+
+  if (parsed.data.opType === 'dispute.create') {
+    return handleDisputeSyncOperation(db, parsed.data, startedAt);
+  }
+
   if (parsed.data.opType !== 'work_center.create') {
     const payloadHash = await hashJson({ operation: parsed.data });
     const existing = await resolveExistingSyncOperation(db, parsed.data, payloadHash, startedAt);
@@ -1653,6 +1777,120 @@ async function handleSosSyncOperation(db: D1Database, operation: PendingSignedOp
   }
 
   return acceptSyncOperation(db, operation, payloadHash, startedAt);
+}
+
+
+async function handleTrustSignalSyncOperation(db: D1Database, operation: PendingSignedOperation, startedAt: number): Promise<SyncPushOperationResult> {
+  const payloadHash = await hashJson({ operation });
+  const existing = await resolveExistingSyncOperation(db, operation, payloadHash, startedAt);
+  if (existing) {
+    return existing;
+  }
+
+  const payload = TrustSignalCreateRequestSchema.safeParse(operation.payload);
+  if (!payload.success) {
+    return rejectAndRecordSyncOperation(db, operation, payloadHash, startedAt, 'invalid_payload', 'trust signal sync payload is invalid');
+  }
+
+  const incident = await findIncident(db, operation.incidentId);
+  if (!incident) {
+    return rejectAndRecordSyncOperation(db, operation, payloadHash, startedAt, 'not_found', 'incident was not found');
+  }
+
+  if (payload.data.subject.incidentId !== incident.incidentId) {
+    return rejectAndRecordSyncOperation(db, operation, payloadHash, startedAt, 'scope_mismatch', 'trust signal subject does not match operation incident', {
+      opId: operation.opId,
+      entityId: operation.entityId,
+      entityType: operation.entityType,
+      code: 'scope_mismatch',
+      message: 'trust signal subject does not match operation incident',
+    });
+  }
+
+  const membership = await findIncidentMembershipForChannel(db, incident.incidentId, payload.data.channel, payload.data.externalId);
+  if (!membership) {
+    return rejectAndRecordSyncOperation(db, operation, payloadHash, startedAt, 'permission_denied', 'actor is not an incident member');
+  }
+
+  const limit = await checkRateLimit(db, {
+    scope: 'trust_signal.create',
+    key: `${incident.incidentId}:${payload.data.channel}:${payload.data.externalId}:trust_signal.create`,
+    limit: 30,
+    windowSeconds: 60,
+    incidentId: incident.incidentId,
+    channel: payload.data.channel,
+    action: 'trust_signal.create',
+  });
+  if (!limit.allowed) {
+    await recordTrustRejectedAudit(db, incident.incidentId, membership, payload.data.channel, payload.data.externalId, 'trust_signal.rejected', 'rate_limited', payload.data.subject);
+    return rejectAndRecordSyncOperation(db, operation, payloadHash, startedAt, 'rate_limited', 'trust signal sync actor is rate limited');
+  }
+
+  const response = await createTrustSignal(db, incident.incidentId, payload.data, membership);
+  return acceptSyncOperation(db, operation, payloadHash, startedAt, response.trustSignal.trustSignalId);
+}
+
+async function handleDisputeSyncOperation(db: D1Database, operation: PendingSignedOperation, startedAt: number): Promise<SyncPushOperationResult> {
+  const payloadHash = await hashJson({ operation });
+  const existing = await resolveExistingSyncOperation(db, operation, payloadHash, startedAt);
+  if (existing) {
+    return existing;
+  }
+
+  const payload = DisputeCreateRequestSchema.safeParse(operation.payload);
+  if (!payload.success) {
+    return rejectAndRecordSyncOperation(db, operation, payloadHash, startedAt, 'invalid_payload', 'dispute sync payload is invalid');
+  }
+
+  const incident = await findIncident(db, operation.incidentId);
+  if (!incident) {
+    return rejectAndRecordSyncOperation(db, operation, payloadHash, startedAt, 'not_found', 'incident was not found');
+  }
+
+  if (payload.data.subject.incidentId !== incident.incidentId) {
+    return rejectAndRecordSyncOperation(db, operation, payloadHash, startedAt, 'scope_mismatch', 'dispute subject does not match operation incident', {
+      opId: operation.opId,
+      entityId: operation.entityId,
+      entityType: operation.entityType,
+      code: 'scope_mismatch',
+      message: 'dispute subject does not match operation incident',
+    });
+  }
+
+  const membership = await findIncidentMembershipForChannel(db, incident.incidentId, payload.data.channel, payload.data.externalId);
+  if (!membership) {
+    return rejectAndRecordSyncOperation(db, operation, payloadHash, startedAt, 'permission_denied', 'actor is not an incident member');
+  }
+
+  const limit = await checkRateLimit(db, {
+    scope: 'dispute.create',
+    key: `${incident.incidentId}:${payload.data.channel}:${payload.data.externalId}:dispute.create`,
+    limit: 20,
+    windowSeconds: 60,
+    incidentId: incident.incidentId,
+    channel: payload.data.channel,
+    action: 'dispute.create',
+  });
+  if (!limit.allowed) {
+    await recordTrustRejectedAudit(db, incident.incidentId, membership, payload.data.channel, payload.data.externalId, 'dispute.rejected', 'rate_limited', payload.data.subject);
+    return rejectAndRecordSyncOperation(db, operation, payloadHash, startedAt, 'rate_limited', 'dispute sync actor is rate limited');
+  }
+
+  const response = await createDispute(db, incident.incidentId, payload.data, membership);
+  return acceptSyncOperation(db, operation, payloadHash, startedAt, response.dispute.disputeId);
+}
+
+async function rejectAndRecordSyncOperation(
+  db: D1Database,
+  operation: PendingSignedOperation,
+  payloadHash: string,
+  startedAt: number,
+  code: ContractErrorCode,
+  message: string,
+  conflict?: SyncConflict,
+): Promise<SyncPushOperationResult> {
+  await recordSyncOperation(db, operation, payloadHash, 'rejected', code, message);
+  return rejectOperation(operation, startedAt, code, conflict);
 }
 
 async function resolveExistingSyncOperation(
@@ -1975,8 +2213,9 @@ async function acceptSyncOperation(
   operation: PendingSignedOperation,
   payloadHash: string,
   startedAt: number,
+  resultEntityId: string = operation.entityId,
 ): Promise<SyncPushOperationResult> {
-  const metadata = await recordSyncOperation(db, operation, payloadHash, 'accepted');
+  const metadata = await recordSyncOperation(db, operation, payloadHash, 'accepted', null, null, resultEntityId);
   logOperationEvent({
     channel: 'mobile',
     opType: operation.opType,
@@ -1989,7 +2228,7 @@ async function acceptSyncOperation(
   return {
     opId: operation.opId,
     status: 'accepted',
-    entityId: operation.entityId,
+    entityId: resultEntityId,
     serverVersion: metadata.serverVersion,
     serverUpdatedAt: metadata.serverUpdatedAt,
   };
@@ -2002,6 +2241,7 @@ async function recordSyncOperation(
   status: 'accepted' | 'rejected',
   conflictCode: ContractErrorCode | null = null,
   conflictMessage: string | null = null,
+  resultEntityId: string = operation.entityId,
 ): Promise<{ serverVersion: number; serverUpdatedAt: string }> {
   const serverUpdatedAt = new Date().toISOString();
   let serverVersion = 0;
@@ -2018,7 +2258,7 @@ async function recordSyncOperation(
         operation.incidentId,
         operation.cellId,
         operation.opId,
-        operation.entityId,
+        resultEntityId,
         operation.entityType,
         operation.opType,
         JSON.stringify({ ...operation, syncState: 'confirmed' }),
@@ -2048,7 +2288,7 @@ async function recordSyncOperation(
       payloadHash,
       JSON.stringify(operation),
       status,
-      operation.entityId,
+      resultEntityId,
       serverVersion || null,
       status === 'accepted' ? serverUpdatedAt : null,
       conflictCode,
@@ -2505,6 +2745,186 @@ async function hashOptionalHeader(value: string | null): Promise<string | null> 
 
 function isWebLinkScope(value: string): value is WebLinkScope {
   return value === 'incident.join' || value === 'work_center.detail' || value === 'family_reunification.search';
+}
+
+
+
+function defaultTrustSignalSourceKind(signalType: TrustSignalCreateRequest['signalType']): TrustSignal['sourceKind'] {
+  if (signalType === 'self_declaration') return 'self';
+  if (signalType === 'context_corroboration') return 'system_context';
+  if (signalType === 'reputation_reference' || signalType === 'negative_report') return 'peer';
+  return 'field_actor';
+}
+
+async function createTrustSignal(
+  db: D1Database,
+  incidentId: string,
+  request: TrustSignalCreateRequest,
+  membership: IncidentMembershipLookup,
+): Promise<{ trustSignal: TrustSignal; trustState: TrustState; audit: { auditEventId: string }; idempotent: boolean }> {
+  const createdAt = request.occurredAt ?? new Date().toISOString();
+  const sourceKind = request.sourceKind ?? defaultTrustSignalSourceKind(request.signalType);
+  const trustSignalId = `ts_${slug(incidentId)}_${slug(request.subject.entityType)}_${slug(request.subject.entityId)}_${slug(request.channel)}_${slug(request.externalId)}_${slug(request.signalType)}_${slug(request.reason ?? 'none')}`;
+  const eventType: TrustAuditEventType = request.signalType === 'negative_report' ? 'trust_signal.degraded' : 'trust_signal.accepted';
+  const auditEventId = `audit_${eventType.replace(/\./g, '_')}_${trustSignalId}`;
+  const trustSignal = TrustSignalCreateResponseSchema.shape.trustSignal.parse({
+    trustSignalId,
+    incidentId,
+    subject: request.subject,
+    signalType: request.signalType,
+    sourceKind,
+    sourceChannel: request.channel,
+    sourceExternalId: request.externalId,
+    ...(request.reason ? { reason: request.reason } : {}),
+    confidence: request.confidence ?? (request.signalType === 'self_declaration' ? 0.4 : 0.7),
+    createdAt,
+    ...(request.evidenceRef ? { evidenceRef: request.evidenceRef } : {}),
+    ...(request.metadata ? { metadata: request.metadata } : {}),
+  });
+
+  const insert = await db.prepare(
+    `INSERT OR IGNORE INTO audit_events (audit_event_id, incident_id, channel_identity_id, incident_membership_id, event_type, payload_json)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    auditEventId,
+    incidentId,
+    membership.channelIdentityId,
+    membership.incidentMembershipId,
+    eventType,
+    JSON.stringify({ trustSignal }),
+  ).run();
+
+  await safeRecordOperationalAudit(db, {
+    eventType: 'operational.audit.recorded',
+    category: 'audit',
+    result: 'accepted',
+    incidentId,
+    channel: request.channel,
+    scope: 'trust_signal',
+    action: request.signalType === 'negative_report' ? 'degraded' : 'accepted',
+    subjectRef: `${request.subject.entityType}:${request.subject.entityId}`,
+  });
+
+  return { trustSignal, trustState: await getTrustState(db, incidentId, request.subject), audit: { auditEventId }, idempotent: insert.meta.changes === 0 };
+}
+
+async function createDispute(
+  db: D1Database,
+  incidentId: string,
+  request: DisputeCreateRequest,
+  membership: IncidentMembershipLookup,
+): Promise<{ dispute: Dispute; trustState: TrustState; audit: { auditEventId: string }; idempotent: boolean }> {
+  const createdAt = request.occurredAt ?? new Date().toISOString();
+  const disputeId = `disp_${slug(incidentId)}_${slug(request.subject.entityType)}_${slug(request.subject.entityId)}_${slug(request.channel)}_${slug(request.externalId)}_${slug(request.reason)}`;
+  const auditEventId = `audit_dispute_created_${disputeId}`;
+  const dispute = DisputeCreateResponseSchema.shape.dispute.parse({
+    disputeId,
+    incidentId,
+    subject: request.subject,
+    reason: request.reason,
+    sourceChannel: request.channel,
+    sourceExternalId: request.externalId,
+    ...(request.description ? { description: request.description } : {}),
+    createdAt,
+    ...(request.metadata ? { metadata: request.metadata } : {}),
+  });
+
+  const insert = await db.prepare(
+    `INSERT OR IGNORE INTO audit_events (audit_event_id, incident_id, channel_identity_id, incident_membership_id, event_type, payload_json)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    auditEventId,
+    incidentId,
+    membership.channelIdentityId,
+    membership.incidentMembershipId,
+    'dispute.created',
+    JSON.stringify({ dispute }),
+  ).run();
+
+  await safeRecordOperationalAudit(db, {
+    eventType: 'operational.audit.recorded',
+    category: 'audit',
+    result: 'accepted',
+    incidentId,
+    channel: request.channel,
+    scope: 'dispute',
+    action: 'created',
+    subjectRef: `${request.subject.entityType}:${request.subject.entityId}`,
+  });
+
+  return { dispute, trustState: await getTrustState(db, incidentId, request.subject), audit: { auditEventId }, idempotent: insert.meta.changes === 0 };
+}
+
+async function recordTrustRejectedAudit(
+  db: D1Database,
+  incidentId: string,
+  membership: IncidentMembershipLookup,
+  channel: Channel,
+  externalId: string,
+  eventType: TrustAuditEventType,
+  errorCode: ContractErrorCode,
+  subject: TrustSubject,
+): Promise<void> {
+  await db.prepare(
+    `INSERT OR IGNORE INTO audit_events (audit_event_id, incident_id, channel_identity_id, incident_membership_id, event_type, payload_json)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    `audit_${eventType.replace(/\./g, '_')}_${slug(incidentId)}_${slug(channel)}_${slug(externalId)}_${slug(errorCode)}_${Date.now()}`,
+    incidentId,
+    membership.channelIdentityId,
+    membership.incidentMembershipId,
+    eventType,
+    JSON.stringify({ subject, channel, externalId, errorCode }),
+  ).run();
+}
+
+async function getTrustState(db: D1Database, incidentId: string, subject: TrustSubject): Promise<TrustState> {
+  const rows = await listTrustAuditEvents(db, incidentId);
+  const signals: TrustSignal[] = [];
+  const disputes: Dispute[] = [];
+
+  for (const row of rows) {
+    const parsed = parseTrustAuditPayload(row.payloadJson);
+    if (parsed.trustSignal && isSameTrustSubject(parsed.trustSignal.subject, subject)) {
+      signals.push(parsed.trustSignal);
+    }
+    if (parsed.dispute && isSameTrustSubject(parsed.dispute.subject, subject)) {
+      disputes.push(parsed.dispute);
+    }
+  }
+
+  return deriveCanonicalTrustState({ incidentId, subject, signals, disputes });
+}
+
+async function listTrustAuditEvents(db: D1Database, incidentId: string): Promise<TrustAuditEventRow[]> {
+  const { results } = await db.prepare(
+    `SELECT event_type AS eventType, payload_json AS payloadJson, created_at AS createdAt
+     FROM audit_events
+     WHERE incident_id = ? AND event_type IN ('trust_signal.accepted', 'trust_signal.degraded', 'dispute.created')
+     ORDER BY created_at ASC`,
+  ).bind(incidentId).all<TrustAuditEventRow>();
+  return results;
+}
+
+function parseTrustAuditPayload(payloadJson: string): { trustSignal?: TrustSignal; dispute?: Dispute } {
+  try {
+    const payload = JSON.parse(payloadJson) as { trustSignal?: unknown; dispute?: unknown };
+    const signal = TrustSignalCreateResponseSchema.shape.trustSignal.safeParse(payload.trustSignal);
+    if (signal.success) {
+      return { trustSignal: signal.data };
+    }
+    const dispute = DisputeCreateResponseSchema.shape.dispute.safeParse(payload.dispute);
+    if (dispute.success) {
+      return { dispute: dispute.data };
+    }
+  } catch {
+    return {};
+  }
+  return {};
+}
+
+function isSameTrustSubject(left: TrustSubject, right: TrustSubject): boolean {
+  return left.incidentId === right.incidentId && left.entityType === right.entityType && left.entityId === right.entityId;
 }
 
 async function createConnectedWorkCenter(

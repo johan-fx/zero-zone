@@ -23,6 +23,12 @@ import {
   OperationalEventSchema,
   OperationRejectedSchema,
   DispatchEventCreatePayloadSchema,
+  DisputeCreateRequestSchema,
+  DisputeCreateResponseSchema,
+  TrustSignalCreateRequestSchema,
+  TrustSignalCreateResponseSchema,
+  TrustStateResponseSchema,
+  TrustSubjectSchema,
   DispatchEventUpdatePayloadSchema,
   DispatchTaskConnectedCreateRequestSchema,
   DispatchTaskConnectedUpdateRequestSchema,
@@ -86,6 +92,12 @@ import {
   operationTypes,
   syncStates,
   syncFreshnessStatuses,
+  trustVisibilityLevels,
+  trustSubjectEntityTypes,
+  trustStatuses,
+  trustSignalTypes,
+  trustSignalSourceKinds,
+  disputeReasons,
   webLinkScopes,
   workCenterActivationStates,
   workCenterConfidenceLevels,
@@ -140,12 +152,14 @@ const reconciledOperationTypes = [
   'dispatch_event.update',
   'sos.create',
   'sos.cancel',
+  'trust_signal.create',
+  'dispute.create',
 ] as const;
 
 describe('contracts package', () => {
   it('exposes the reconciled mobile-first operation vocabulary and families', () => {
     expect(operationTypes).toEqual(reconciledOperationTypes);
-    expect(operationFamilies).toEqual(['incident', 'work_center', 'presence', 'resource_report', 'dispatch_event', 'sos']);
+    expect(operationFamilies).toEqual(['incident', 'work_center', 'presence', 'resource_report', 'dispatch_event', 'sos', 'trust_signal', 'dispute']);
     expect(syncStates).toEqual(['pending', 'sent', 'confirmed', 'conflict', 'rejected']);
     expect(operationTypeFamilies).toEqual({
       'incident.create': 'incident',
@@ -158,6 +172,8 @@ describe('contracts package', () => {
       'dispatch_event.update': 'dispatch_event',
       'sos.create': 'sos',
       'sos.cancel': 'sos',
+      'trust_signal.create': 'trust_signal',
+      'dispute.create': 'dispute',
     });
   });
 
@@ -345,6 +361,72 @@ describe('contracts package', () => {
     expect(pull.operations[0]?.operation.syncState).toBe('confirmed');
     expect(SyncPullResponseSchema.safeParse({ ...pull, debug: true }).success).toBe(false);
     expect(syncFreshnessStatuses).toEqual(['fresh', 'stale', 'expired', 'missing']);
+  });
+
+
+
+  it('validates strict trust lifecycle contracts without derived permissions', () => {
+    expect(trustSubjectEntityTypes).toEqual(['channel_identity', 'incident_membership', 'work_center', 'resource_report', 'dispatch_task', 'sos_alert', 'custom']);
+    expect(trustSignalTypes).toEqual(['self_declaration', 'field_attestation', 'context_corroboration', 'presence_observed', 'reputation_reference', 'negative_report']);
+    expect(trustSignalSourceKinds).toEqual(['self', 'field_actor', 'system_context', 'peer', 'coordinator']);
+    expect(trustStatuses).toEqual(['self_declared', 'field_attested', 'trusted_by_context', 'disputed', 'degraded', 'pending_corroboration']);
+    expect(trustVisibilityLevels).toEqual(['normal', 'elevated', 'limited', 'blocked']);
+    expect(disputeReasons).toEqual(['false_claim', 'outdated', 'unsafe_actor', 'duplicate_identity', 'context_mismatch', 'other']);
+
+    const subject = TrustSubjectSchema.parse({ entityType: 'channel_identity', entityId: 'chid-1', incidentId: 'incident-1', displayRef: 'Radio 12' });
+    const signalRequest = TrustSignalCreateRequestSchema.parse({
+      channel: 'telegram',
+      externalId: 'telegram-user-1',
+      subject,
+      signalType: 'field_attestation',
+      sourceKind: 'field_actor',
+      reason: 'Seen coordinating water point',
+      confidence: 0.8,
+    });
+    expect(signalRequest.signalType).toBe('field_attestation');
+    expect(TrustSignalCreateRequestSchema.safeParse({ ...signalRequest, canManageMedical: true }).success).toBe(false);
+    expect(TrustSignalCreateRequestSchema.safeParse({ ...signalRequest, subject: { ...subject, permissions: { canManageMedical: true } } }).success).toBe(false);
+
+    const trustState = {
+      incidentId: 'incident-1',
+      subject,
+      status: 'field_attested',
+      visibility: 'elevated',
+      priorityWeight: 0.72,
+      score: 0.72,
+      explanation: ['field attestation from independent source'],
+      signalCount: 1,
+      disputeCount: 0,
+      updatedAt: '2026-07-05T10:00:00.000Z',
+    } as const;
+    expect(TrustStateResponseSchema.parse({ trustState }).trustState.status).toBe('field_attested');
+    expect(TrustStateResponseSchema.safeParse({ trustState: { ...trustState, permissions: { canManageMedical: true } } }).success).toBe(false);
+    expect(TrustSignalCreateResponseSchema.parse({
+      trustSignal: {
+        trustSignalId: 'trust-signal-1',
+        incidentId: 'incident-1',
+        subject,
+        signalType: 'field_attestation',
+        sourceKind: 'field_actor',
+        sourceChannel: 'telegram',
+        sourceExternalId: 'telegram-user-1',
+        confidence: 0.8,
+        createdAt: '2026-07-05T10:00:00.000Z',
+      },
+      trustState,
+      audit: { auditEventId: 'audit-trust-1' },
+      idempotent: false,
+    }).trustSignal.signalType).toBe('field_attestation');
+
+    const disputeRequest = DisputeCreateRequestSchema.parse({ channel: 'web-ui', externalId: 'web-user-1', subject, reason: 'false_claim', description: 'Duplicate badge claim' });
+    expect(disputeRequest.reason).toBe('false_claim');
+    expect(DisputeCreateRequestSchema.safeParse({ ...disputeRequest, rawEvidencePhoto: 'not allowed' }).success).toBe(false);
+    expect(DisputeCreateResponseSchema.parse({
+      dispute: { disputeId: 'dispute-1', incidentId: 'incident-1', subject, reason: 'false_claim', sourceChannel: 'web-ui', sourceExternalId: 'web-user-1', createdAt: '2026-07-05T10:01:00.000Z' },
+      trustState: { ...trustState, status: 'disputed', visibility: 'limited', priorityWeight: 0.2, score: 0.2, disputeCount: 1 },
+      audit: { auditEventId: 'audit-dispute-1' },
+      idempotent: false,
+    }).dispute.reason).toBe('false_claim');
   });
 
   it('validates supported locale contracts without accepting arbitrary locale tags', () => {

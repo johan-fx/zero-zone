@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ResourceReportSummary } from '@zona-cero/contracts';
+import type { PermissionSnapshot, ResourceReportSummary } from '@zona-cero/contracts';
 
 import {
   canAccessRestrictedIncidentData,
@@ -9,6 +9,7 @@ import {
   deriveWorkCenterFreshness,
   deriveWorkCenterRisk,
   deriveResourceReportState,
+  deriveCanonicalTrustState,
   deriveWorkCenterState,
   matchResourceReports,
   normalizeResourceCategory,
@@ -73,6 +74,92 @@ describe('domain package', () => {
         constraints: ['cold chain'],
       }),
     ).toEqual({ freshness: 'fresh', confidence: 'medium', risk: 'medium' });
+  });
+
+
+
+  it('scores canonical trust without unlocking sensitive permission snapshots', () => {
+    const volunteerPermissions: PermissionSnapshot = {
+      canReadIncident: true,
+      canJoinIncident: true,
+      canManageIncident: false,
+      canManageLogistics: false,
+      canManageMedical: false,
+    };
+    const subject = { entityType: 'channel_identity' as const, entityId: 'chid-telegram-1', incidentId: 'incident-zc-demo' };
+    const now = new Date('2026-07-05T12:00:00.000Z');
+
+    const selfDeclared = deriveCanonicalTrustState({
+      incidentId: 'incident-zc-demo',
+      subject,
+      now,
+      signals: [{ signalType: 'self_declaration', sourceKind: 'self', sourceChannel: 'telegram', sourceExternalId: 'telegram-user-1', confidence: 0.4, createdAt: '2026-07-05T11:00:00.000Z' }],
+    });
+    expect(selfDeclared).toMatchObject({ status: 'self_declared', visibility: 'elevated', signalCount: 1, disputeCount: 0 });
+    expect(canAccessRestrictedIncidentData('self_declared')).toBe(false);
+    expect(volunteerPermissions).toMatchObject({ canManageMedical: false, canManageLogistics: false, canManageIncident: false });
+
+    const fieldAttested = deriveCanonicalTrustState({
+      incidentId: 'incident-zc-demo',
+      subject,
+      now,
+      signals: [
+        { signalType: 'field_attestation', sourceKind: 'field_actor', sourceChannel: 'mobile', sourceExternalId: 'mobile-1', confidence: 0.8, createdAt: '2026-07-05T11:10:00.000Z' },
+      ],
+    });
+    expect(fieldAttested.status).toBe('field_attested');
+    expect(canAccessRestrictedIncidentData('field_attested')).toBe(false);
+
+    const trustedByContext = deriveCanonicalTrustState({
+      incidentId: 'incident-zc-demo',
+      subject,
+      now,
+      contextualReputation: 0.15,
+      signals: [
+        { signalType: 'self_declaration', sourceKind: 'self', sourceChannel: 'telegram', sourceExternalId: 'telegram-user-1', confidence: 0.6, createdAt: '2026-07-05T11:00:00.000Z' },
+        { signalType: 'field_attestation', sourceKind: 'field_actor', sourceChannel: 'mobile', sourceExternalId: 'mobile-1', confidence: 0.8, createdAt: '2026-07-05T11:10:00.000Z' },
+        { signalType: 'context_corroboration', sourceKind: 'system_context', sourceChannel: 'web-ui', sourceExternalId: 'web-user-1', confidence: 0.9, createdAt: '2026-07-05T11:15:00.000Z' },
+        { signalType: 'presence_observed', sourceKind: 'peer', sourceChannel: 'telegram', sourceExternalId: 'telegram-user-2', confidence: 0.7, createdAt: '2026-07-05T11:20:00.000Z' },
+      ],
+    });
+    expect(trustedByContext.status).toBe('trusted_by_context');
+    expect(trustedByContext.explanation).toEqual(expect.arrayContaining(['fresh_signal', 'presence_observed', 'contextual_reputation']));
+    expect(canAccessRestrictedIncidentData('trusted_by_context')).toBe(false);
+  });
+
+  it('degrades trust for disputes, negative signals, and Sybil-like source clustering', () => {
+    const subject = { entityType: 'channel_identity' as const, entityId: 'chid-telegram-1', incidentId: 'incident-zc-demo' };
+    const now = new Date('2026-07-05T12:00:00.000Z');
+
+    const disputed = deriveCanonicalTrustState({
+      incidentId: 'incident-zc-demo',
+      subject,
+      now,
+      signals: [{ signalType: 'field_attestation', sourceKind: 'field_actor', sourceChannel: 'mobile', sourceExternalId: 'mobile-1', confidence: 0.8, createdAt: '2026-07-05T11:00:00.000Z' }],
+      disputes: [{ reason: 'false_claim', sourceChannel: 'web-ui', sourceExternalId: 'web-user-1', createdAt: '2026-07-05T11:30:00.000Z' }],
+    });
+    expect(disputed).toMatchObject({ status: 'disputed', visibility: 'limited', disputeCount: 1 });
+
+    const sybil = deriveCanonicalTrustState({
+      incidentId: 'incident-zc-demo',
+      subject,
+      now,
+      signals: [
+        { signalType: 'self_declaration', sourceKind: 'self', sourceChannel: 'telegram', sourceExternalId: 'same-actor', confidence: 0.7, createdAt: '2026-07-05T11:00:00.000Z' },
+        { signalType: 'field_attestation', sourceKind: 'field_actor', sourceChannel: 'telegram', sourceExternalId: 'same-actor', confidence: 0.7, createdAt: '2026-07-05T11:00:00.000Z' },
+        { signalType: 'context_corroboration', sourceKind: 'peer', sourceChannel: 'telegram', sourceExternalId: 'same-actor', confidence: 0.7, createdAt: '2026-07-05T11:00:00.000Z' },
+      ],
+    });
+    expect(sybil.status).toBe('pending_corroboration');
+    expect(sybil.explanation).toContain('sybil_penalty_same_source_cluster');
+
+    const negative = deriveCanonicalTrustState({
+      incidentId: 'incident-zc-demo',
+      subject,
+      now,
+      signals: [{ signalType: 'negative_report', sourceKind: 'peer', sourceChannel: 'telegram', sourceExternalId: 'reporter-1', confidence: 0.8, createdAt: '2026-07-05T11:00:00.000Z' }],
+    });
+    expect(negative.status).toBe('degraded');
   });
 
   it('matches needed and surplus reports by incident cell and category', () => {

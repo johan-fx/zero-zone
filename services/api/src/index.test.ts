@@ -19,6 +19,9 @@ import {
 import {
   DispatchTaskListResponseSchema,
   DispatchTaskResponseSchema,
+  TrustStateResponseSchema,
+  TrustSignalCreateResponseSchema,
+  DisputeCreateResponseSchema,
   CountryListResponseSchema,
   IncidentJoinResponseSchema,
   OperationalMapResponseSchema,
@@ -1757,6 +1760,332 @@ describe('api worker', () => {
       membership: { role: 'medical', permissions: { canManageMedical: true } },
       idempotent: false,
     });
+  });
+
+
+
+  it('persists canonical trust signals, disputes, audit events and keeps permissions separate', async () => {
+    const join = await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...telegramIncidentJoinRequestFixture, externalId: 'telegram-trust-user', role: 'volunteer' }),
+    });
+    expect(join.status).toBe(200);
+    const subject = { entityType: 'channel_identity', entityId: 'chid_telegram_telegram-trust-user', incidentId: 'incident-zc-demo' };
+
+    const self = await request('/incidents/incident-zc-demo/trust-signals', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        channel: 'telegram',
+        externalId: 'telegram-trust-user',
+        subject,
+        signalType: 'self_declaration',
+        reason: 'Self-declared radio operator',
+        occurredAt: '2026-07-05T10:00:00.000Z',
+      }),
+    });
+    expect(self.status).toBe(200);
+    const selfBody = TrustSignalCreateResponseSchema.parse(await self.json());
+    expect(selfBody).toMatchObject({ trustSignal: { signalType: 'self_declaration' }, trustState: { status: 'self_declared' }, idempotent: false });
+    expect(JSON.stringify(selfBody)).not.toMatch(/canManageMedical|canManageLogistics|canManageIncident/i);
+
+    const duplicate = await request('/incidents/incident-zc-demo/trust-signals', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        channel: 'telegram',
+        externalId: 'telegram-trust-user',
+        subject,
+        signalType: 'self_declaration',
+        reason: 'Self-declared radio operator',
+        occurredAt: '2026-07-05T10:00:00.000Z',
+      }),
+    });
+    expect(TrustSignalCreateResponseSchema.parse(await duplicate.json()).idempotent).toBe(true);
+
+    await request('/incidents/incident-zc-demo/trust-signals', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        channel: 'web-ui',
+        externalId: 'web-user-1001',
+        subject,
+        signalType: 'field_attestation',
+        sourceKind: 'field_actor',
+        reason: 'Seen coordinating the water point',
+        confidence: 0.9,
+        occurredAt: '2026-07-05T10:05:00.000Z',
+      }),
+    });
+    await request('/incidents/incident-zc-demo/trust-signals', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        channel: 'web-ui',
+        externalId: 'web-user-1001',
+        subject,
+        signalType: 'context_corroboration',
+        sourceKind: 'system_context',
+        reason: 'Matched incident membership and activity context',
+        confidence: 0.9,
+        occurredAt: '2026-07-05T10:06:00.000Z',
+      }),
+    });
+
+    const state = TrustStateResponseSchema.parse(await (await request('/incidents/incident-zc-demo/trust-state?entityType=channel_identity&entityId=chid_telegram_telegram-trust-user')).json());
+    expect(state.trustState.status).toBe('trusted_by_context');
+    expect(JSON.stringify(state)).not.toMatch(/canManageMedical|canManageLogistics|canManageIncident/i);
+
+    const negative = await request('/incidents/incident-zc-demo/trust-signals', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        channel: 'web-ui',
+        externalId: 'web-user-1001',
+        subject,
+        signalType: 'negative_report',
+        reason: 'Peer reports unsafe coordination claim',
+        confidence: 0.8,
+        occurredAt: '2026-07-05T10:07:00.000Z',
+      }),
+    });
+    expect(negative.status).toBe(200);
+    expect(TrustSignalCreateResponseSchema.parse(await negative.json()).audit.auditEventId).toContain('trust_signal_degraded');
+
+    const dispute = await request('/incidents/incident-zc-demo/disputes', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ channel: 'telegram', externalId: 'telegram-trust-user', subject, reason: 'false_claim', description: 'Claim disputed by desk lead' }),
+    });
+    expect(dispute.status).toBe(200);
+    expect(DisputeCreateResponseSchema.parse(await dispute.json()).trustState).toMatchObject({ status: 'disputed', visibility: 'limited', disputeCount: 1 });
+
+    const membership = await (env as Env).DB.prepare(
+      `SELECT permissions_json AS permissionsJson FROM incident_memberships WHERE incident_id = ? AND channel_identity_id = ?`,
+    )
+      .bind('incident-zc-demo', subject.entityId)
+      .first<{ permissionsJson: string }>();
+    expect(JSON.parse(membership?.permissionsJson ?? '{}')).toMatchObject({ canManageIncident: false, canManageLogistics: false, canManageMedical: false });
+
+    const audits = await (env as Env).DB.prepare(
+      `SELECT event_type AS eventType, payload_json AS payloadJson FROM audit_events WHERE incident_id = ? AND event_type IN ('trust_signal.accepted', 'trust_signal.degraded', 'dispute.created')`,
+    )
+      .bind('incident-zc-demo')
+      .all<{ eventType: string; payloadJson: string }>();
+    expect(audits.results.map((row) => row.eventType)).toEqual(expect.arrayContaining(['trust_signal.accepted', 'trust_signal.degraded', 'dispute.created']));
+    expect(JSON.stringify(audits.results)).not.toMatch(/canManageMedical|canManageLogistics|canManageIncident/i);
+  });
+
+  it('sync push trust_signal.create uses canonical validation, audit and trust scoring', async () => {
+    await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...mobileIncidentJoinRequestFixture, externalId: 'mobile-sync-trust-user', role: 'volunteer' }),
+    });
+    const subject = { entityType: 'channel_identity', entityId: 'chid_mobile_mobile-sync-trust-user', incidentId: 'incident-zc-demo' };
+    const operation = {
+      ...createSignedOperationFixture({
+        opId: 'op-sync-trust-signal-1',
+        incidentId: 'incident-zc-demo',
+        cellId: 'cell-zc-demo',
+        entityId: 'local-trust-signal-1',
+        entityType: 'trust_signal',
+        opType: 'trust_signal.create',
+        payload: {
+          channel: 'mobile',
+          externalId: 'mobile-sync-trust-user',
+          subject,
+          signalType: 'self_declaration',
+          reason: 'Mobile sync self-declaration must use canonical scoring.',
+          occurredAt: '2026-07-05T11:00:00.000Z',
+        },
+      }),
+      syncState: 'pending',
+    };
+
+    const response = await request('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ operations: [operation] }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = SyncPushResponseSchema.parse(await response.json());
+    expect(body.results[0]).toMatchObject({ opId: 'op-sync-trust-signal-1', status: 'accepted' });
+    expect(body.results[0]?.status === 'accepted' ? body.results[0].entityId : '').toContain('ts_incident-zc-demo_channel_identity_chid_mobile_mobile-sync-trust-user_mobile_mobile-sync-trust-user_self_declaration');
+
+    const state = TrustStateResponseSchema.parse(await (await request('/incidents/incident-zc-demo/trust-state?entityType=channel_identity&entityId=chid_mobile_mobile-sync-trust-user')).json());
+    expect(state.trustState).toMatchObject({ status: 'self_declared', visibility: 'elevated', signalCount: 1, disputeCount: 0 });
+    expect(state.trustState.score).toBeGreaterThan(0);
+    expect(state.trustState.explanation).toEqual(expect.arrayContaining(['status:self_declared', 'fresh_signal']));
+
+    const canonicalAudit = await (env as Env).DB.prepare(
+      "SELECT COUNT(*) AS count FROM audit_events WHERE incident_id = ? AND event_type = 'trust_signal.accepted'",
+    )
+      .bind('incident-zc-demo')
+      .first<{ count: number }>();
+    const syncOperation = await (env as Env).DB.prepare('SELECT status, result_entity_id AS resultEntityId FROM sync_operations WHERE op_id = ?')
+      .bind('op-sync-trust-signal-1')
+      .first<{ status: string; resultEntityId: string }>();
+    expect(canonicalAudit?.count).toBeGreaterThanOrEqual(1);
+    expect(syncOperation).toMatchObject({ status: 'accepted' });
+    expect(syncOperation?.resultEntityId).toBe(body.results[0]?.status === 'accepted' ? body.results[0].entityId : undefined);
+  });
+
+  it('sync push dispute.create uses canonical dispute degradation', async () => {
+    await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...mobileIncidentJoinRequestFixture, externalId: 'mobile-sync-dispute-user', role: 'volunteer' }),
+    });
+    const subject = { entityType: 'channel_identity', entityId: 'chid_mobile_mobile-sync-dispute-user', incidentId: 'incident-zc-demo' };
+    const trustOperation = {
+      ...createSignedOperationFixture({
+        opId: 'op-sync-dispute-seed-trust-1',
+        incidentId: 'incident-zc-demo',
+        cellId: 'cell-zc-demo',
+        entityId: 'local-dispute-seed-trust-1',
+        entityType: 'trust_signal',
+        opType: 'trust_signal.create',
+        payload: {
+          channel: 'mobile',
+          externalId: 'mobile-sync-dispute-user',
+          subject,
+          signalType: 'self_declaration',
+          reason: 'Seed trust before canonical dispute.',
+          occurredAt: '2026-07-05T11:05:00.000Z',
+        },
+      }),
+      syncState: 'pending',
+    };
+    const disputeOperation = {
+      ...createSignedOperationFixture({
+        opId: 'op-sync-dispute-create-1',
+        incidentId: 'incident-zc-demo',
+        cellId: 'cell-zc-demo',
+        entityId: 'local-dispute-1',
+        entityType: 'dispute',
+        opType: 'dispute.create',
+        payload: {
+          channel: 'mobile',
+          externalId: 'mobile-sync-dispute-user',
+          subject,
+          reason: 'false_claim',
+          description: 'Mobile sync dispute must use canonical degradation.',
+          occurredAt: '2026-07-05T11:06:00.000Z',
+        },
+      }),
+      syncState: 'pending',
+    };
+
+    const response = await request('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ operations: [trustOperation, disputeOperation] }),
+    });
+
+    const body = SyncPushResponseSchema.parse(await response.json());
+    expect(body.results).toHaveLength(2);
+    expect(body.results[0]).toMatchObject({ opId: 'op-sync-dispute-seed-trust-1', status: 'accepted' });
+    expect(body.results[1]).toMatchObject({ opId: 'op-sync-dispute-create-1', status: 'accepted' });
+    expect(body.results[1]?.status === 'accepted' ? body.results[1].entityId : '').toContain('disp_incident-zc-demo_channel_identity_chid_mobile_mobile-sync-dispute-user_mobile_mobile-sync-dispute-user_false_claim');
+
+    const state = TrustStateResponseSchema.parse(await (await request('/incidents/incident-zc-demo/trust-state?entityType=channel_identity&entityId=chid_mobile_mobile-sync-dispute-user')).json());
+    expect(state.trustState).toMatchObject({ status: 'disputed', visibility: 'limited', signalCount: 1, disputeCount: 1 });
+
+    const disputeAudit = await (env as Env).DB.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE incident_id = ? AND event_type = 'dispute.created'")
+      .bind('incident-zc-demo')
+      .first<{ count: number }>();
+    expect(disputeAudit?.count).toBeGreaterThanOrEqual(1);
+  });
+
+  it('sync push rejects invalid trust payloads and non-member dispute actors instead of generic acceptance', async () => {
+    const subject = { entityType: 'channel_identity', entityId: 'chid_mobile_unknown-sync-actor', incidentId: 'incident-zc-demo' };
+    const invalidTrustOperation = {
+      ...createSignedOperationFixture({
+        opId: 'op-sync-invalid-trust-1',
+        incidentId: 'incident-zc-demo',
+        cellId: 'cell-zc-demo',
+        entityId: 'local-invalid-trust-1',
+        entityType: 'trust_signal',
+        opType: 'trust_signal.create',
+        payload: { channel: 'mobile', externalId: 'unknown-sync-actor', subject, signalType: 'not_a_real_signal' },
+      }),
+      syncState: 'pending',
+    };
+    const nonMemberDisputeOperation = {
+      ...createSignedOperationFixture({
+        opId: 'op-sync-non-member-dispute-1',
+        incidentId: 'incident-zc-demo',
+        cellId: 'cell-zc-demo',
+        entityId: 'local-non-member-dispute-1',
+        entityType: 'dispute',
+        opType: 'dispute.create',
+        payload: { channel: 'mobile', externalId: 'unknown-sync-actor', subject, reason: 'false_claim' },
+      }),
+      syncState: 'pending',
+    };
+
+    const response = await request('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ operations: [invalidTrustOperation, nonMemberDisputeOperation] }),
+    });
+
+    const body = SyncPushResponseSchema.parse(await response.json());
+    expect(body.results).toEqual([
+      expect.objectContaining({ opId: 'op-sync-invalid-trust-1', status: 'rejected', code: 'invalid_payload' }),
+      expect.objectContaining({ opId: 'op-sync-non-member-dispute-1', status: 'rejected', code: 'permission_denied' }),
+    ]);
+
+    const acceptedBypass = await (env as Env).DB.prepare(
+      `SELECT COUNT(*) AS count FROM sync_operations WHERE op_id IN (?, ?) AND status = 'accepted'`,
+    )
+      .bind('op-sync-invalid-trust-1', 'op-sync-non-member-dispute-1')
+      .first<{ count: number }>();
+    const canonicalAudits = await (env as Env).DB.prepare(
+      `SELECT COUNT(*) AS count FROM audit_events WHERE event_type IN ('trust_signal.accepted', 'trust_signal.degraded', 'dispute.created')`,
+    ).first<{ count: number }>();
+    expect(acceptedBypass?.count).toBe(0);
+    expect(canonicalAudits?.count).toBe(0);
+  });
+
+  it('rate-limits trust signal creation by incident channel external id and action', async () => {
+    await request('/incidents/incident-zc-demo/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...telegramIncidentJoinRequestFixture, externalId: 'telegram-trust-limited', role: 'volunteer' }),
+    });
+    const subject = { entityType: 'channel_identity', entityId: 'chid_telegram_telegram-trust-limited', incidentId: 'incident-zc-demo' };
+
+    let limited: Response | null = null;
+    for (let index = 0; index < 31; index += 1) {
+      const response = await request('/incidents/incident-zc-demo/trust-signals', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          channel: 'telegram',
+          externalId: 'telegram-trust-limited',
+          subject,
+          signalType: 'field_attestation',
+          reason: `rate limit probe ${index}`,
+          occurredAt: `2026-07-05T10:${String(index).padStart(2, '0')}:00.000Z`,
+        }),
+      });
+      if (response.status === 429) {
+        limited = response;
+        break;
+      }
+    }
+
+    if (!limited) {
+      throw new Error('trust signal rate limit did not trigger');
+    }
+    expect(limited.status).toBe(429);
+    await expect(limited.json()).resolves.toMatchObject({ error: 'rate_limited' });
+    const rejectedAudit = await (env as Env).DB.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE event_type = 'trust_signal.rejected'").first<{ count: number }>();
+    expect(rejectedAudit?.count).toBeGreaterThanOrEqual(1);
   });
 
   it('issues private family reunification links only for incident members', async () => {

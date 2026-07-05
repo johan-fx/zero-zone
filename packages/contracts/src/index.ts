@@ -375,6 +375,7 @@ export const PermissionSnapshotSchema = z.object({
 });
 export type PermissionSnapshot = z.infer<typeof PermissionSnapshotSchema>;
 
+
 export const ChannelIdentitySchema = z.object({
   channelIdentityId: z.string().min(1),
   channel: ChannelSchema,
@@ -397,6 +398,136 @@ export const AuditReferenceSchema = z.object({
   auditEventId: z.string().min(1),
 });
 export type AuditReference = z.infer<typeof AuditReferenceSchema>;
+
+export const trustSubjectEntityTypes = ['channel_identity', 'incident_membership', 'work_center', 'resource_report', 'dispatch_task', 'sos_alert', 'custom'] as const;
+export const TrustSubjectEntityTypeSchema = z.enum(trustSubjectEntityTypes);
+export type TrustSubjectEntityType = z.infer<typeof TrustSubjectEntityTypeSchema>;
+
+export const trustSignalTypes = [
+  'self_declaration',
+  'field_attestation',
+  'context_corroboration',
+  'presence_observed',
+  'reputation_reference',
+  'negative_report',
+] as const;
+export const TrustSignalTypeSchema = z.enum(trustSignalTypes);
+export type TrustSignalType = z.infer<typeof TrustSignalTypeSchema>;
+
+export const trustSignalSourceKinds = ['self', 'field_actor', 'system_context', 'peer', 'coordinator'] as const;
+export const TrustSignalSourceKindSchema = z.enum(trustSignalSourceKinds);
+export type TrustSignalSourceKind = z.infer<typeof TrustSignalSourceKindSchema>;
+
+export const trustStatuses = ['self_declared', 'field_attested', 'trusted_by_context', 'disputed', 'degraded', 'pending_corroboration'] as const;
+export const TrustStatusSchema = z.enum(trustStatuses);
+export type TrustStatus = z.infer<typeof TrustStatusSchema>;
+
+export const trustVisibilityLevels = ['normal', 'elevated', 'limited', 'blocked'] as const;
+export const TrustVisibilitySchema = z.enum(trustVisibilityLevels);
+export type TrustVisibility = z.infer<typeof TrustVisibilitySchema>;
+
+export const disputeReasons = ['false_claim', 'outdated', 'unsafe_actor', 'duplicate_identity', 'context_mismatch', 'other'] as const;
+export const DisputeReasonSchema = z.enum(disputeReasons);
+export type DisputeReason = z.infer<typeof DisputeReasonSchema>;
+
+export const TrustSubjectSchema = z.object({
+  entityType: TrustSubjectEntityTypeSchema,
+  entityId: z.string().min(1),
+  incidentId: z.string().min(1),
+  displayRef: z.string().min(1).max(160).optional(),
+}).strict();
+export type TrustSubject = z.infer<typeof TrustSubjectSchema>;
+
+export const TrustSignalSchema = z.object({
+  trustSignalId: z.string().min(1),
+  incidentId: z.string().min(1),
+  subject: TrustSubjectSchema,
+  signalType: TrustSignalTypeSchema,
+  sourceKind: TrustSignalSourceKindSchema,
+  sourceChannel: ChannelSchema,
+  sourceExternalId: z.string().min(1),
+  reason: z.string().min(1).max(240).optional(),
+  confidence: z.number().min(0).max(1).default(0.5),
+  createdAt: z.string().min(1),
+  evidenceRef: z.string().min(1).max(240).optional(),
+  metadata: JsonObjectPayloadSchema.optional(),
+}).strict();
+export type TrustSignal = z.infer<typeof TrustSignalSchema>;
+
+export const DisputeSchema = z.object({
+  disputeId: z.string().min(1),
+  incidentId: z.string().min(1),
+  subject: TrustSubjectSchema,
+  reason: DisputeReasonSchema,
+  sourceChannel: ChannelSchema,
+  sourceExternalId: z.string().min(1),
+  description: z.string().min(1).max(500).optional(),
+  createdAt: z.string().min(1),
+  metadata: JsonObjectPayloadSchema.optional(),
+}).strict();
+export type Dispute = z.infer<typeof DisputeSchema>;
+
+export const TrustStateSchema = z.object({
+  incidentId: z.string().min(1),
+  subject: TrustSubjectSchema,
+  status: TrustStatusSchema,
+  visibility: TrustVisibilitySchema,
+  priorityWeight: z.number().min(0).max(1),
+  score: z.number().min(0).max(1),
+  explanation: z.array(z.string().min(1)),
+  signalCount: z.number().int().nonnegative(),
+  disputeCount: z.number().int().nonnegative(),
+  updatedAt: z.string().min(1),
+}).strict();
+export type TrustState = z.infer<typeof TrustStateSchema>;
+
+export const TrustSignalCreateRequestSchema = z.object({
+  channel: ChannelSchema,
+  externalId: z.string().min(1),
+  displayName: z.string().min(1).optional(),
+  subject: TrustSubjectSchema,
+  signalType: TrustSignalTypeSchema,
+  sourceKind: TrustSignalSourceKindSchema.optional(),
+  reason: z.string().min(1).max(240).optional(),
+  confidence: z.number().min(0).max(1).optional(),
+  evidenceRef: z.string().min(1).max(240).optional(),
+  occurredAt: z.string().min(1).optional(),
+  metadata: JsonObjectPayloadSchema.optional(),
+}).strict();
+export type TrustSignalCreateRequest = z.infer<typeof TrustSignalCreateRequestSchema>;
+
+export const DisputeCreateRequestSchema = z.object({
+  channel: ChannelSchema,
+  externalId: z.string().min(1),
+  displayName: z.string().min(1).optional(),
+  subject: TrustSubjectSchema,
+  reason: DisputeReasonSchema,
+  description: z.string().min(1).max(500).optional(),
+  occurredAt: z.string().min(1).optional(),
+  metadata: JsonObjectPayloadSchema.optional(),
+}).strict();
+export type DisputeCreateRequest = z.infer<typeof DisputeCreateRequestSchema>;
+
+export const TrustSignalCreateResponseSchema = z.object({
+  trustSignal: TrustSignalSchema,
+  trustState: TrustStateSchema,
+  audit: AuditReferenceSchema,
+  idempotent: z.boolean(),
+}).strict();
+export type TrustSignalCreateResponse = z.infer<typeof TrustSignalCreateResponseSchema>;
+
+export const DisputeCreateResponseSchema = z.object({
+  dispute: DisputeSchema,
+  trustState: TrustStateSchema,
+  audit: AuditReferenceSchema,
+  idempotent: z.boolean(),
+}).strict();
+export type DisputeCreateResponse = z.infer<typeof DisputeCreateResponseSchema>;
+
+export const TrustStateResponseSchema = z.object({
+  trustState: TrustStateSchema,
+}).strict();
+export type TrustStateResponse = z.infer<typeof TrustStateResponseSchema>;
 
 export const workCenterStatuses = ['reported', 'active', 'inactive', 'archived'] as const;
 export const WorkCenterStatusSchema = z.enum(workCenterStatuses);
