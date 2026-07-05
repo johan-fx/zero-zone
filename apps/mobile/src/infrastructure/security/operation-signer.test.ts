@@ -154,6 +154,34 @@ describe('operation signing contract', () => {
       'dispatch_event.update': 'dispatch_event',
       'sos.create': 'sos',
       'sos.cancel': 'sos',
+      'trust_signal.create': 'trust_signal',
+      'dispute.create': 'dispute',
+    };
+    const payloads: Record<OperationType, Record<string, unknown>> = {
+      'incident.create': { title: 'Local incident' },
+      'work_center.create': { name: 'North school', centerType: 'shelter', priority: 'high' },
+      'presence.check_in': { actorId: 'volunteer-1', role: 'medic', centerId: 'center-1' },
+      'presence.pause': { actorId: 'volunteer-1', role: 'medic', centerId: 'center-1' },
+      'presence.check_out': { actorId: 'volunteer-1', role: 'medic', centerId: 'center-1' },
+      'resource_report.create': { category: 'Water', quantityApprox: '12 boxes', urgency: 'high', reportKind: 'needed' },
+      'dispatch_event.create': { category: 'Water', quantityApprox: '12 boxes', targetWorkCenterId: 'center-1' },
+      'dispatch_event.update': { dispatchTaskId: 'dispatch-1', status: 'accepted', notes: 'Runner assigned' },
+      'sos.create': { severity: 'critical', message: 'Need evacuation support' },
+      'sos.cancel': { reason: 'Resolved locally' },
+      'trust_signal.create': {
+        channel: 'mobile',
+        externalId: 'actor-key-1',
+        subject: { entityType: 'work_center', entityId: 'center-1', incidentId: 'incident-1' },
+        signalType: 'field_attestation',
+        sourceKind: 'field_actor',
+      },
+      'dispute.create': {
+        channel: 'mobile',
+        externalId: 'actor-key-2',
+        subject: { entityType: 'work_center', entityId: 'center-1', incidentId: 'incident-1' },
+        reason: 'context_mismatch',
+        description: 'Looks like the wrong triage point.',
+      },
     };
 
     const operations = await Promise.all(
@@ -163,7 +191,7 @@ describe('operation signing contract', () => {
             ...baseInput,
             entityId: `entity-${index}`,
             opType,
-            payload: { index, opType },
+            payload: payloads[opType],
           },
           signer,
         ),

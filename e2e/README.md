@@ -9,6 +9,7 @@ This folder contains Playwright E2E coverage and the opt-in real staging Telegra
 | Run local Playwright E2E | `pnpm e2e` | Uses `playwright.config.ts` and local dev servers. |
 | Open Playwright UI | `pnpm e2e:ui` | Useful when debugging local browser flows. |
 | Typecheck Telegram E2E helpers | `pnpm e2e:telegram:typecheck` | Safe; no Telegram or staging calls. |
+| Run Slice 20 social-trust E2E | `pnpm e2e:slice20:social-trust` | Reduced local flow for trust API lifecycle plus Telegram natural-language dry-run. |
 | Preview Telegram staging messages | `pnpm e2e:telegram:dry-run` | Safe; does not contact Telegram. |
 | Run real Telegram staging E2E | `pnpm e2e:staging:telegram` | Opt-in; requires local staging config and mutates staging. |
 
@@ -30,6 +31,17 @@ pnpm exec playwright test e2e/operational-map.spec.ts
 ```
 
 The test drives the local Telegram webhook by joining the incident as `logistics`, creating a work center through `/workcenter`, sending a native Telegram `message.location`, waiting for `/map?countryCode=ES`, opening `/#/map`, verifying accessible map content, and writing `test-results/operational-map-dashboard.png`.
+
+
+## Slice 20 social trust E2E
+
+```bash
+pnpm e2e:slice20:social-trust
+```
+
+This reduced flow runs only `e2e/social-trust.spec.ts`. It covers the command/API trust lifecycle locally by joining web identities, creating a self-declaration, adding peer corroboration, creating a dispute, forcing a degraded state with a negative signal, and asserting sensitive permission fields are not returned or granted by trust responses.
+
+The natural-language path is covered through the deterministic Telegram dry-run scenario `social-trust`. It does not require secrets or mutate staging; it verifies the planned natural wording for contextual corroboration, dispute, and the product boundary that social trust does not grant sensitive permissions or replace coordination/rescue.
 
 ## Real staging Telegram E2E
 
@@ -68,6 +80,7 @@ Dry-runs print the planned E2E messages plus a generated marker. They do not con
 | Family reunification | `pnpm e2e:telegram:dry-run:family-reunification` |
 | Dispatch | `pnpm e2e:telegram:dry-run:dispatch` |
 | Incident join onboarding | `pnpm e2e:telegram:dry-run:incident-join` |
+| Slice 20 social trust | `pnpm e2e:telegram:dry-run:social-trust` |
 
 ### Real staging run
 
