@@ -544,6 +544,7 @@ function createSchema(title: string, primaryKey: string, required: string[]): Lo
       trustVisibility: stringProperty,
       trustSignalCount: numberProperty,
       trustDisputeCount: numberProperty,
+      trustExplanation: arrayProperty,
       roleCounts: objectProperty,
       state: stringProperty,
       failureReason: stringProperty,
