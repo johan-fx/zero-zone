@@ -1,6 +1,6 @@
 import type { MapPackMetadata } from '@/infrastructure/maps/offline-map-packs';
 import type { SignedOperation } from '@/infrastructure/security/operation-signer';
-import type { SosLocation, SyncConflict, SyncState } from '@zona-cero/contracts';
+import type { SosLocation, SyncConflict, SyncState, TrustStatus, TrustVisibility } from '@zona-cero/contracts';
 
 export const zeroZoneSpikeDbName = 'zero_zone_offline_spike';
 
@@ -118,6 +118,11 @@ export type WorkCenterView = {
   risk?: string;
   signalCount?: number;
   corroboratingSignalCount?: number;
+  trustStatus?: TrustStatus | 'pending' | 'unverified';
+  trustVisibility?: TrustVisibility;
+  trustSignalCount?: number;
+  trustDisputeCount?: number;
+  trustExplanation?: string[];
   provisional?: boolean;
   provisionalReason?: string;
   location?: { latitude: number; longitude: number };
@@ -149,6 +154,11 @@ export type ResourceReportLocalView = {
   reportKind: string;
   provisional?: boolean;
   provisionalReason?: string;
+  trustStatus?: TrustStatus | 'pending' | 'unverified';
+  trustVisibility?: TrustVisibility;
+  trustSignalCount?: number;
+  trustDisputeCount?: number;
+  trustExplanation?: string[];
   syncState: string;
   updatedAt: string;
 };
@@ -179,6 +189,11 @@ export type SosSignalLocalView = {
   location?: SosLocation;
   status: string;
   syncState: string;
+  trustStatus?: TrustStatus | 'pending' | 'unverified';
+  trustVisibility?: TrustVisibility;
+  trustSignalCount?: number;
+  trustDisputeCount?: number;
+  trustExplanation?: string[];
   provisional?: boolean;
   provisionalReason?: string;
   updatedAt: string;
@@ -525,6 +540,10 @@ function createSchema(title: string, primaryKey: string, required: string[]): Lo
       notes: stringProperty,
       severity: stringProperty,
       message: stringProperty,
+      trustStatus: stringProperty,
+      trustVisibility: stringProperty,
+      trustSignalCount: numberProperty,
+      trustDisputeCount: numberProperty,
       roleCounts: objectProperty,
       state: stringProperty,
       failureReason: stringProperty,

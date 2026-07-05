@@ -1,4 +1,19 @@
-import { ResourceReportPayloadSchema, SosCancelPayloadSchema, SosCreatePayloadSchema, WorkCenterCreatePayloadSchema, type ResourceReportKind, type ResourceReportPayload, type ResourceReportUrgency, type SosCancelPayload, type SosCreatePayload, type WorkCenterCreatePayload } from '@zona-cero/contracts';
+import {
+  DisputeCreateRequestSchema,
+  ResourceReportPayloadSchema,
+  SosCancelPayloadSchema,
+  SosCreatePayloadSchema,
+  TrustSignalCreateRequestSchema,
+  WorkCenterCreatePayloadSchema,
+  type DisputeCreateRequest,
+  type ResourceReportKind,
+  type ResourceReportPayload,
+  type ResourceReportUrgency,
+  type SosCancelPayload,
+  type SosCreatePayload,
+  type TrustSignalCreateRequest,
+  type WorkCenterCreatePayload,
+} from '@zona-cero/contracts';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
 import { Paragraph, Text, XStack, YStack } from 'tamagui';
@@ -265,6 +280,64 @@ export async function cancelOfflineSosSignal(input: {
       cellId: input.cellId,
       entityId: input.sosId,
       opType: 'sos.cancel',
+      payload,
+      hlc: stamp.hlc,
+      createdAtDevice: stamp.createdAtDevice,
+    },
+  });
+}
+
+export async function createOfflineTrustSignal(input: {
+  database: LocalOperationDatabase;
+  signer: OperationSigner;
+  incidentId: string;
+  cellId: string;
+  trustSignalId?: string;
+  payload: TrustSignalCreateRequest;
+}) {
+  const trustSignalId = input.trustSignalId ?? (await createNextTrustSignalId(input.database, input.incidentId));
+  const stamp = nextOperationStamp('trust-signal');
+  const payload = TrustSignalCreateRequestSchema.parse(input.payload);
+
+  return appendSignedOperationAndMaterialize({
+    database: input.database,
+    signer: input.signer,
+    input: {
+      actorKeyId: DEFAULT_ACTOR_KEY_ID,
+      deviceId: DEFAULT_DEVICE_ID,
+      incidentId: input.incidentId,
+      cellId: input.cellId,
+      entityId: trustSignalId,
+      opType: 'trust_signal.create',
+      payload,
+      hlc: stamp.hlc,
+      createdAtDevice: stamp.createdAtDevice,
+    },
+  });
+}
+
+export async function createOfflineDispute(input: {
+  database: LocalOperationDatabase;
+  signer: OperationSigner;
+  incidentId: string;
+  cellId: string;
+  disputeId?: string;
+  payload: DisputeCreateRequest;
+}) {
+  const disputeId = input.disputeId ?? (await createNextDisputeId(input.database, input.incidentId));
+  const stamp = nextOperationStamp('dispute');
+  const payload = DisputeCreateRequestSchema.parse(input.payload);
+
+  return appendSignedOperationAndMaterialize({
+    database: input.database,
+    signer: input.signer,
+    input: {
+      actorKeyId: DEFAULT_ACTOR_KEY_ID,
+      deviceId: DEFAULT_DEVICE_ID,
+      incidentId: input.incidentId,
+      cellId: input.cellId,
+      entityId: disputeId,
+      opType: 'dispute.create',
       payload,
       hlc: stamp.hlc,
       createdAtDevice: stamp.createdAtDevice,
@@ -806,6 +879,7 @@ function SosPanel({
                 Approximate/last known location: {formatSosLocation(signal)}
               </Text>
               <StatusBadge tone={signal.status === 'open' ? 'pending' : 'stale'} label={`${signal.syncState === 'pending' ? 'Saved on this device' : formatCanonicalValue(signal.syncState)} · no acknowledgement yet`} />
+              <StatusBadge tone={resolveTrustTone(signal.trustStatus)} label={formatTrustBadgeLabel(signal.trustStatus, signal.trustSignalCount, signal.trustDisputeCount)} />
             </YStack>
           ))
         )}
@@ -854,6 +928,7 @@ function LiveSelectedCenterPanel({
         </XStack>
 
         <StatusBadge tone="pending" label={activationLabel} />
+        <StatusBadge tone={resolveTrustTone(center.trustStatus)} label={formatTrustBadgeLabel(center.trustStatus, center.trustSignalCount, center.trustDisputeCount)} />
         <StatusBadge tone={presence?.status === 'active' ? 'success' : presence?.status === 'paused' ? 'warning' : 'stale'} label={trackingLabel} />
         <Text color="$text" fontSize="$sm" fontWeight="800">
           State: {center.status}
@@ -956,6 +1031,7 @@ function ResourceReportList({ heading, reports }: { heading: string; reports: Re
               Constraints: {report.constraints.length > 0 ? report.constraints.join(', ') : 'none'}
             </Text>
             <StatusBadge tone="pending" label={report.provisional ? 'Local pending · verify before acting' : 'Synced'} />
+            <StatusBadge tone={resolveTrustTone(report.trustStatus)} label={formatTrustBadgeLabel(report.trustStatus, report.trustSignalCount, report.trustDisputeCount)} />
           </YStack>
         ))
       )}
@@ -1044,6 +1120,27 @@ function resolveRoleSummary(presence: PresenceLocalView | null): { value: string
   }
 
   return { value: '0 active', isStale: false };
+}
+
+function formatTrustBadgeLabel(status: WorkCenterView['trustStatus'], signalCount = 0, disputeCount = 0): string {
+  const canonicalStatus = status ?? 'unverified';
+  return `Trust: ${formatCanonicalValue(canonicalStatus)} · ${signalCount} signals · ${disputeCount} disputes`;
+}
+
+function resolveTrustTone(status: WorkCenterView['trustStatus']) {
+  if (status === 'disputed' || status === 'degraded') {
+    return 'risk';
+  }
+
+  if (status === 'trusted_by_context' || status === 'field_attested') {
+    return 'success';
+  }
+
+  if (status === 'pending' || status === 'pending_corroboration') {
+    return 'pending';
+  }
+
+  return 'stale';
 }
 
 function formatCanonicalValue(value: string): string {
@@ -1168,4 +1265,18 @@ async function createNextSosSignalId(database: LocalOperationDatabase, incidentI
   const existingSignals = await database.views.sosSignals.findByIncident(incidentId);
 
   return `sos-local-${existingSignals.length + 1}`;
+}
+
+async function createNextTrustSignalId(database: LocalOperationDatabase, incidentId: string): Promise<string> {
+  const existingOperations = await database.syncOps.findByIncident(incidentId);
+  const existingTrustSignals = existingOperations.filter((operation) => 'opType' in operation && operation.opType === 'trust_signal.create');
+
+  return `trust-signal-local-${existingTrustSignals.length + 1}`;
+}
+
+async function createNextDisputeId(database: LocalOperationDatabase, incidentId: string): Promise<string> {
+  const existingOperations = await database.syncOps.findByIncident(incidentId);
+  const existingDisputes = existingOperations.filter((operation) => 'opType' in operation && operation.opType === 'dispute.create');
+
+  return `dispute-local-${existingDisputes.length + 1}`;
 }

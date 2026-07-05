@@ -234,4 +234,124 @@ describe('operation materializer', () => {
     ]);
   });
 
+  it('materializes trust signal and dispute operations as fallback trust states without local scoring rules', async () => {
+    const center = await op('work_center.create', 'center-1', { name: 'North school' });
+    const fieldAttestation = await op('trust_signal.create', 'trust-signal-1', {
+      channel: 'mobile',
+      externalId: 'actor-key-1',
+      subject: { entityType: 'work_center', entityId: 'center-1', incidentId: 'incident-1' },
+      signalType: 'field_attestation',
+      sourceKind: 'field_actor',
+    });
+    const dispute = await op('dispute.create', 'dispute-1', {
+      channel: 'mobile',
+      externalId: 'actor-key-2',
+      subject: { entityType: 'work_center', entityId: 'center-1', incidentId: 'incident-1' },
+      reason: 'context_mismatch',
+      description: 'Looks like the wrong triage point.',
+    });
+
+    const views = materializeOperations([center, fieldAttestation, dispute]);
+
+    expect(views.trustStates).toEqual([
+      expect.objectContaining({
+        trustStateId: 'incident-1:work_center:center-1',
+        status: 'disputed',
+        visibility: 'limited',
+        score: 0,
+        priorityWeight: 0,
+        signalCount: 1,
+        disputeCount: 1,
+        explanation: ['local_dispute_pending_canonical_scoring'],
+      }),
+    ]);
+    expect(views.workCenters).toEqual([
+      expect.objectContaining({
+        centerId: 'center-1',
+        trustStatus: 'disputed',
+        trustVisibility: 'limited',
+        trustSignalCount: 1,
+        trustDisputeCount: 1,
+      }),
+    ]);
+    expect(JSON.stringify(views)).not.toContain('PermissionSnapshot');
+    expect(JSON.stringify(views)).not.toContain('permissionSnapshots');
+  });
+
+  it('echoes canonical trust state from pulled operations instead of deriving mobile scoring', async () => {
+    const report = await op('resource_report.create', 'report-1', {
+      category: 'Water',
+      quantityApprox: '24 boxes',
+      urgency: 'high',
+      constraints: [],
+      reportKind: 'needed',
+    });
+    const trustSignal = await op('trust_signal.create', 'trust-signal-1', {
+      channel: 'mobile',
+      externalId: 'actor-key-1',
+      subject: { entityType: 'resource_report', entityId: 'report-1', incidentId: 'incident-1' },
+      signalType: 'context_corroboration',
+      sourceKind: 'system_context',
+      trustState: {
+        incidentId: 'incident-1',
+        subject: { entityType: 'resource_report', entityId: 'report-1', incidentId: 'incident-1' },
+        status: 'trusted_by_context',
+        visibility: 'elevated',
+        priorityWeight: 0.81,
+        score: 0.81,
+        explanation: ['status:trusted_by_context', 'server_canonical'],
+        signalCount: 3,
+        disputeCount: 0,
+        updatedAt: '2026-06-29T09:05:00.000Z',
+      },
+    });
+
+    const views = materializeOperations([report, trustSignal]);
+
+    expect(views.trustStates).toEqual([
+      expect.objectContaining({
+        status: 'trusted_by_context',
+        visibility: 'elevated',
+        priorityWeight: 0.81,
+        score: 0.81,
+        signalCount: 3,
+        disputeCount: 0,
+        provisionalReason: 'server_canonical',
+      }),
+    ]);
+    expect(views.resourceReports).toEqual([
+      expect.objectContaining({
+        reportId: 'report-1',
+        trustStatus: 'trusted_by_context',
+        trustSignalCount: 3,
+        trustDisputeCount: 0,
+      }),
+    ]);
+  });
+
+  it('projects degraded trust fallback onto local SOS alerts without changing SOS acknowledgement semantics', async () => {
+    const sos = await op('sos.create', 'sos-1', { severity: 'critical', message: 'Need evacuation support' });
+    const negativeSignal = await op('trust_signal.create', 'trust-signal-1', {
+      channel: 'mobile',
+      externalId: 'actor-key-1',
+      subject: { entityType: 'sos_alert', entityId: 'sos-1', incidentId: 'incident-1' },
+      signalType: 'negative_report',
+      sourceKind: 'field_actor',
+    });
+
+    const views = materializeOperations([sos, negativeSignal]);
+
+    expect(views.sosSignals).toEqual([
+      expect.objectContaining({
+        sosId: 'sos-1',
+        status: 'open',
+        syncState: 'pending',
+        provisionalReason: 'offline_pending_sync',
+        trustStatus: 'degraded',
+        trustVisibility: 'limited',
+        trustSignalCount: 1,
+      }),
+    ]);
+  });
+
 });
