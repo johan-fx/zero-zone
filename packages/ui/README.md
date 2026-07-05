@@ -1,27 +1,44 @@
 # @zona-cero/ui
 
-Shared operational design system for Zona Cero: the tokens (`.`) are framework-agnostic
-plain values consumed by `apps/mobile` (via Tamagui/React Native), and the DOM primitives
-(`./web`) are consumed by `apps/web-ui` (plain React DOM, no Tamagui dependency).
+Shared operational design system for Zona Cero. The root export provides framework-agnostic tokens and CSS-variable generation; `@zona-cero/ui/web` provides lightweight React DOM primitives for Web UI.
 
-Extracted from `apps/mobile/src/shared/theme/tokens.ts` once web and mobile needed the same
-status-tone palette, radii, and spacing scale — see `docs/design-system-visual-acceptance.md`
-and `docs/mockups` for the visual reference these tokens are calibrated against.
+## Ownership boundary
+
+| Owns | Does not own |
+|---|---|
+| Design tokens, status tones, CSS variable generation, small DOM primitives | App-specific layout decisions, business copy, mobile native component wiring, one-off screen styles |
 
 ## Exports
 
-- `@zona-cero/ui` — `operationalThemePalettes`, `operationalRadii`, `operationalControlHeights`,
-  `operationalFontSizes`, `operationalLineHeights`, `operationalSpacing`, `operationalOpacity`,
-  `operationalZIndex`, `operationalLayout`, `statusToneLabels`, `statusToneMarkers`, and
-  `generateOperationalCss()` / `generateThemeCss()` to turn tokens into `--zc-*` CSS custom
-  properties.
-- `@zona-cero/ui/web` — `StatusBadge`, `Card`, `SectionHeader`, `MetaRow`: small React DOM
-  components styled entirely through the `--zc-*` variables, matching the tone-coded card and
-  badge language from the mockups (`operational-map.png`, `recommendations.png`,
-  `sos-and-outbox.png`).
+| Export | Purpose | Consumers |
+|---|---|---|
+| `@zona-cero/ui` | Operational palettes, radii, spacing, typography, z-index, status tone metadata, `generateOperationalCss()`, `generateThemeCss()` | Mobile and Web UI |
+| `@zona-cero/ui/web` | `StatusBadge`, `Card`, `SectionHeader`, `MetaRow` plus primitive CSS | Web UI |
 
-## Adding to mobile or web
+## Commands
 
-Both apps consume this via `"@zona-cero/ui": "workspace:*"`. Mobile only needs the root export
-(tokens); web-ui needs both the root export (to inject the generated CSS) and `./web` (for the
-components).
+| Task | Command |
+|---|---|
+| Typecheck | `pnpm --filter @zona-cero/ui typecheck` |
+| Test | `pnpm --filter @zona-cero/ui test` |
+| Strict check | `pnpm --filter @zona-cero/ui test:strict` |
+| Build | `pnpm --filter @zona-cero/ui build` |
+
+## Tests
+
+- Token and CSS-variable coverage: `packages/ui/src/tokens.test.ts`, `packages/ui/src/css-variables.test.ts`.
+- DOM primitive coverage: `packages/ui/src/web/components.test.tsx`.
+- Run visual QA when token, radius, color, or primitive changes affect visible screens.
+
+## Consumers
+
+- `apps/mobile` consumes root tokens for Tamagui/React Native alignment.
+- `apps/web-ui` consumes root tokens and `@zona-cero/ui/web` primitives.
+- Design docs and mockups in `docs/mockups` provide the visual reference.
+
+## Change rules
+
+- Change shared tokens before patching local app styles.
+- Keep root exports framework-agnostic; React DOM code belongs under `./web`.
+- Add tests for new tokens, generated CSS variables, and primitives.
+- Run `pnpm visual:audit:check` or the visual QA runbook for visible design-system changes.
