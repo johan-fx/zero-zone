@@ -26,7 +26,7 @@ type RunnerOptions = {
   waitMs?: number;
 };
 
-type RunnerScenario = 'full' | 'natural-sos' | 'family-reunification' | 'dispatch' | 'incident-join' | 'social-trust';
+type RunnerScenario = 'full' | 'natural-sos' | 'family-reunification' | 'dispatch' | 'incident-join' | 'social-trust' | 'proactive-updates';
 
 type SentStep = {
   label: string;
@@ -48,6 +48,7 @@ type RunnerResult = {
   familyReunificationMarker: string;
   dispatchMarker: string;
   incidentJoinMarker: string;
+  proactiveUpdatesMarker: string;
   dispatchTaskId?: string;
   preConfirmationMarkerVisible?: boolean;
   botUsername: string;
@@ -121,9 +122,10 @@ export async function runTelegramStagingFlow(options: RunnerOptions = {}): Promi
   const dispatchMarker = `${marker}-dispatch`;
   const incidentJoinMarker = `${marker}-incident-join`;
   const socialTrustMarker = `${marker}-social-trust`;
+  const proactiveUpdatesMarker = `${marker}-proactive-updates`;
   const scenario = options.scenario ?? 'full';
   const dispatchTaskId = scenario === 'dispatch' ? buildDispatchTaskId(marker) : undefined;
-  const resultMarker = scenario === 'natural-sos' ? naturalSosMarker : scenario === 'family-reunification' ? familyReunificationMarker : scenario === 'dispatch' ? dispatchMarker : scenario === 'incident-join' ? incidentJoinMarker : scenario === 'social-trust' ? socialTrustMarker : naturalWorkCenterMarker;
+  const resultMarker = scenario === 'natural-sos' ? naturalSosMarker : scenario === 'family-reunification' ? familyReunificationMarker : scenario === 'dispatch' ? dispatchMarker : scenario === 'incident-join' ? incidentJoinMarker : scenario === 'social-trust' ? socialTrustMarker : scenario === 'proactive-updates' ? proactiveUpdatesMarker : naturalWorkCenterMarker;
   const safeSteps = scenario === 'natural-sos'
     ? buildNaturalSosTelegramSequence(env, { marker })
     : scenario === 'family-reunification'
@@ -134,7 +136,9 @@ export async function runTelegramStagingFlow(options: RunnerOptions = {}): Promi
           ? buildIncidentJoinTelegramSequence(env, { marker, incidentJoinMarker })
           : scenario === 'social-trust'
             ? buildSocialTrustTelegramSequence(env, { socialTrustMarker })
-            : buildSafeTelegramSequence(env, { marker, commandWorkCenterMarker, naturalWorkCenterMarker });
+            : scenario === 'proactive-updates'
+              ? buildProactiveUpdatesTelegramSequence(env, { proactiveUpdatesMarker })
+              : buildSafeTelegramSequence(env, { marker, commandWorkCenterMarker, naturalWorkCenterMarker });
   const sensitiveSteps = scenario === 'full' ? buildSensitiveTelegramHelpers(marker).map((step) => ({ ...step, skipped: !options.includeSensitiveFlows })) : [];
   const steps: TelegramStep[] = [...safeSteps, ...sensitiveSteps];
 
@@ -147,6 +151,7 @@ export async function runTelegramStagingFlow(options: RunnerOptions = {}): Promi
       familyReunificationMarker,
       dispatchMarker,
       incidentJoinMarker,
+      proactiveUpdatesMarker,
       ...(dispatchTaskId ? { dispatchTaskId } : {}),
       botUsername: env.TELEGRAM_E2E_BOT_USERNAME,
       incidentId: env.E2E_INCIDENT_ID,
@@ -196,6 +201,7 @@ export async function runTelegramStagingFlow(options: RunnerOptions = {}): Promi
     familyReunificationMarker,
     dispatchMarker,
     incidentJoinMarker,
+    proactiveUpdatesMarker,
     ...(dispatchTaskId ? { dispatchTaskId } : {}),
     preConfirmationMarkerVisible,
     botUsername: env.TELEGRAM_E2E_BOT_USERNAME,
@@ -489,6 +495,26 @@ function buildSocialTrustTelegramSequence(env: RequiredEnv, markers: { socialTru
   ];
 }
 
+function buildProactiveUpdatesTelegramSequence(env: RequiredEnv, markers: { proactiveUpdatesMarker: string }): TelegramStep[] {
+  const demoUpdateId = `upd_${slugForE2eId(markers.proactiveUpdatesMarker)}`;
+  const telegramOperationalCellId = 'connected-telegram';
+  return [
+    { label: 'proactive-updates-command-list', message: `/updates ${env.E2E_INCIDENT_ID} ${telegramOperationalCellId}` },
+    { label: 'proactive-updates-command-ack', message: `/ack ${env.E2E_INCIDENT_ID} ${demoUpdateId}` },
+    { label: 'proactive-updates-command-open', message: `/open ${env.E2E_INCIDENT_ID} ${demoUpdateId}` },
+    { label: 'proactive-updates-command-corroborate', message: `/corroborate ${env.E2E_INCIDENT_ID} ${demoUpdateId} 0.7` },
+    { label: 'proactive-updates-command-dispute', message: `/dispute ${env.E2E_INCIDENT_ID} ${demoUpdateId} context_mismatch` },
+    {
+      label: 'proactive-updates-natural-request',
+      message: `Muéstrame las actualizaciones operativas proactivas para ${env.E2E_INCIDENT_ID}; solo necesito contexto seguro para decidir el siguiente paso.`,
+    },
+    {
+      label: 'proactive-updates-natural-boundary',
+      message: `Una actualización proactiva ${markers.proactiveUpdatesMarker} no concede permisos sensibles, no sustituye rescate y no asigna respondedores; solo ACK, abrir detalle, corroborar contexto o disputar.`,
+    },
+  ];
+}
+
 function buildIncidentJoinTelegramSequence(env: RequiredEnv, markers: { marker: string; incidentJoinMarker: string }): TelegramStep[] {
   const { marker, incidentJoinMarker } = markers;
   return [
@@ -583,7 +609,7 @@ async function main(): Promise<void> {
   }
 
   if (command === 'help' || command === '--help' || command === '-h') {
-    console.log('Usage: tsx e2e/telegram/staging-telegram-runner.ts <auth|dry-run|run> [--scenario full|natural-sos|family-reunification|dispatch|incident-join|social-trust] [--include-sensitive-flows] [--json]');
+    console.log('Usage: tsx e2e/telegram/staging-telegram-runner.ts <auth|dry-run|run> [--scenario full|natural-sos|family-reunification|dispatch|incident-join|social-trust|proactive-updates] [--include-sensitive-flows] [--json]');
     return;
   }
 
@@ -594,7 +620,7 @@ function readScenarioArg(argv: string[]): RunnerScenario {
   const index = argv.indexOf('--scenario');
   const value = index >= 0 ? argv[index + 1] : undefined;
   if (value === undefined) return 'full';
-  if (value === 'full' || value === 'natural-sos' || value === 'family-reunification' || value === 'dispatch' || value === 'incident-join' || value === 'social-trust') return value;
+  if (value === 'full' || value === 'natural-sos' || value === 'family-reunification' || value === 'dispatch' || value === 'incident-join' || value === 'social-trust' || value === 'proactive-updates') return value;
   throw new Error(`Unknown Telegram E2E scenario: ${value}`);
 }
 

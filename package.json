@@ -62,7 +62,9 @@
     "e2e:telegram:dry-run:incident-join": "tsx e2e/telegram/staging-telegram-runner.ts dry-run --scenario incident-join",
     "e2e:staging:telegram:incident-join": "pnpm e2e:staging:telegram --grep \"incident join\"",
     "e2e:telegram:dry-run:social-trust": "tsx e2e/telegram/staging-telegram-runner.ts dry-run --scenario social-trust",
-    "e2e:slice20:social-trust": "playwright test e2e/social-trust.spec.ts"
+    "e2e:slice20:social-trust": "playwright test e2e/social-trust.spec.ts",
+    "e2e:telegram:dry-run:proactive-updates": "tsx e2e/telegram/staging-telegram-runner.ts dry-run --scenario proactive-updates",
+    "e2e:slice21:proactive-updates": "playwright test e2e/proactive-social-updates.spec.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.0",

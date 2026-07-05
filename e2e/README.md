@@ -10,6 +10,7 @@ This folder contains Playwright E2E coverage and the opt-in real staging Telegra
 | Open Playwright UI | `pnpm e2e:ui` | Useful when debugging local browser flows. |
 | Typecheck Telegram E2E helpers | `pnpm e2e:telegram:typecheck` | Safe; no Telegram or staging calls. |
 | Run Slice 20 social-trust E2E | `pnpm e2e:slice20:social-trust` | Reduced local flow for trust API lifecycle plus Telegram natural-language dry-run. |
+| Run Slice 21 proactive updates E2E | `pnpm e2e:slice21:proactive-updates` | Targeted local API flow plus Telegram proactive-updates dry-run. |
 | Preview Telegram staging messages | `pnpm e2e:telegram:dry-run` | Safe; does not contact Telegram. |
 | Run real Telegram staging E2E | `pnpm e2e:staging:telegram` | Opt-in; requires local staging config and mutates staging. |
 
@@ -42,6 +43,20 @@ pnpm e2e:slice20:social-trust
 This reduced flow runs only `e2e/social-trust.spec.ts`. It covers the command/API trust lifecycle locally by joining web identities, creating a self-declaration, adding peer corroboration, creating a dispute, forcing a degraded state with a negative signal, and asserting sensitive permission fields are not returned or granted by trust responses.
 
 The natural-language path is covered through the deterministic Telegram dry-run scenario `social-trust`. It does not require secrets or mutate staging; it verifies the planned natural wording for contextual corroboration, dispute, and the product boundary that social trust does not grant sensitive permissions or replace coordination/rescue.
+
+
+## Slice 21 proactive updates E2E
+
+```bash
+pnpm e2e:slice21:proactive-updates
+pnpm e2e:telegram:dry-run:proactive-updates
+```
+
+The targeted local flow runs `e2e/proactive-social-updates.spec.ts`. It creates proactive operational updates through connected resource/SOS API paths, pulls the update inbox for `incident-zc-demo/connected-telegram`, exercises ACK/open/link/corroborate/dispute actions, verifies trust/audit outputs, checks a non-member cannot act, and asserts volunteer permissions are not escalated by social trust or update actions.
+
+The Telegram dry-run scenario `proactive-updates` is safe: it does not contact Telegram or mutate staging. It prints the planned command messages (`/updates`, `/ack`, `/open`, `/corroborate`, `/dispute`) plus natural-language copy that preserves the product boundary: proactive updates provide context only and do not grant sensitive permissions, replace rescue, or assign responders.
+
+No real-staging proactive-updates gate is currently registered. The active Slice 21 gates are the local targeted flow and the Telegram dry-run only; real staging will stay README-tracked until the runner can seed or discover a concrete operational update id before sending action commands.
 
 ## Real staging Telegram E2E
 
@@ -81,6 +96,7 @@ Dry-runs print the planned E2E messages plus a generated marker. They do not con
 | Dispatch | `pnpm e2e:telegram:dry-run:dispatch` |
 | Incident join onboarding | `pnpm e2e:telegram:dry-run:incident-join` |
 | Slice 20 social trust | `pnpm e2e:telegram:dry-run:social-trust` |
+| Slice 21 proactive updates | `pnpm e2e:telegram:dry-run:proactive-updates` |
 
 ### Real staging run
 
@@ -107,6 +123,7 @@ pnpm e2e:staging:telegram:incident-join
 | Family reunification | Keeps sensitive details out of Telegram and issues a private web link after incident selection for command and natural-language paths. |
 | Dispatch | Exercises command or natural-language dispatch coordination while preserving API-owned task validation. |
 | Incident join onboarding | Covers explicit `/start` onboarding plus natural-language join. Extracted desired roles remain candidate-only until the human confirms. |
+| Proactive updates | Not registered as a real staging gate yet; local API E2E and Telegram dry-run are the active Slice 21 gates until webhook action commands can use a real seeded update id. |
 
 ## Sensitive helpers
 
