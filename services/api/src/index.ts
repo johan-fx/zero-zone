@@ -42,6 +42,8 @@ import {
   OperationalUpdateLinkRequestSchema,
   OperationalUpdateLinkResponseSchema,
   OperationalUpdatePullResponseSchema,
+  OperationalUpdatePreferenceRequestSchema,
+  OperationalUpdatePreferenceResponseSchema,
   OperationalUpdateReasonCodeSchema,
   OperationalEventSchema,
   PendingSignedOperationSchema,
@@ -1038,6 +1040,30 @@ app.post('/incidents/:incidentId/updates/:updateId/links', async (c) => {
   };
 
   return c.json(OperationalUpdateLinkResponseSchema.parse(response));
+});
+
+// Fase 2 — opt-out/quieting: un miembro puede silenciar las updates proactivas de match
+// dirigidas a él. No afecta a SOS/críticos ni al feed general de celda.
+app.post('/incidents/:incidentId/updates/preferences', async (c) => {
+  const incident = await findIncident(c.env.DB, c.req.param('incidentId'));
+  if (!incident) {
+    return c.json({ error: 'not_found' }, 404);
+  }
+
+  const parsed = OperationalUpdatePreferenceRequestSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
+    return c.json({ error: 'invalid_payload', issues: parsed.error.issues }, 400);
+  }
+
+  const actor = await resolveOperationalUpdateActor(c.env.DB, incident.incidentId, parsed.data.channel, parsed.data.externalId);
+  if (!actor.success) {
+    return c.json({ error: actor.error }, actor.status);
+  }
+
+  const actorHash = await hashString(`${parsed.data.channel}:${parsed.data.externalId}`);
+  await setProactiveUpdateOptout(c.env.DB, actorHash, parsed.data.quietProactiveUpdates, new Date().toISOString());
+
+  return c.json(OperationalUpdatePreferenceResponseSchema.parse({ quietProactiveUpdates: parsed.data.quietProactiveUpdates }));
 });
 
 app.post('/sync/push', async (c) => {
@@ -3510,9 +3536,11 @@ async function upsertOperationalUpdate(db: D1Database, input: OperationalUpdateS
     input.updatedAt,
   ).run();
 
-  const directedTargets = dedupeTargets(targeting?.targets ?? []);
-  if (directedTargets.length > 0) {
-    for (const target of directedTargets) {
+  // Con `targeting` presente, la entrega es EXPLÍCITA: solo los actores listados reciben la
+  // update. Una lista vacía = update suprimida (existe como registro pero sin audiencia ni
+  // delivery, invisible para todos) — así el opt-out no se reexpone vía broadcast de celda.
+  if (targeting) {
+    for (const target of dedupeTargets(targeting.targets)) {
       const targetSlug = target.targetHash.slice(0, 16);
       await db.prepare(
         `INSERT OR IGNORE INTO operational_update_audiences (audience_id, update_id, incident_id, cell_id, channel, role)
@@ -4091,57 +4119,109 @@ async function insertResourceReport(
         updatedAt: timestamp,
         metadata: { reportKind: payload.reportKind, urgency: payload.urgency },
       },
-      match.targets.length > 0 ? { targets: match.targets } : undefined,
+      // broadcast -> sin targeting (feed de celda); targeted/suppressed -> targeting explícito
+      // (lista vacía en suppressed = update sin audiencia, invisible).
+      match.mode === 'broadcast' ? undefined : { targets: match.mode === 'targeted' ? match.targets : [] },
     );
   }
 }
 
+// Fase 2 — tope de audiencia por update de match (anti-convergencia/anti-saturación): aunque
+// coincidan muchas contrapartes, se dirige solo a las de mayor score de match.
+const MAX_PROACTIVE_MATCH_TARGETS = 20;
+
 // Reutiliza el matcher de dominio (categoría + celda/centro) para hallar las contrapartes de
 // un nuevo reporte y devuelve a quién dirigir la update (por `target_hash` del reportante) y
 // el reasonCode honesto. Solo contrapartes con identidad connected conocida son direccionables.
+// Aplica opt-out por actor y tope de audiencia (Fase 2).
+type ResourceMatchTargeting =
+  | { mode: 'broadcast'; reasonCode: OperationalUpdateReasonCode }
+  | { mode: 'suppressed'; reasonCode: OperationalUpdateReasonCode }
+  | { mode: 'targeted'; reasonCode: OperationalUpdateReasonCode; targets: OperationalUpdateTarget[] };
+
 async function resolveResourceMatchTargeting(
   db: D1Database,
   incidentId: string,
   newResourceReportId: string,
   reportKind: ResourceReportPayload['reportKind'],
-): Promise<{ reasonCode: OperationalUpdateReasonCode; targets: OperationalUpdateTarget[] }> {
+): Promise<ResourceMatchTargeting> {
   const reports = await listResourceReports(db, incidentId);
   const matches = matchResourceReports(reports);
+  // `matches` viene ordenado por score desc; preservamos ese orden para el tope de audiencia.
   const counterpartyIds = reportKind === 'needed'
     ? matches.filter((m) => m.need.resourceReportId === newResourceReportId).map((m) => m.surplus.resourceReportId)
     : matches.filter((m) => m.surplus.resourceReportId === newResourceReportId).map((m) => m.need.resourceReportId);
 
+  // Sin ninguna contraparte: reporte nuevo sin coincidencia -> novedad general de celda (feed).
   if (counterpartyIds.length === 0) {
-    return { reasonCode: 'resource.report.cell_broadcast', targets: [] };
+    return { mode: 'broadcast', reasonCode: 'resource.report.cell_broadcast' };
   }
 
-  const targets = await selectResourceReportTargets(db, incidentId, counterpartyIds);
-  if (targets.length === 0) {
-    // Hubo match, pero las contrapartes no tienen identidad direccionable (p.ej. reportes
-    // materializados por sync mobile sin externalId). No hacemos broadcast: la update queda
-    // sin audiencia dirigida y visible solo por el feed general de celda.
-    return { reasonCode: 'resource.report.cell_broadcast', targets: [] };
+  const targetsByReportId = await selectResourceReportTargets(db, incidentId, counterpartyIds);
+  // Reordenar por score (orden de counterpartyIds) y deduplicar contrapartes.
+  const orderedTargets: OperationalUpdateTarget[] = [];
+  const seenReportIds = new Set<string>();
+  for (const reportId of counterpartyIds) {
+    if (seenReportIds.has(reportId)) continue;
+    seenReportIds.add(reportId);
+    const target = targetsByReportId.get(reportId);
+    if (target) orderedTargets.push(target);
+  }
+
+  const addressable = await filterQuietedTargets(db, orderedTargets);
+  const capped = addressable.slice(0, MAX_PROACTIVE_MATCH_TARGETS);
+  if (capped.length === 0) {
+    // Hubo match, pero no queda audiencia direccionable (contrapartes sin identidad connected
+    // —p.ej. reportes materializados por sync mobile— o todas con opt-out). NO se hace broadcast:
+    // la update se suprime (sin push) para no reexponer a quien silenció ni saturar la celda.
+    return { mode: 'suppressed', reasonCode: 'resource.report.cell_broadcast' };
   }
 
   const reasonCode: OperationalUpdateReasonCode = reportKind === 'needed'
     ? 'resource.match.need_for_open_offer'
     : 'resource.match.offer_for_open_need';
-  return { reasonCode, targets };
+  return { mode: 'targeted', reasonCode, targets: capped };
 }
 
-async function selectResourceReportTargets(db: D1Database, incidentId: string, resourceReportIds: string[]): Promise<OperationalUpdateTarget[]> {
+async function selectResourceReportTargets(db: D1Database, incidentId: string, resourceReportIds: string[]): Promise<Map<string, OperationalUpdateTarget>> {
   const uniqueIds = [...new Set(resourceReportIds)];
+  const byReportId = new Map<string, OperationalUpdateTarget>();
   if (uniqueIds.length === 0) {
-    return [];
+    return byReportId;
   }
   const placeholders = uniqueIds.map(() => '?').join(', ');
   const { results } = await db.prepare(
-    `SELECT source_channel AS channel, reporter_target_hash AS targetHash
+    `SELECT resource_report_id AS resourceReportId, source_channel AS channel, reporter_target_hash AS targetHash
      FROM resource_reports
      WHERE incident_id = ? AND resource_report_id IN (${placeholders})
        AND reporter_target_hash IS NOT NULL AND source_channel IS NOT NULL`,
-  ).bind(incidentId, ...uniqueIds).all<{ channel: Channel; targetHash: string }>();
-  return results.map((row) => ({ channel: row.channel, targetHash: row.targetHash }));
+  ).bind(incidentId, ...uniqueIds).all<{ resourceReportId: string; channel: Channel; targetHash: string }>();
+  for (const row of results) {
+    byReportId.set(row.resourceReportId, { channel: row.channel, targetHash: row.targetHash });
+  }
+  return byReportId;
+}
+
+// Excluye a los actores que han optado por silenciar (opt-out) las updates proactivas de match.
+async function filterQuietedTargets(db: D1Database, targets: OperationalUpdateTarget[]): Promise<OperationalUpdateTarget[]> {
+  if (targets.length === 0) {
+    return targets;
+  }
+  const hashes = [...new Set(targets.map((target) => target.targetHash))];
+  const placeholders = hashes.map(() => '?').join(', ');
+  const { results } = await db.prepare(
+    `SELECT actor_hash AS actorHash FROM proactive_update_optouts WHERE quiet = 1 AND actor_hash IN (${placeholders})`,
+  ).bind(...hashes).all<{ actorHash: string }>();
+  const quieted = new Set(results.map((row) => row.actorHash));
+  return targets.filter((target) => !quieted.has(target.targetHash));
+}
+
+async function setProactiveUpdateOptout(db: D1Database, actorHash: string, quiet: boolean, now: string): Promise<void> {
+  await db.prepare(
+    `INSERT INTO proactive_update_optouts (actor_hash, quiet, updated_at)
+     VALUES (?, ?, ?)
+     ON CONFLICT(actor_hash) DO UPDATE SET quiet = excluded.quiet, updated_at = excluded.updated_at`,
+  ).bind(actorHash, quiet ? 1 : 0, now).run();
 }
 
 async function listResourceReports(db: D1Database, incidentId: string): Promise<ResourceReportSummary[]> {
@@ -5464,6 +5544,17 @@ function createTelegramOperationalUpdateApiPorts(db: D1Database): TelegramOperat
     },
     async disputeUpdate(incidentId, updateId, request) {
       return callOperationalUpdateDisputeAction(db, incidentId, updateId, request);
+    },
+    async setProactivePreference(incidentId, request) {
+      const actor = await resolveOperationalUpdateActor(db, incidentId, request.channel, request.externalId);
+      if (!actor.success) {
+        throw new Error(actor.error);
+      }
+
+      const actorHash = await hashString(`${request.channel}:${request.externalId}`);
+      await setProactiveUpdateOptout(db, actorHash, request.quietProactiveUpdates, new Date().toISOString());
+
+      return OperationalUpdatePreferenceResponseSchema.parse({ quietProactiveUpdates: request.quietProactiveUpdates });
     },
   };
 }

@@ -321,6 +321,7 @@ function createOperationalUpdatePorts(overrides: Partial<TelegramOperationalUpda
         updatedAt: '2026-07-05T10:04:00.000Z',
       },
     }),
+    setProactivePreference: vi.fn().mockResolvedValue({ quietProactiveUpdates: true }),
     ...overrides,
   };
 }
@@ -655,11 +656,44 @@ describe('telegram channel flows', () => {
     expect(open.responseText).toContain('does not grant sensitive permissions');
   });
 
+  it('mutes proactive match alerts with /quiet and confirms SOS and cell feed still flow', async () => {
+    const ports = createOperationalUpdatePorts();
+
+    const quiet = await handleTelegramOperationalUpdateCommand(telegramUserUpdate('/quiet incident-zc-demo'), ports);
+
+    expect(quiet).toMatchObject({ handled: true, command: '/quiet' });
+    expect(ports.setProactivePreference).toHaveBeenCalledWith('incident-zc-demo', {
+      channel: 'telegram',
+      externalId: '1001',
+      quietProactiveUpdates: true,
+    });
+    expect(quiet.responseText).toContain('Silenciadas las alertas proactivas de match');
+    expect(quiet.responseText).toContain('SOS');
+    expect(quiet.responseText).toContain('/unquiet');
+  });
+
+  it('reactivates proactive match alerts with /unquiet', async () => {
+    const ports = createOperationalUpdatePorts({
+      setProactivePreference: vi.fn().mockResolvedValue({ quietProactiveUpdates: false }),
+    });
+
+    const unquiet = await handleTelegramOperationalUpdateCommand(telegramUserUpdate('/unquiet incident-zc-demo'), ports);
+
+    expect(unquiet).toMatchObject({ handled: true, command: '/unquiet' });
+    expect(ports.setProactivePreference).toHaveBeenCalledWith('incident-zc-demo', {
+      channel: 'telegram',
+      externalId: '1001',
+      quietProactiveUpdates: false,
+    });
+    expect(unquiet.responseText).toContain('Reactivadas las alertas proactivas de match');
+  });
+
   it('builds HTTP ports against the operational update endpoints', async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify(operationalUpdatePullResponseFixture), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(operationalUpdateActionResponseFixture), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify(operationalUpdateActionResponseFixture), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ quietProactiveUpdates: true }), { status: 200 }));
     const ports = createTelegramOperationalUpdateHttpPorts({ baseUrl: 'https://api.example.test', fetch: fetchMock });
 
     await ports.listUpdates('incident-zc-demo', 'connected-telegram', { cursor: 'cursor-1', limit: 3, channel: 'telegram', externalId: '1001' });
@@ -667,6 +701,11 @@ describe('telegram channel flows', () => {
       channel: 'telegram',
       externalId: '1001',
       idempotencyKey: 'ack-once',
+    });
+    const preference = await ports.setProactivePreference('incident-zc-demo', {
+      channel: 'telegram',
+      externalId: '1001',
+      quietProactiveUpdates: true,
     });
 
     expect(fetchMock).toHaveBeenNthCalledWith(
@@ -679,6 +718,12 @@ describe('telegram channel flows', () => {
       new URL('https://api.example.test/incidents/incident-zc-demo/updates/upd_sos_public_ref/ack'),
       expect.objectContaining({ method: 'POST' }),
     );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      new URL('https://api.example.test/incidents/incident-zc-demo/updates/preferences'),
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(preference).toEqual({ quietProactiveUpdates: true });
   });
 
   it('parses every valid incident join state variant and round-trips through JSON', () => {

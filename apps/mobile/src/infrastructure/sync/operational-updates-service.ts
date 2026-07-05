@@ -1,6 +1,7 @@
 import {
   OperationalUpdateActionResponseSchema,
   OperationalUpdateLinkResponseSchema,
+  OperationalUpdatePreferenceResponseSchema,
   OperationalUpdatePullResponseSchema,
   type Channel,
   type OperationalUpdate,
@@ -10,6 +11,7 @@ import {
   type OperationalUpdateDeliveryStatus,
   type OperationalUpdateDisputeRequest,
   type OperationalUpdateLinkResponse,
+  type OperationalUpdatePreferenceResponse,
   type OperationalUpdatePullResponse,
 } from '@zona-cero/contracts';
 import type { LocalOperationDatabase, OperationalUpdateActionLocalDocument, OperationalUpdateLocalView } from '@/infrastructure/local-db/local-db';
@@ -28,9 +30,17 @@ export type OperationalUpdateActionInput = {
   request: OperationalUpdateActionRequest | OperationalUpdateDisputeRequest;
 };
 
+export type OperationalUpdatePreferenceInput = {
+  incidentId: string;
+  quietProactiveUpdates: boolean;
+};
+
 export type OperationalUpdatesClient = {
   list(input: OperationalUpdateListInput): Promise<OperationalUpdatePullResponse>;
   sendAction(input: OperationalUpdateActionInput): Promise<OperationalUpdateActionResponse | OperationalUpdateLinkResponse>;
+  // Slice 21.1 Fase 2 — opt-out/quieting. Optional so degraded/local-only implementations
+  // (e.g. the "unavailable" service on liveOperations) do not need a network method.
+  setPreference?(input: OperationalUpdatePreferenceInput): Promise<OperationalUpdatePreferenceResponse>;
 };
 
 export type CreateHttpOperationalUpdatesClientOptions = {
@@ -113,6 +123,20 @@ export function createHttpOperationalUpdatesClient({ baseUrl, fetchImpl = fetch,
       return input.actionType === 'link'
         ? OperationalUpdateLinkResponseSchema.parse(body)
         : OperationalUpdateActionResponseSchema.parse(body);
+    },
+
+    async setPreference(input) {
+      const response = await fetchImpl(`${normalizedBaseUrl}${updatePreferencePath(input)}`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(await resolveHeaders(headers)),
+        },
+        body: JSON.stringify({ channel, externalId: actorExternalId, quietProactiveUpdates: input.quietProactiveUpdates }),
+      });
+      const body = await readJsonResponse(response, 'Operational update preference update failed');
+
+      return OperationalUpdatePreferenceResponseSchema.parse(body);
     },
   };
 }
@@ -365,6 +389,10 @@ function updateActionPath(input: { incidentId: string; updateId: string; actionT
   const segment = input.actionType === 'link' ? 'links' : input.actionType;
 
   return `/incidents/${encodeURIComponent(input.incidentId)}/updates/${encodeURIComponent(input.updateId)}/${segment}`;
+}
+
+function updatePreferencePath(input: { incidentId: string }): string {
+  return `/incidents/${encodeURIComponent(input.incidentId)}/updates/preferences`;
 }
 
 function resolveLifecycleState(update: OperationalUpdate, now: string): OperationalUpdateLocalView['lifecycleState'] {

@@ -348,4 +348,54 @@ describe('operational updates API', () => {
     // Privacy: targeting must not leak reporter identities into the payload.
     expect(JSON.stringify(demanderUpdates)).not.toMatch(/telegram-demander-water|telegram-supplier-water/i);
   });
+
+  it('suppresses proactive match updates for an actor who opted out (Slice 21.1 Fase 2)', async () => {
+    const demander = 'telegram-quiet-demander';
+    const supplier = 'telegram-quiet-supplier';
+
+    for (const externalId of [demander, supplier]) {
+      await request('/incidents/incident-zc-demo/join', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...telegramIncidentJoinRequestFixture, externalId, role: 'volunteer' }),
+      });
+    }
+
+    // A non-member cannot set preferences.
+    const forbidden = await request('/incidents/incident-zc-demo/updates/preferences', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ channel: 'telegram', externalId: 'telegram-not-a-member', quietProactiveUpdates: true }),
+    });
+    expect(forbidden.status).toBe(403);
+
+    // Demander asks for water, then opts out of proactive match updates.
+    await request('/incidents/incident-zc-demo/resource-reports', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ channel: 'telegram', externalId: demander, payload: { category: 'blankets', quantityApprox: '10', urgency: 'high', constraints: [], reportKind: 'needed' } }),
+    });
+    const optOut = await request('/incidents/incident-zc-demo/updates/preferences', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ channel: 'telegram', externalId: demander, quietProactiveUpdates: true }),
+    });
+    expect(optOut.status).toBe(200);
+    await expect(optOut.json()).resolves.toMatchObject({ quietProactiveUpdates: true });
+
+    // Supplier offers matching blankets -> would normally target the demander, but they are quieted.
+    await request('/incidents/incident-zc-demo/resource-reports', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ channel: 'telegram', externalId: supplier, payload: { category: 'blankets', quantityApprox: '15', urgency: 'medium', constraints: [], reportKind: 'surplus' } }),
+    });
+
+    const demanderUpdates = OperationalUpdatePullResponseSchema.parse(
+      await (await request(`/incidents/incident-zc-demo/cells/connected-telegram/updates?limit=20&channel=telegram&externalId=${demander}`)).json(),
+    );
+    expect(
+      demanderUpdates.updates.some((update) => update.reasonCode === 'resource.match.offer_for_open_need'),
+      'quieted actor must not receive the targeted proactive match update',
+    ).toBe(false);
+  });
 });

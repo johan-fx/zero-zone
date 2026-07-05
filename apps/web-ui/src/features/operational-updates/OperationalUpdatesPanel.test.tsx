@@ -151,6 +151,37 @@ describe("OperationalUpdatesPanel", () => {
     expect(screen.getByText(/Possible match, not a reservation/i)).toBeInTheDocument();
   });
 
+  it("mutes proactive match alerts through the preferences endpoint while keeping SOS and cell feed", async () => {
+    const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/incidents/incident-zc-demo/cells/cell-zc-demo/updates?limit=10&channel=web-ui&externalId=web-user-1001")) {
+        return jsonResponse({ updates: [updateFixture], cursor: null, hasMore: false });
+      }
+      if (url.endsWith("/incidents/incident-zc-demo/updates/preferences")) {
+        return jsonResponse({ quietProactiveUpdates: true });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    render(<OperationalUpdatesPanel incidentId="incident-zc-demo" cellId="cell-zc-demo" externalId="web-user-1001" />);
+
+    const toggle = await screen.findByRole("checkbox", { name: /Mute proactive match alerts/i });
+    expect(screen.getByText(/You keep receiving SOS and critical alerts and your cell feed/i)).toBeInTheDocument();
+
+    fireEvent.click(toggle);
+
+    await waitFor(() =>
+      expect(fetcher).toHaveBeenCalledWith(
+        "http://127.0.0.1:8787/incidents/incident-zc-demo/updates/preferences",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.stringContaining('"quietProactiveUpdates":true'),
+        }),
+      ),
+    );
+    await waitFor(() => expect(toggle).toBeChecked());
+  });
+
   it("omits the reason row when the update has no reasonCode", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);

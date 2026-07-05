@@ -1,5 +1,5 @@
 import type { LocalOperationDatabase } from '@/infrastructure/local-db/local-db';
-import { createHttpOperationalUpdatesClient, createOperationalUpdatesService, type OperationalUpdatesService } from './operational-updates-service';
+import { createHttpOperationalUpdatesClient, createOperationalUpdatesService, type OperationalUpdatesClient, type OperationalUpdatesService } from './operational-updates-service';
 import { createHttpScopedSyncClient, type CreateHttpScopedSyncClientOptions } from './sync-client';
 import { createScopedOperationSyncService, type ScopedOperationSyncService } from './sync-service';
 
@@ -11,6 +11,7 @@ export type MobileRuntimeSync = {
   networkAvailable: boolean;
   syncService?: ScopedOperationSyncService;
   operationalUpdatesService?: OperationalUpdatesService;
+  operationalUpdatesClient?: OperationalUpdatesClient;
   syncUnavailableReason?: string;
 };
 
@@ -46,6 +47,7 @@ export function createMobileRuntimeSync({ database, env = process.env, fetchImpl
     networkAvailable: true,
     syncService: createScopedOperationSyncService({ database, client }),
     operationalUpdatesService: createOperationalUpdatesService({ database, client: operationalUpdatesClient, actorExternalId }),
+    operationalUpdatesClient,
   };
 }
 

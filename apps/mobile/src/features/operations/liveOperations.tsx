@@ -24,7 +24,7 @@ import { createInMemoryLocalOperationDatabase, type DispatchEventLocalView, type
 import { resolveMapPreparationCoverage, resolveMapRenderState, type MapPackMetadata, type MapRenderState } from '@/infrastructure/maps';
 import { appendSignedOperationAndMaterialize } from '@/infrastructure/oplog/outbox-service';
 import { FakeOperationSigner, type OperationSigner } from '@/infrastructure/security';
-import type { ScopedOperationSyncService } from '@/infrastructure/sync';
+import type { OperationalUpdatesClient, ScopedOperationSyncService } from '@/infrastructure/sync';
 import { createUnavailableMeshtasticSosAdapter, type MeshtasticSosAdapter } from '@/infrastructure/transport';
 import { ActionButton, OperationalCard, StatusBadge } from '@/shared/ui';
 import type { OperationalUpdatesService } from '@/infrastructure/sync';
@@ -56,6 +56,7 @@ export type LiveOperationalEntryScreenProps = {
   sosTransport?: MeshtasticSosAdapter;
   syncService?: ScopedOperationSyncService;
   operationalUpdatesService?: OperationalUpdatesService;
+  operationalUpdatesClient?: OperationalUpdatesClient;
   syncUnavailableReason?: string;
 };
 
@@ -429,6 +430,7 @@ export function LiveOperationalEntryScreen({
   sosTransport = createUnavailableMeshtasticSosAdapter(),
   syncService,
   operationalUpdatesService,
+  operationalUpdatesClient,
   syncUnavailableReason,
 }: LiveOperationalEntryScreenProps) {
   const database = useMemo(() => providedDatabase ?? createInMemoryLocalOperationDatabase(), [providedDatabase]);
@@ -438,6 +440,8 @@ export function LiveOperationalEntryScreen({
   const [error, setError] = useState<string | null>(null);
   const [sosTransportNotice, setSosTransportNotice] = useState<SosTransportNotice>(null);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
+  const [quietProactiveUpdates, setQuietProactiveUpdates] = useState(false);
+  const [quietPreferencePending, setQuietPreferencePending] = useState(false);
 
   const refresh = useCallback(
     async (incidentId: string) => {
@@ -668,6 +672,36 @@ export function LiveOperationalEntryScreen({
     [database, networkAvailable, operationalUpdatesService, refresh],
   );
 
+  // Slice 21.1 Fase 2 — opt-out/quieting. The client owns targeting; here we only relay the
+  // volunteer's choice to silence proactive match updates. SOS/critical alerts and the cell
+  // feed are never affected. When there is no network client we keep the toggle disabled so
+  // the UI never pretends a preference was saved offline.
+  const canToggleQuietProactiveUpdates = Boolean(operationalUpdatesClient?.setPreference) && networkAvailable && !quietPreferencePending;
+
+  const handleToggleQuietProactiveUpdates = useCallback(async () => {
+    if (!state?.incident || !operationalUpdatesClient?.setPreference || !networkAvailable) {
+      return;
+    }
+
+    const nextQuiet = !quietProactiveUpdates;
+    setError(null);
+    setQuietPreferencePending(true);
+    try {
+      const result = await operationalUpdatesClient.setPreference({ incidentId: state.incident.incidentId, quietProactiveUpdates: nextQuiet });
+      setQuietProactiveUpdates(result.quietProactiveUpdates);
+      setSyncNotice(
+        result.quietProactiveUpdates
+          ? 'Proactive match alerts silenced. SOS, critical alerts, and your cell feed still arrive. · Alertas proactivas de match silenciadas. SOS, alertas críticas y el feed de tu celda siguen llegando.'
+          : 'Proactive match alerts re-enabled. · Alertas proactivas de match reactivadas.',
+      );
+    } catch (caughtError) {
+      setSyncNotice('Could not update proactive-alert preference; try again when connected. · No se pudo actualizar la preferencia de alertas proactivas; inténtalo de nuevo con conexión.');
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to update operational update preference');
+    } finally {
+      setQuietPreferencePending(false);
+    }
+  }, [networkAvailable, operationalUpdatesClient, quietProactiveUpdates, state?.incident]);
+
   const mapState = resolveMapRenderState({ pack: state?.mapPack ?? null, networkAvailable });
   const missingRequestedIncident = Boolean(activeIncidentId && state && !state.incident);
   const mapPreparation = state?.incident?.incidentId === MAP_PREPARATION_INCIDENT_ID && state.mapPacks.length > 0 ? resolveMapPreparationSummary({ incidentId: state.incident.incidentId, networkAvailable, packs: state.mapPacks, requestedCellIds: MAP_PREPARATION_CELL_IDS }) : null;
@@ -746,7 +780,18 @@ export function LiveOperationalEntryScreen({
 
         {state ? <OutboxStatePanel state={state} /> : null}
 
-        {state ? <OperationalUpdatesPanel networkAvailable={networkAvailable} onAction={handleOperationalUpdateAction} serviceAvailable={Boolean(operationalUpdatesService)} updates={state.operationalUpdates} /> : null}
+        {state ? (
+          <OperationalUpdatesPanel
+            canToggleQuietProactiveUpdates={canToggleQuietProactiveUpdates}
+            networkAvailable={networkAvailable}
+            onAction={handleOperationalUpdateAction}
+            onToggleQuietProactiveUpdates={handleToggleQuietProactiveUpdates}
+            quietPreferencePending={quietPreferencePending}
+            quietProactiveUpdates={quietProactiveUpdates}
+            serviceAvailable={Boolean(operationalUpdatesService)}
+            updates={state.operationalUpdates}
+          />
+        ) : null}
 
         <LiveMapLibreSurface centers={state?.centers ?? []} mapState={mapState} />
 
@@ -833,13 +878,21 @@ function OutboxStatePanel({ state }: { state: LiveOperationalState }) {
 }
 
 const OperationalUpdatesPanel = memo(function OperationalUpdatesPanel({
+  canToggleQuietProactiveUpdates,
   networkAvailable,
   onAction,
+  onToggleQuietProactiveUpdates,
+  quietPreferencePending,
+  quietProactiveUpdates,
   serviceAvailable,
   updates,
 }: {
+  canToggleQuietProactiveUpdates: boolean;
   networkAvailable: boolean;
   onAction: (update: OperationalUpdateLocalView, actionType: Exclude<OperationalUpdateActionType, 'link'>) => void;
+  onToggleQuietProactiveUpdates: () => void;
+  quietPreferencePending: boolean;
+  quietProactiveUpdates: boolean;
   serviceAvailable: boolean;
   updates: OperationalUpdateLocalView[];
 }) {
@@ -874,6 +927,32 @@ const OperationalUpdatesPanel = memo(function OperationalUpdatesPanel({
           <StatusBadge tone={summary.conflicts > 0 ? 'risk' : 'stale'} label={`${summary.conflicts} action conflicts`} />
           <StatusBadge tone={summary.expired > 0 ? 'warning' : 'stale'} label={`${summary.expired} expired`} />
         </XStack>
+
+        <YStack borderTopColor="$borderColor" borderTopWidth={1} gap="$2" pt="$3">
+          <Text color="$text" fontSize="$md" fontWeight="900">
+            Silenciar alertas proactivas de match · Silence proactive match alerts
+          </Text>
+          <Paragraph color="$textMuted" fontSize="$sm" lineHeight={20}>
+            Solo silencia las coincidencias proactivas de recursos dirigidas a ti. Los SOS, las alertas críticas y el feed de tu celda siguen llegando. · Only silences proactive resource matches aimed at you. SOS, critical alerts, and your cell feed still arrive.
+          </Paragraph>
+          <XStack items="center" gap="$2">
+            <StatusBadge tone={quietProactiveUpdates ? 'warning' : 'success'} label={quietProactiveUpdates ? 'Proactive match alerts: silenced · silenciadas' : 'Proactive match alerts: on · activas'} />
+            {quietPreferencePending ? <StatusBadge tone="pending" label="Saving… · Guardando…" /> : null}
+          </XStack>
+          {!canToggleQuietProactiveUpdates && !quietPreferencePending ? (
+            <Text color="$textMuted" fontSize="$xs" fontWeight="700">
+              Connect to sync to change this preference. · Conéctate para sincronizar y cambiar esta preferencia.
+            </Text>
+          ) : null}
+          <ActionButton
+            accessibilityLabel={quietProactiveUpdates ? 'Reactivar alertas proactivas de match · Re-enable proactive match alerts' : 'Silenciar alertas proactivas de match · Silence proactive match alerts'}
+            disabled={!canToggleQuietProactiveUpdates}
+            label={quietProactiveUpdates ? 'Reactivar alertas proactivas · Re-enable proactive alerts' : 'Silenciar alertas proactivas · Silence proactive alerts'}
+            onPress={onToggleQuietProactiveUpdates}
+            testID="toggle_quiet_proactive_updates_button"
+            tone={quietProactiveUpdates ? 'success' : 'warning'}
+          />
+        </YStack>
 
         {updates.length === 0 ? (
           <Text color="$textMuted" fontSize="$sm" fontWeight="700">

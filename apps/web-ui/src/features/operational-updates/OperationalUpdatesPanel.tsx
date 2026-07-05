@@ -10,6 +10,7 @@ import {
   fetchOperationalUpdates,
   openOperationalUpdate,
   readOperationalUpdate,
+  setOperationalUpdatePreference,
 } from "../../api";
 
 type UpdatesState =
@@ -37,6 +38,10 @@ export function OperationalUpdatesPanel({
 }) {
   const [updatesState, setUpdatesState] = useState<UpdatesState>({ status: "loading" });
   const [actionState, setActionState] = useState<ActionState>(null);
+  const [quietProactive, setQuietProactive] = useState(false);
+  const [preferenceState, setPreferenceState] = useState<
+    { status: "idle" | "saving" } | { status: "error"; message: string }
+  >({ status: "idle" });
   const identity = useMemo(
     () => ({
       channel: "web-ui" as const,
@@ -120,6 +125,24 @@ export function OperationalUpdatesPanel({
     }
   }
 
+  async function handleQuietToggle(nextQuiet: boolean) {
+    setQuietProactive(nextQuiet);
+    setPreferenceState({ status: "saving" });
+    try {
+      const response = await setOperationalUpdatePreference(incidentId, {
+        channel: identity.channel,
+        externalId: identity.externalId,
+        quietProactiveUpdates: nextQuiet,
+      });
+      setQuietProactive(response.quietProactiveUpdates);
+      setPreferenceState({ status: "idle" });
+    } catch (error: unknown) {
+      // Revert the optimistic toggle so the control reflects the true server state.
+      setQuietProactive(!nextQuiet);
+      setPreferenceState({ status: "error", message: errorMessage(error) });
+    }
+  }
+
   return (
     <section className="operational-updates" aria-labelledby="operational-updates-title" aria-live="polite">
       <div className="card-title-row">
@@ -133,6 +156,24 @@ export function OperationalUpdatesPanel({
         Short field updates for this cell. Acknowledgement is not a rescue request, corroboration does not grant authority,
         and social trust never grants sensitive permissions.
       </p>
+
+      <div className="operational-update-preference">
+        <label>
+          <input
+            type="checkbox"
+            checked={quietProactive}
+            disabled={preferenceState.status === "saving"}
+            onChange={(event) => void handleQuietToggle(event.target.checked)}
+          />
+          <span>Mute proactive match alerts</span>
+        </label>
+        <p className="summary">
+          Muting stops proactive resource-match alerts targeted at you. You keep receiving SOS and critical alerts and your
+          cell feed.
+        </p>
+        {preferenceState.status === "saving" ? <p role="status">Saving preference…</p> : null}
+        {preferenceState.status === "error" ? <p role="alert">{preferenceState.message}</p> : null}
+      </div>
 
       {updatesState.status === "loading" ? <p>Loading operational updates…</p> : null}
       {updatesState.status === "error" ? <p role="alert">{updatesState.message}</p> : null}

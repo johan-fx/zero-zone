@@ -14,6 +14,8 @@ import {
   OperationalUpdateDisputeRequestSchema,
   OperationalUpdateLinkRequestSchema,
   OperationalUpdateLinkResponseSchema,
+  OperationalUpdatePreferenceRequestSchema,
+  OperationalUpdatePreferenceResponseSchema,
   OperationalUpdatePullResponseSchema,
   PrivateWebLinkConsumeResponseSchema,
   PrivateWebLinkValidateRequestSchema,
@@ -46,6 +48,8 @@ import {
   type OperationalUpdateDisputeRequest,
   type OperationalUpdateLinkRequest,
   type OperationalUpdateLinkResponse,
+  type OperationalUpdatePreferenceRequest,
+  type OperationalUpdatePreferenceResponse,
   type OperationalUpdatePullResponse,
   type PrivateWebLinkConsumeRequest,
   type PrivateWebLinkConsumeResponse,
@@ -242,6 +246,33 @@ export async function createOperationalUpdateLink(
     OperationalUpdateLinkResponseSchema,
     fetcher,
   );
+}
+
+export async function setOperationalUpdatePreference(
+  incidentId: string,
+  request: OperationalUpdatePreferenceRequest,
+  fetcher: Fetcher = fetch,
+): Promise<OperationalUpdatePreferenceResponse> {
+  const payload = OperationalUpdatePreferenceRequestSchema.parse(request);
+  const response = await fetcher(
+    `${getApiBaseUrl()}${operationalUpdatePreferencePath(incidentId)}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      await readApiError(
+        response,
+        `Operational update preference failed with status ${response.status}`,
+      ),
+    );
+  }
+
+  return OperationalUpdatePreferenceResponseSchema.parse(await response.json());
 }
 
 export async function fetchWorkCenters(
@@ -571,6 +602,10 @@ function operationalUpdateActionPath(
   action: "ack" | "read" | "open" | "corroborate" | "dispute" | "links",
 ): string {
   return `/incidents/${encodeURIComponent(incidentId)}/updates/${encodeURIComponent(updateId)}/${action}`;
+}
+
+function operationalUpdatePreferencePath(incidentId: string): string {
+  return `/incidents/${encodeURIComponent(incidentId)}/updates/preferences`;
 }
 
 function workCenterCollectionPath(incidentId: string): string {

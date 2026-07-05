@@ -1330,11 +1330,11 @@ Auditoría de código tras el merge de la Slice 21. Detectada una divergencia en
 - ✅ Fallback seguro: sin match (o contraparte sin identidad direccionable, p.ej. reporte de sync mobile), `reasonCode = resource.report.cell_broadcast` y sin push dirigido.
 - ⚠️ **Límite de alcance conocido:** solo los reportantes por canal *connected* (Telegram/Web, con `externalId`) son direccionables. Reportes originados en mobile (solo `actorKeyId`, sin `externalId`) caen al fallback. Documentado; resolución de identidad mobile queda para follow-up.
 
-**Fase 2 — Rails de seguridad** *(NO implementada — siguiente incremento)*
-- ⬜ Dedup + rate-limit por actor para recurso "caliente". *(dedup básico ya existe vía `updateId` determinista)*
-- ⬜ Opt-out/quieting por actor.
-- ⬜ Copy de límite en canales (parcial: A/C ya renderizan copy no-autoritativo por `reasonCode`). Nunca ubicación exacta por chat; detalle solo vía link firmado one-use.
-- ⬜ Tope de audiencia / confirmación de coordinador antes de fan-out en urgencia alta (anti-convergencia).
+**Fase 2 — Rails de seguridad** *(2026-07-05: cap de audiencia + opt-out implementados; rate-limit temporal diferido)*
+- 🟡 Dedup + rate-limit por actor: dedup ✅ vía `updateId` determinista (re-report = upsert, no duplica). Rate-limit temporal "recurso caliente" **DIFERIDO** a follow-up.
+- ✅ Opt-out/quieting por actor: tabla `proactive_update_optouts` (migración `0014`, keyed por hash de actor, sin PII) + endpoint `POST /incidents/:id/updates/preferences` (auth de membership) + enforcement en targeting (`filterQuietedTargets`) + superficies en paralelo: Telegram (`/quiet`, `/unquiet`), Web UI (toggle) y mobile (toggle). El webhook Telegram in-process del API también quedó cableado.
+- ✅ Copy de límite en canales: A/C renderizan copy no-autoritativo por `reasonCode`; opt-out con copy honesto (SOS y feed de celda siguen llegando). Detalle sensible solo vía link firmado one-use (ya en Fase 1).
+- ✅ Tope de audiencia (anti-convergencia): `MAX_PROACTIVE_MATCH_TARGETS = 20` por update, priorizando por score de match. Nuevo modo **suppressed**: si un match no tiene audiencia direccionable (sin identidad connected o todos con opt-out), la update NO hace broadcast a la celda — se suprime el push. Confirmación de coordinador en urgencia alta **DIFERIDA** a follow-up.
 
 **Fase 3 — Tests y gate**
 - ✅ (autoría) E2E local dos personas: `e2e/proactive-social-updates.spec.ts` — demandante + ofertante ⇒ el demandante recibe la update dirigida con `reasonCode`, el outsider NO. **Pendiente de ejecutar en local** (`pnpm e2e:slice21:proactive-updates`).
@@ -1344,7 +1344,7 @@ Auditoría de código tras el merge de la Slice 21. Detectada una divergencia en
 **Definition of Done 21.1**
 - 🟡 Un `resource_offer` compatible genera update dirigida SOLO al demandante, con `reasonCode`, sin exponer identidades. *(implementado + typecheck; falta ejecutar tests)*
 - 🟡 Un outsider no-target no la recibe (filtro `target_hash` en `listOperationalUpdates`) ni puede accionarla (403 vía `isOperationalUpdateTargetedToActor`). *(implementado; falta ejecutar tests)*
-- ⬜ Rails de anti-saturación (dedup avanzado, rate-limit, opt-out, tope de audiencia) activos y con test.
+- 🟡 Rails de anti-saturación: tope de audiencia ✅, opt-out ✅ y dedup ✅ con test; rate-limit temporal y confirmación de coordinador **diferidos** a follow-up. *(implementado + typecheck + jest mobile; falta correr vitest api/e2e)*
 - ⬜ Gate de staging real verde para el escenario proactive-updates dirigido.
 
 ## Gates antes de implementar cada slice

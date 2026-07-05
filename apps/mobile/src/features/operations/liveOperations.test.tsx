@@ -8,7 +8,7 @@ import { Theme, TamaguiProvider } from 'tamagui';
 import { createInMemoryLocalOperationDatabase } from '@/infrastructure/local-db/local-db';
 import { appendSignedOperationAndMaterialize } from '@/infrastructure/oplog/outbox-service';
 import { FakeOperationSigner } from '@/infrastructure/security';
-import type { OperationalUpdatesService, ScopedOperationSyncService } from '@/infrastructure/sync';
+import type { OperationalUpdatesClient, OperationalUpdatesService, ScopedOperationSyncService } from '@/infrastructure/sync';
 import type { MeshtasticSosAdapter } from '@/infrastructure/transport';
 import { OperationalThemeProvider } from '@/shared/theme';
 import { tamaguiConfig } from '../../../tamagui.config';
@@ -23,6 +23,7 @@ async function renderLiveOperations(input: {
   sosTransport?: MeshtasticSosAdapter;
   syncService?: ScopedOperationSyncService;
   operationalUpdatesService?: OperationalUpdatesService;
+  operationalUpdatesClient?: OperationalUpdatesClient;
   syncUnavailableReason?: string;
 } = {}) {
   const database = input.database ?? createInMemoryLocalOperationDatabase();
@@ -32,7 +33,7 @@ async function renderLiveOperations(input: {
     <OperationalThemeProvider>
       <TamaguiProvider config={tamaguiConfig} defaultTheme="light">
         <Theme name="light">
-          <LiveOperationalEntryScreen database={database} devScenario={input.devScenario} initialIncidentId={input.initialIncidentId} networkAvailable={input.networkAvailable} operationalUpdatesService={input.operationalUpdatesService} signer={signer} sosTransport={input.sosTransport} syncService={input.syncService} syncUnavailableReason={input.syncUnavailableReason} />
+          <LiveOperationalEntryScreen database={database} devScenario={input.devScenario} initialIncidentId={input.initialIncidentId} networkAvailable={input.networkAvailable} operationalUpdatesClient={input.operationalUpdatesClient} operationalUpdatesService={input.operationalUpdatesService} signer={signer} sosTransport={input.sosTransport} syncService={input.syncService} syncUnavailableReason={input.syncUnavailableReason} />
         </Theme>
       </TamaguiProvider>
     </OperationalThemeProvider>,
@@ -205,6 +206,44 @@ describe('live operational flow wiring', () => {
     expect(await database.operationalUpdateActions.findByIncident('incident-prepared')).toEqual([
       expect.objectContaining({ updateId: 'update-mobile-1', actionType: 'ack', syncState: 'pending' }),
     ]);
+  });
+
+  it('silences proactive match alerts through the opt-out toggle without touching SOS or the cell feed', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    await seedPreparedIncident(database);
+    await seedOperationalUpdate(database);
+    const setPreference = jest.fn<ReturnType<NonNullable<OperationalUpdatesClient['setPreference']>>, Parameters<NonNullable<OperationalUpdatesClient['setPreference']>>>().mockResolvedValue({ quietProactiveUpdates: true });
+
+    const { screen } = await renderLiveOperations({
+      database,
+      initialIncidentId: 'incident-prepared',
+      networkAvailable: true,
+      operationalUpdatesClient: { list: jest.fn(), sendAction: jest.fn(), setPreference },
+    });
+
+    await waitFor(() => expect(screen.getByTestId('toggle_quiet_proactive_updates_button')).toBeTruthy());
+    expect(screen.getByTestId('toggle_quiet_proactive_updates_button')).toBeEnabled();
+
+    await pressAndFlush(screen.getByTestId('toggle_quiet_proactive_updates_button'));
+
+    await waitFor(() => expect(screen.getByText('Proactive match alerts: silenced · silenciadas')).toBeTruthy());
+    expect(setPreference).toHaveBeenCalledWith({ incidentId: 'incident-prepared', quietProactiveUpdates: true });
+    expect(screen.getAllByText(/SOS, critical alerts, and your cell feed still arrive/).length).toBeGreaterThan(0);
+    // SOS surface stays independent of the quiet preference.
+    expect(screen.getByText('Native SOS')).toBeTruthy();
+  });
+
+  it('disables the opt-out toggle when no network preference client is available', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    await seedPreparedIncident(database);
+    await seedOperationalUpdate(database);
+
+    const { screen } = await renderLiveOperations({ database, initialIncidentId: 'incident-prepared', networkAvailable: false });
+
+    await waitFor(() => expect(screen.getByTestId('toggle_quiet_proactive_updates_button')).toBeTruthy());
+
+    expect(screen.getByTestId('toggle_quiet_proactive_updates_button')).toBeDisabled();
+    expect(screen.getByText('Connect to sync to change this preference. · Conéctate para sincronizar y cambiar esta preferencia.')).toBeTruthy();
   });
 
   it('pulls dedicated operational updates during Sync now when Equipo B API client is wired', async () => {

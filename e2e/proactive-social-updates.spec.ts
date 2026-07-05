@@ -232,6 +232,31 @@ test.describe('Slice 21 proactive social updates E2E', () => {
     // Privacidad: el targeting no debe filtrar identidades de reportantes en el payload.
     expect(JSON.stringify(demanderUpdates)).not.toMatch(new RegExp(`${demander}|${supplier}`, 'i'));
   });
+
+  test('Slice 21.1 Fase 2: an opted-out demander does not receive the targeted match update', async ({ request }) => {
+    const unique = `${Date.now()}-${test.info().workerIndex}`;
+    const demander = `slice21_2-demander-${unique}`;
+    const supplier = `slice21_2-supplier-${unique}`;
+    const category = `blankets-${unique}`;
+
+    for (const externalId of [demander, supplier]) {
+      await joinIncident(request, { channel: 'telegram', externalId, role: 'volunteer', displayName: `S21.2 ${externalId}` });
+    }
+
+    await createResourceReport(request, demander, category, 'needed');
+
+    // El demandante silencia las updates proactivas de match.
+    const preference = await request.post(`${apiBaseUrl}/incidents/${incidentId}/updates/preferences`, {
+      data: { channel: 'telegram', externalId: demander, quietProactiveUpdates: true },
+    });
+    await expect(preference).toBeOK();
+
+    // El proveedor ofrece lo mismo -> normalmente dirigiría al demandante, pero está silenciado.
+    await createResourceReport(request, supplier, category, 'surplus');
+
+    const demanderUpdates = await pullUpdatesUntil(request, demander, () => false);
+    expect(demanderUpdates.some((update) => update.reasonCode === 'resource.match.offer_for_open_need')).toBe(false);
+  });
 });
 
 type JoinIncidentInput = {

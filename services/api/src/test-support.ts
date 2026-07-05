@@ -11,6 +11,7 @@ import incidentGeographyMigration from '../migrations/0010_incident_geography.sq
 import operationalUpdatesMigration from '../migrations/0011_operational_updates.sql?raw';
 import privateWebLinksOperationalScopeMigration from '../migrations/0012_private_web_links_operational_scope.sql?raw';
 import resourceReportReporterTargetHashMigration from '../migrations/0013_resource_report_reporter_target_hash.sql?raw';
+import proactiveUpdateOptoutsMigration from '../migrations/0014_proactive_update_optouts.sql?raw';
 import incidentDemoSeed from '../seeds/incident-zc-demo.sql?raw';
 
 export async function resetApiTestDatabase(db: D1Database): Promise<void> {
@@ -27,9 +28,11 @@ export async function resetApiTestDatabase(db: D1Database): Promise<void> {
   await execSqlStatements(db, operationalUpdatesMigration);
   await execSqlStatements(db, privateWebLinksOperationalScopeMigration);
   await execSqlStatements(db, resourceReportReporterTargetHashMigration);
+  await execSqlStatements(db, proactiveUpdateOptoutsMigration);
   await execSqlStatements(
     db,
     `
+    DELETE FROM proactive_update_optouts;
     DELETE FROM operational_update_delivery_attempts;
     DELETE FROM operational_update_actions;
     DELETE FROM operational_update_deliveries;

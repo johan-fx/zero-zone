@@ -126,4 +126,20 @@ describe('mobile operational updates service', () => {
     expect(fetchImpl).toHaveBeenNthCalledWith(1, 'https://api.example.test/incidents/incident-1/cells/cell-a/updates?cursor=cursor-1&limit=20&channel=mobile&externalId=actor-key-1', expect.objectContaining({ method: 'GET' }));
     expect(fetchImpl).toHaveBeenNthCalledWith(2, 'https://api.example.test/incidents/incident-1/updates/update-1/read', expect.objectContaining({ method: 'POST' }));
   });
+
+  it('posts the opt-out/quieting preference to the dedicated preferences endpoint with the client channel and actor', async () => {
+    const fetchImpl = jest.fn().mockResolvedValueOnce(createJsonResponse({ quietProactiveUpdates: true }));
+    const client = createHttpOperationalUpdatesClient({ baseUrl: 'https://api.example.test/', fetchImpl: fetchImpl as unknown as typeof fetch, actorExternalId: 'actor-key-1' });
+
+    const result = await client.setPreference?.({ incidentId: 'incident-1', quietProactiveUpdates: true });
+
+    expect(result).toEqual({ quietProactiveUpdates: true });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://api.example.test/incidents/incident-1/updates/preferences',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ channel: 'mobile', externalId: 'actor-key-1', quietProactiveUpdates: true }),
+      }),
+    );
+  });
 });

@@ -623,6 +623,20 @@ export const OperationalUpdatePullResponseSchema = z.object({
 }).strict();
 export type OperationalUpdatePullResponse = z.infer<typeof OperationalUpdatePullResponseSchema>;
 
+// Slice 21.1 Fase 2 — opt-out/quieting: un actor puede silenciar las updates proactivas de
+// match dirigidas a él. No afecta a SOS/críticos ni a su feed general de celda.
+export const OperationalUpdatePreferenceRequestSchema = z.object({
+  channel: ChannelSchema,
+  externalId: z.string().min(1),
+  quietProactiveUpdates: z.boolean(),
+}).strict();
+export type OperationalUpdatePreferenceRequest = z.infer<typeof OperationalUpdatePreferenceRequestSchema>;
+
+export const OperationalUpdatePreferenceResponseSchema = z.object({
+  quietProactiveUpdates: z.boolean(),
+}).strict();
+export type OperationalUpdatePreferenceResponse = z.infer<typeof OperationalUpdatePreferenceResponseSchema>;
+
 export const OperationalUpdateActionRequestSchema = z.object({
   channel: ChannelSchema,
   externalId: z.string().min(1),

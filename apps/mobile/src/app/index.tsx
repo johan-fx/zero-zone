@@ -95,7 +95,7 @@ export default function HomeScreen() {
         </OperationalCard>
 
         {database ? (
-          <LiveOperationalEntryScreen database={database} devScenario={devScenario} networkAvailable={runtimeSync?.networkAvailable ?? false} operationalUpdatesService={runtimeSync?.operationalUpdatesService} syncService={runtimeSync?.syncService} syncUnavailableReason={runtimeSync?.syncUnavailableReason} />
+          <LiveOperationalEntryScreen database={database} devScenario={devScenario} networkAvailable={runtimeSync?.networkAvailable ?? false} operationalUpdatesClient={runtimeSync?.operationalUpdatesClient} operationalUpdatesService={runtimeSync?.operationalUpdatesService} syncService={runtimeSync?.syncService} syncUnavailableReason={runtimeSync?.syncUnavailableReason} />
         ) : (
           <OperationalCard testID="local-database-status">
             <YStack gap="$2">

@@ -1,6 +1,7 @@
 import {
   DisputeReasonSchema,
   OperationalUpdateActionResponseSchema,
+  OperationalUpdatePreferenceResponseSchema,
   OperationalUpdatePullResponseSchema,
   type DisputeReason,
   type OperationalUpdate,
@@ -8,6 +9,8 @@ import {
   type OperationalUpdateActionResponse,
   type OperationalUpdateCorroborateRequest,
   type OperationalUpdateDisputeRequest,
+  type OperationalUpdatePreferenceRequest,
+  type OperationalUpdatePreferenceResponse,
   type OperationalUpdatePullResponse,
 } from '@zona-cero/contracts';
 
@@ -29,6 +32,7 @@ export type TelegramOperationalUpdatePorts = {
   openUpdate(incidentId: string, updateId: string, request: OperationalUpdateActionRequest): Promise<OperationalUpdateActionResponse>;
   corroborateUpdate(incidentId: string, updateId: string, request: OperationalUpdateCorroborateRequest): Promise<OperationalUpdateActionResponse>;
   disputeUpdate(incidentId: string, updateId: string, request: OperationalUpdateDisputeRequest): Promise<OperationalUpdateActionResponse>;
+  setProactivePreference(incidentId: string, request: OperationalUpdatePreferenceRequest): Promise<OperationalUpdatePreferenceResponse>;
 };
 
 export type TelegramOperationalUpdateCommandResult = {
@@ -55,6 +59,10 @@ export async function handleTelegramOperationalUpdateCommand(
 
   if (command === '/updates') {
     return listTelegramOperationalUpdates(command, args, update, ports);
+  }
+
+  if (command === '/quiet' || command === '/unquiet') {
+    return setTelegramProactivePreference(command, args, update, ports);
   }
 
   return actOnTelegramOperationalUpdate(command, args, update, ports);
@@ -84,6 +92,16 @@ export function createTelegramOperationalUpdateHttpPorts(options: TelegramOperat
     },
     async disputeUpdate(incidentId, updateId, request) {
       return postOperationalUpdateAction(requestFetch, baseUrl, incidentId, updateId, 'dispute', request);
+    },
+    async setProactivePreference(incidentId, request) {
+      const url = new URL(`incidents/${encodeURIComponent(incidentId)}/updates/preferences`, baseUrl);
+      return OperationalUpdatePreferenceResponseSchema.parse(
+        await requestJson(requestFetch, url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(request),
+        }),
+      );
     },
   };
 }
@@ -121,6 +139,43 @@ async function listTelegramOperationalUpdates(
       handled: true,
       command,
       responseText: 'Could not load operational updates now. Try again later or use the incident dashboard if available.',
+    };
+  }
+}
+
+async function setTelegramProactivePreference(
+  command: string,
+  args: string[],
+  update: TelegramUpdateLike,
+  ports: TelegramOperationalUpdatePorts,
+): Promise<TelegramOperationalUpdateCommandResult> {
+  const quietProactiveUpdates = command === '/quiet';
+  const incidentId = args[0];
+  if (!incidentId) {
+    return {
+      handled: true,
+      command,
+      responseText: `Usage: /${quietProactiveUpdates ? 'quiet' : 'unquiet'} <incidentId>.`,
+    };
+  }
+
+  const externalId = getTelegramExternalUserId(update);
+  if (!externalId) {
+    return { handled: true, command, responseText: 'Telegram user id is required before changing proactive update preferences.' };
+  }
+
+  try {
+    const response = await ports.setProactivePreference(incidentId, {
+      channel: 'telegram',
+      externalId,
+      quietProactiveUpdates,
+    });
+    return { handled: true, command, responseText: formatProactivePreferenceResult(response.quietProactiveUpdates) };
+  } catch {
+    return {
+      handled: true,
+      command,
+      responseText: 'Could not update your proactive alert preference. Check the incident id and that you are a member.',
     };
   }
 }
@@ -242,6 +297,15 @@ function formatOperationalUpdateActionResult(action: TelegramOperationalUpdateAc
   return `${actionText} for ${response.update.updateId}.${trustSummary}\n${authorityLimit}`;
 }
 
+// Honest copy for the proactive-match opt-out. Quieting only silences proactive match alerts;
+// SOS/critical and the cell feed keep flowing. /unquiet reverses it.
+function formatProactivePreferenceResult(quietProactiveUpdates: boolean): string {
+  if (quietProactiveUpdates) {
+    return 'Silenciadas las alertas proactivas de match. Seguirás viendo SOS y el feed de tu celda. Usa /unquiet para reactivarlas.';
+  }
+  return 'Reactivadas las alertas proactivas de match. Volverás a recibir posibles coincidencias de recursos. Usa /quiet para silenciarlas de nuevo.';
+}
+
 function formatUrgency(urgency: OperationalUpdate['urgency']): string {
   if (urgency === 'critical') return '🚨 CRITICAL';
   if (urgency === 'high') return '⚠️ HIGH';
@@ -275,8 +339,16 @@ function readMetadataString(metadata: OperationalUpdate['metadata'], key: string
   return typeof value === 'string' && value.trim() ? value : null;
 }
 
-function isOperationalUpdateCommand(command: string | null): command is '/updates' | '/ack' | '/open' | '/corroborate' | '/dispute' {
-  return command === '/updates' || command === '/ack' || command === '/open' || command === '/corroborate' || command === '/dispute';
+function isOperationalUpdateCommand(command: string | null): command is '/updates' | '/ack' | '/open' | '/corroborate' | '/dispute' | '/quiet' | '/unquiet' {
+  return (
+    command === '/updates' ||
+    command === '/ack' ||
+    command === '/open' ||
+    command === '/corroborate' ||
+    command === '/dispute' ||
+    command === '/quiet' ||
+    command === '/unquiet'
+  );
 }
 
 function readCommandArgs(update: TelegramUpdateLike): string[] {
