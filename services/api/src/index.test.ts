@@ -20,6 +20,7 @@ import {
   DispatchTaskListResponseSchema,
   DispatchTaskResponseSchema,
   TrustStateResponseSchema,
+  TrustStateSchema,
   TrustSignalCreateResponseSchema,
   DisputeCreateResponseSchema,
   CountryListResponseSchema,
@@ -1935,6 +1936,10 @@ describe('api worker', () => {
     const pull = SyncPullResponseSchema.parse(await (await request('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull')).json());
     const pulledTrustOperation = pull.operations.find((entry) => entry.operation.opId === 'op-sync-trust-signal-1');
     expect(pulledTrustOperation?.operation.entityId).toBe(body.results[0]?.entityId);
+    expect(TrustStateSchema.parse((pulledTrustOperation?.operation.payload as { trustState?: unknown } | undefined)?.trustState)).toMatchObject({
+      status: 'self_declared',
+      subject,
+    });
   });
 
   it('sync push dispute.create uses canonical dispute degradation', async () => {
@@ -1997,6 +2002,12 @@ describe('api worker', () => {
 
     const state = TrustStateResponseSchema.parse(await (await request('/incidents/incident-zc-demo/trust-state?entityType=channel_identity&entityId=chid_mobile_mobile-sync-dispute-user')).json());
     expect(state.trustState).toMatchObject({ status: 'disputed', visibility: 'limited', signalCount: 1, disputeCount: 1 });
+    const pull = SyncPullResponseSchema.parse(await (await request('/incidents/incident-zc-demo/cells/cell-zc-demo/sync/pull')).json());
+    const pulledDisputeOperation = pull.operations.find((entry) => entry.operation.opId === 'op-sync-dispute-create-1');
+    expect(TrustStateSchema.parse((pulledDisputeOperation?.operation.payload as { trustState?: unknown } | undefined)?.trustState)).toMatchObject({
+      status: 'disputed',
+      subject,
+    });
 
     const disputeAudit = await (env as Env).DB.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE incident_id = ? AND event_type = 'dispute.created'")
       .bind('incident-zc-demo')
