@@ -405,6 +405,26 @@ describe('contracts package', () => {
     expect(TrustStateResponseSchema.parse({ trustState }).trustState.status).toBe('field_attested');
     expect(TrustStateResponseSchema.safeParse({ trustState: { ...trustState, permissions: { canManageMedical: true } } }).success).toBe(false);
     expect(TrustStateSchema.safeParse({ ...trustState, subject: { ...subject, incidentId: 'incident-other' } }).success).toBe(false);
+    expect(TrustSignalSchema.safeParse({
+      trustSignalId: 'trust-signal-mismatch',
+      incidentId: 'incident-1',
+      subject: { ...subject, incidentId: 'incident-other' },
+      signalType: 'field_attestation',
+      sourceKind: 'field_actor',
+      sourceChannel: 'telegram',
+      sourceExternalId: 'telegram-user-1',
+      confidence: 0.8,
+      createdAt: '2026-07-05T10:00:00.000Z',
+    }).success).toBe(false);
+    expect(DisputeSchema.safeParse({
+      disputeId: 'dispute-mismatch',
+      incidentId: 'incident-1',
+      subject: { ...subject, incidentId: 'incident-other' },
+      reason: 'false_claim',
+      sourceChannel: 'web-ui',
+      sourceExternalId: 'web-user-1',
+      createdAt: '2026-07-05T10:01:00.000Z',
+    }).success).toBe(false);
     expect(TrustSignalCreateResponseSchema.parse({
       trustSignal: {
         trustSignalId: 'trust-signal-1',
