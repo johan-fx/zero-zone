@@ -1,7 +1,7 @@
 /// <reference types="jest" />
 
 import { createInMemoryLocalOperationDatabase } from '@/infrastructure/local-db/local-db';
-import { createMobileRuntimeSync, resolveMobileApiBaseUrl } from './runtime-sync';
+import { createMobileRuntimeSync, resolveMobileActorExternalId, resolveMobileApiBaseUrl } from './runtime-sync';
 
 describe('mobile runtime sync wiring', () => {
   it('creates a scoped sync service when API config exists', () => {
@@ -10,13 +10,14 @@ describe('mobile runtime sync wiring', () => {
 
     const runtime = createMobileRuntimeSync({
       database,
-      env: { EXPO_PUBLIC_API_BASE_URL: 'https://api.example.test/' },
+      env: { EXPO_PUBLIC_API_BASE_URL: 'https://api.example.test/', EXPO_PUBLIC_ACTOR_EXTERNAL_ID: 'mobile-actor-1' },
       fetchImpl,
     });
 
     expect(runtime.networkAvailable).toBe(true);
     expect(runtime.syncUnavailableReason).toBeUndefined();
     expect(runtime.syncService).toEqual({ sync: expect.any(Function) });
+    expect(runtime.operationalUpdatesService).toEqual({ syncUpdates: expect.any(Function), performAction: expect.any(Function) });
   });
 
   it('degrades visibly when API config is absent', () => {
@@ -27,6 +28,7 @@ describe('mobile runtime sync wiring', () => {
 
     expect(runtime.networkAvailable).toBe(false);
     expect(runtime.syncService).toBeUndefined();
+    expect(runtime.operationalUpdatesService).toBeUndefined();
     expect(runtime.syncUnavailableReason).toBe('Sync unavailable: set EXPO_PUBLIC_API_BASE_URL for the Equipo B API before deployment.');
   });
 
@@ -34,5 +36,17 @@ describe('mobile runtime sync wiring', () => {
     expect(resolveMobileApiBaseUrl({ EXPO_PUBLIC_API_BASE_URL: ' https://api.example.test ' })).toBe('https://api.example.test');
     expect(resolveMobileApiBaseUrl({ EXPO_PUBLIC_ZERO_ZONE_API_BASE_URL: 'https://api-fallback.example.test' })).toBe('https://api-fallback.example.test');
     expect(resolveMobileApiBaseUrl({ EXPO_PUBLIC_API_BASE_URL: '   ' })).toBeNull();
+  });
+
+  it('requires an explicit mobile actor identity before enabling network actions', () => {
+    const runtime = createMobileRuntimeSync({
+      database: createInMemoryLocalOperationDatabase(),
+      env: { EXPO_PUBLIC_API_BASE_URL: 'https://api.example.test/' },
+    });
+
+    expect(runtime.networkAvailable).toBe(false);
+    expect(runtime.syncUnavailableReason).toBe('Sync unavailable: set EXPO_PUBLIC_ACTOR_EXTERNAL_ID before enabling mobile operational updates.');
+    expect(resolveMobileActorExternalId({ EXPO_PUBLIC_ACTOR_EXTERNAL_ID: ' mobile-actor-1 ' })).toBe('mobile-actor-1');
+    expect(resolveMobileActorExternalId({ EXPO_PUBLIC_ZERO_ZONE_ACTOR_EXTERNAL_ID: 'mobile-fallback-1' })).toBe('mobile-fallback-1');
   });
 });

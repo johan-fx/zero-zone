@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 
-import { WorkCenterCreatePayloadSchema } from '@zona-cero/contracts';
+import { WorkCenterCreatePayloadSchema, type OperationalUpdate } from '@zona-cero/contracts';
 import { validWorkCenterCreatePayloadFixture } from '@zona-cero/testing';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { Theme, TamaguiProvider } from 'tamagui';
@@ -8,7 +8,7 @@ import { Theme, TamaguiProvider } from 'tamagui';
 import { createInMemoryLocalOperationDatabase } from '@/infrastructure/local-db/local-db';
 import { appendSignedOperationAndMaterialize } from '@/infrastructure/oplog/outbox-service';
 import { FakeOperationSigner } from '@/infrastructure/security';
-import type { ScopedOperationSyncService } from '@/infrastructure/sync';
+import type { OperationalUpdatesService, ScopedOperationSyncService } from '@/infrastructure/sync';
 import type { MeshtasticSosAdapter } from '@/infrastructure/transport';
 import { OperationalThemeProvider } from '@/shared/theme';
 import { tamaguiConfig } from '../../../tamagui.config';
@@ -22,6 +22,7 @@ async function renderLiveOperations(input: {
   signingKey?: string;
   sosTransport?: MeshtasticSosAdapter;
   syncService?: ScopedOperationSyncService;
+  operationalUpdatesService?: OperationalUpdatesService;
   syncUnavailableReason?: string;
 } = {}) {
   const database = input.database ?? createInMemoryLocalOperationDatabase();
@@ -31,7 +32,7 @@ async function renderLiveOperations(input: {
     <OperationalThemeProvider>
       <TamaguiProvider config={tamaguiConfig} defaultTheme="light">
         <Theme name="light">
-          <LiveOperationalEntryScreen database={database} devScenario={input.devScenario} initialIncidentId={input.initialIncidentId} networkAvailable={input.networkAvailable} signer={signer} sosTransport={input.sosTransport} syncService={input.syncService} syncUnavailableReason={input.syncUnavailableReason} />
+          <LiveOperationalEntryScreen database={database} devScenario={input.devScenario} initialIncidentId={input.initialIncidentId} networkAvailable={input.networkAvailable} operationalUpdatesService={input.operationalUpdatesService} signer={signer} sosTransport={input.sosTransport} syncService={input.syncService} syncUnavailableReason={input.syncUnavailableReason} />
         </Theme>
       </TamaguiProvider>
     </OperationalThemeProvider>,
@@ -67,6 +68,40 @@ async function seedPreparedIncident(database: ReturnType<typeof createInMemoryLo
     estimatedBytes: 42000,
     downloadedBytes: 42000,
     updatedAt: '2026-06-29T09:01:00.000Z',
+  });
+}
+
+const operationalUpdateFixture: OperationalUpdate = {
+  updateId: 'update-mobile-1',
+  incidentId: 'incident-prepared',
+  cellId: 'cell-a7',
+  type: 'resource_need',
+  urgency: 'high',
+  title: 'Water needed near north gate',
+  summary: 'Backend-prioritized resource update for this cell.',
+  source: { kind: 'resource_report', entityId: 'resource-1' },
+  subject: { entityType: 'resource_report', entityId: 'resource-1', incidentId: 'incident-prepared' },
+  actions: [
+    { type: 'read', label: 'Mark as read' },
+    { type: 'ack', label: 'Acknowledge' },
+    { type: 'open', label: 'Open detail' },
+    { type: 'corroborate', label: 'Corroborate' },
+    { type: 'dispute', label: 'Dispute' },
+  ],
+  createdAt: '2026-06-29T09:10:00.000Z',
+  updatedAt: '2026-06-29T09:11:00.000Z',
+};
+
+async function seedOperationalUpdate(database: ReturnType<typeof createInMemoryLocalOperationDatabase>, overrides: Partial<OperationalUpdate> = {}) {
+  const update = { ...operationalUpdateFixture, ...overrides };
+
+  await database.views.operationalUpdates.upsert({
+    ...update,
+    readState: 'unread',
+    lifecycleState: update.expiresAt ? 'expired' : 'active',
+    ackState: 'none',
+    actionState: 'idle',
+    localUpdatedAt: update.updatedAt,
   });
 }
 
@@ -136,6 +171,74 @@ describe('live operational flow wiring', () => {
 
     expect(screen.getByText('Sync unavailable: set EXPO_PUBLIC_API_BASE_URL for the Equipo B API before deployment.')).toBeTruthy();
     expect(screen.getByTestId('sync_now_button')).toBeDisabled();
+  });
+
+  it('shows local operational updates with degraded/offline action state', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    await seedPreparedIncident(database);
+    await seedOperationalUpdate(database);
+
+    const { screen } = await renderLiveOperations({ database, initialIncidentId: 'incident-prepared', networkAvailable: false });
+
+    await waitFor(() => expect(screen.getByText('Operational updates')).toBeTruthy());
+
+    expect(screen.getByTestId('operational_updates_panel')).toBeTruthy();
+    expect(screen.getByText('Water needed near north gate')).toBeTruthy();
+    expect(screen.getByText('Backend-prioritized resource update for this cell.')).toBeTruthy();
+    expect(screen.getByText('Updates API offline/degraded')).toBeTruthy();
+    expect(screen.getByText('1 unread')).toBeTruthy();
+    expect(screen.getByText('ACK: none')).toBeTruthy();
+  });
+
+  it('queues mobile operational update ACK locally when offline', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    await seedPreparedIncident(database);
+    await seedOperationalUpdate(database);
+
+    const { screen } = await renderLiveOperations({ database, initialIncidentId: 'incident-prepared', networkAvailable: false });
+
+    await waitFor(() => expect(screen.getByText('Water needed near north gate')).toBeTruthy());
+    await pressAndFlush(screen.getByTestId('update_ack_update-mobile-1'));
+
+    await waitFor(() => expect(screen.getByText('ACK: pending')).toBeTruthy());
+    expect(screen.getByText('0 unread')).toBeTruthy();
+    expect(await database.operationalUpdateActions.findByIncident('incident-prepared')).toEqual([
+      expect.objectContaining({ updateId: 'update-mobile-1', actionType: 'ack', syncState: 'pending' }),
+    ]);
+  });
+
+  it('pulls dedicated operational updates during Sync now when Equipo B API client is wired', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    await seedPreparedIncident(database);
+    const sync = jest.fn<ReturnType<ScopedOperationSyncService['sync']>, Parameters<ScopedOperationSyncService['sync']>>().mockResolvedValue({
+      pushed: 1,
+      pulled: 0,
+      confirmed: 1,
+      conflicts: 0,
+      rejected: 0,
+      cursor: null,
+      hasMore: false,
+    });
+    const syncUpdates = jest.fn<ReturnType<OperationalUpdatesService['syncUpdates']>, Parameters<OperationalUpdatesService['syncUpdates']>>().mockImplementation(async () => {
+      await seedOperationalUpdate(database);
+
+      return { pulled: 1, unread: 1, expired: 0, queuedActions: 0, failedActions: 0, cursor: null, hasMore: false };
+    });
+
+    const { screen } = await renderLiveOperations({
+      database,
+      initialIncidentId: 'incident-prepared',
+      networkAvailable: true,
+      syncService: { sync },
+      operationalUpdatesService: { syncUpdates, performAction: jest.fn() },
+    });
+
+    await waitFor(() => expect(screen.getByText('Incident: Prepared flood response')).toBeTruthy());
+    await pressAndFlush(screen.getByTestId('sync_now_button'));
+
+    await waitFor(() => expect(screen.getByText('Sync complete: 1 confirmed, 0 conflicts, 0 rejected. Updates: 1 pulled, 1 unread.')).toBeTruthy());
+    expect(syncUpdates).toHaveBeenCalledWith({ incidentId: 'incident-prepared', cellId: 'cell-a7', limit: 20 });
+    expect(screen.getByText('Water needed near north gate')).toBeTruthy();
   });
 
   it('shows persisted retry metadata after a fresh state load', async () => {

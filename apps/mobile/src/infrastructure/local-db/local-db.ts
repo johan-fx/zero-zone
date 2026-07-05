@@ -1,6 +1,6 @@
 import type { MapPackMetadata } from '@/infrastructure/maps/offline-map-packs';
 import type { SignedOperation } from '@/infrastructure/security/operation-signer';
-import type { SosLocation, SyncConflict, SyncState, TrustStatus, TrustVisibility } from '@zona-cero/contracts';
+import type { OperationalUpdate, OperationalUpdateActionRequest, OperationalUpdateActionType, OperationalUpdateDisputeRequest, SosLocation, SyncConflict, SyncState, TrustStatus, TrustVisibility } from '@zona-cero/contracts';
 
 export const zeroZoneSpikeDbName = 'zero_zone_offline_spike';
 
@@ -14,6 +14,8 @@ export const localDbCollectionNames = [
   'resource_reports',
   'dispatch_events',
   'sos_signals',
+  'operational_updates',
+  'operational_update_actions',
   'local_summaries',
 ] as const;
 
@@ -45,6 +47,8 @@ export const localDbSchemas = {
   resource_reports: createSchema('resource_reports', 'reportId', ['reportId', 'incidentId', 'cellId', 'category', 'quantityApprox', 'urgency', 'constraints', 'reportKind', 'syncState', 'updatedAt']),
   dispatch_events: createSchema('dispatch_events', 'dispatchEventId', ['dispatchEventId', 'dispatchTaskId', 'incidentId', 'cellId', 'category', 'quantityApprox', 'status', 'updatedAt']),
   sos_signals: createSchema('sos_signals', 'sosId', ['sosId', 'incidentId', 'cellId', 'status', 'updatedAt']),
+  operational_updates: createSchema('operational_updates', 'updateId', ['updateId', 'incidentId', 'cellId', 'type', 'urgency', 'title', 'summary', 'readState', 'lifecycleState', 'ackState', 'actionState', 'updatedAt']),
+  operational_update_actions: createSchema('operational_update_actions', 'localActionId', ['localActionId', 'updateId', 'incidentId', 'cellId', 'actionType', 'request', 'syncState', 'createdAt', 'updatedAt']),
   local_summaries: createSchema('local_summaries', 'summaryId', ['summaryId', 'incidentId', 'cellId', 'operationFreshness', 'pendingOperations']),
 } as const satisfies Record<LocalDbCollectionName, LocalDbSchema>;
 
@@ -208,6 +212,37 @@ export type LocalSummaryLocalView = {
   roleCounts: Record<string, number>;
 };
 
+export type OperationalUpdateLocalView = OperationalUpdate & {
+  readState: 'unread' | 'read';
+  lifecycleState: 'active' | 'expired';
+  ackState: 'none' | 'pending' | 'confirmed' | 'conflict';
+  actionState: 'idle' | 'pending' | 'confirmed' | 'conflict';
+  openedAt?: string;
+  readAt?: string;
+  ackedAt?: string;
+  pendingActionType?: OperationalUpdateActionType;
+  lastActionType?: OperationalUpdateActionType;
+  lastActionError?: string;
+  localUpdatedAt: string;
+};
+
+export type OperationalUpdateActionLocalDocument = {
+  localActionId: string;
+  updateId: string;
+  incidentId: string;
+  cellId: string;
+  actionType: OperationalUpdateActionType;
+  request: OperationalUpdateActionRequest | OperationalUpdateDisputeRequest;
+  syncState: Extract<SyncState, 'pending' | 'sent' | 'confirmed' | 'conflict'>;
+  createdAt: string;
+  updatedAt: string;
+  lastAttemptAt?: string;
+  receiptId?: string;
+  receiptCreatedAt?: string;
+  errorCode?: string;
+  errorMessage?: string;
+};
+
 export type SyncIssueLocalView = {
   issueId: string;
   incidentId: string;
@@ -236,6 +271,7 @@ export type LocalOperationDatabase = {
   schemaVersion: 1;
   migrationStrategies: ReturnType<typeof getLocalDbMigrationStrategies>;
   syncOps: CollectionRepository<SyncOperationLocalDocument | MigratedSyncOperationDocument>;
+  operationalUpdateActions: CollectionRepository<OperationalUpdateActionLocalDocument>;
   views: {
     incidents: CollectionRepository<IncidentLocalView>;
     workCenters: CollectionRepository<WorkCenterView>;
@@ -245,6 +281,7 @@ export type LocalOperationDatabase = {
     resourceReports: CollectionRepository<ResourceReportLocalView>;
     dispatchEvents: CollectionRepository<DispatchEventLocalView>;
     sosSignals: CollectionRepository<SosSignalLocalView>;
+    operationalUpdates: CollectionRepository<OperationalUpdateLocalView>;
     localSummaries: CollectionRepository<LocalSummaryLocalView>;
   };
   resetIncident(incidentId: string): Promise<{ removedOperations: number; removedViews: number; warning: string }>;
@@ -260,12 +297,15 @@ export function createInMemoryLocalOperationDatabase(): LocalOperationDatabase {
   const resourceReports = createCollectionRepository<ResourceReportLocalView>((report) => report.reportId);
   const dispatchEvents = createCollectionRepository<DispatchEventLocalView>((event) => event.dispatchEventId);
   const sosSignals = createCollectionRepository<SosSignalLocalView>((signal) => signal.sosId);
+  const operationalUpdates = createCollectionRepository<OperationalUpdateLocalView>((update) => update.updateId);
+  const operationalUpdateActions = createCollectionRepository<OperationalUpdateActionLocalDocument>((action) => action.localActionId);
   const localSummaries = createCollectionRepository<LocalSummaryLocalView>((summary) => summary.summaryId);
 
   return {
     schemaVersion: 1,
     migrationStrategies: getLocalDbMigrationStrategies(),
     syncOps,
+    operationalUpdateActions,
     views: {
       incidents,
       workCenters,
@@ -275,14 +315,16 @@ export function createInMemoryLocalOperationDatabase(): LocalOperationDatabase {
       resourceReports,
       dispatchEvents,
       sosSignals,
+      operationalUpdates,
       localSummaries,
     },
     async resetIncident(incidentId: string) {
       const removedOperations = await syncOps.removeByIncident(incidentId);
-      const removedViews = await removeIncidentViews(incidentId, [incidents, workCenters, mapPacks, syncIssues, presence, resourceReports, dispatchEvents, sosSignals, localSummaries]);
+      const removedUpdateActions = await operationalUpdateActions.removeByIncident(incidentId);
+      const removedViews = await removeIncidentViews(incidentId, [incidents, workCenters, mapPacks, syncIssues, presence, resourceReports, dispatchEvents, sosSignals, operationalUpdates, localSummaries]);
 
       return {
-        removedOperations,
+        removedOperations: removedOperations + removedUpdateActions,
         removedViews,
         warning: 'Unsynchronized operations may be lost.',
       };
@@ -373,12 +415,15 @@ export function createRxdbLocalOperationDatabase(database: { collections: Record
   const resourceReports = createRxCollectionRepository<ResourceReportLocalView>(database.collections.resource_reports, 'reportId');
   const dispatchEvents = createRxCollectionRepository<DispatchEventLocalView>(database.collections.dispatch_events, 'dispatchEventId');
   const sosSignals = createRxCollectionRepository<SosSignalLocalView>(database.collections.sos_signals, 'sosId');
+  const operationalUpdates = createRxCollectionRepository<OperationalUpdateLocalView>(database.collections.operational_updates, 'updateId');
+  const operationalUpdateActions = createRxCollectionRepository<OperationalUpdateActionLocalDocument>(database.collections.operational_update_actions, 'localActionId');
   const localSummaries = createRxCollectionRepository<LocalSummaryLocalView>(database.collections.local_summaries, 'summaryId');
 
   return {
     schemaVersion: 1,
     migrationStrategies: getLocalDbMigrationStrategies(),
     syncOps,
+    operationalUpdateActions,
     views: {
       incidents,
       workCenters,
@@ -388,14 +433,16 @@ export function createRxdbLocalOperationDatabase(database: { collections: Record
       resourceReports,
       dispatchEvents,
       sosSignals,
+      operationalUpdates,
       localSummaries,
     },
     async resetIncident(incidentId) {
       const removedOperations = await syncOps.removeByIncident(incidentId);
-      const removedViews = await removeIncidentViews(incidentId, [incidents, workCenters, mapPacks, syncIssues, presence, resourceReports, dispatchEvents, sosSignals, localSummaries]);
+      const removedUpdateActions = await operationalUpdateActions.removeByIncident(incidentId);
+      const removedViews = await removeIncidentViews(incidentId, [incidents, workCenters, mapPacks, syncIssues, presence, resourceReports, dispatchEvents, sosSignals, operationalUpdates, localSummaries]);
 
       return {
-        removedOperations,
+        removedOperations: removedOperations + removedUpdateActions,
         removedViews,
         warning: 'Unsynchronized operations may be lost.',
       };
@@ -503,6 +550,10 @@ function createSchema(title: string, primaryKey: string, required: string[]): Lo
       entityType: stringProperty,
       entityId: stringProperty,
       issueId: stringProperty,
+      localActionId: stringProperty,
+      updateId: stringProperty,
+      actionType: stringProperty,
+      request: objectProperty,
       opType: stringProperty,
       payload: objectProperty,
       bounds: objectProperty,
@@ -540,6 +591,29 @@ function createSchema(title: string, primaryKey: string, required: string[]): Lo
       notes: stringProperty,
       severity: stringProperty,
       message: stringProperty,
+      summary: stringProperty,
+      body: stringProperty,
+      type: stringProperty,
+      source: objectProperty,
+      subject: objectProperty,
+      actions: arrayProperty,
+      delivery: objectProperty,
+      metadata: objectProperty,
+      expiresAt: stringProperty,
+      readState: stringProperty,
+      lifecycleState: stringProperty,
+      ackState: stringProperty,
+      actionState: stringProperty,
+      openedAt: stringProperty,
+      readAt: stringProperty,
+      ackedAt: stringProperty,
+      pendingActionType: stringProperty,
+      lastActionType: stringProperty,
+      lastActionError: stringProperty,
+      localUpdatedAt: stringProperty,
+      lastAttemptAt: stringProperty,
+      receiptId: stringProperty,
+      receiptCreatedAt: stringProperty,
       trustStatus: stringProperty,
       trustVisibility: stringProperty,
       trustSignalCount: numberProperty,
@@ -558,6 +632,8 @@ function createSchema(title: string, primaryKey: string, required: string[]): Lo
       nextRetryAt: stringProperty,
       syncErrorCode: stringProperty,
       syncErrorMessage: stringProperty,
+      errorCode: stringProperty,
+      errorMessage: stringProperty,
       conflict: objectProperty,
       code: stringProperty,
       hlc: stringProperty,
