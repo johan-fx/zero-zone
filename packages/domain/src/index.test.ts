@@ -153,6 +153,23 @@ describe('domain package', () => {
     expect(sybil.status).toBe('pending_corroboration');
     expect(sybil.explanation).toContain('sybil_penalty_same_source_cluster');
 
+    const negativeOnly = deriveCanonicalTrustState({
+      incidentId: 'incident-zc-demo',
+      subject,
+      now,
+      signals: [{ signalType: 'negative_report', sourceKind: 'peer', sourceChannel: 'telegram', sourceExternalId: 'telegram-user-3', confidence: 0.8, createdAt: '2026-07-05T11:55:00.000Z' }],
+    });
+    expect(negativeOnly.status).toBe('degraded');
+    expect(negativeOnly.explanation).not.toContain('fresh_signal');
+
+    const futureDated = deriveCanonicalTrustState({
+      incidentId: 'incident-zc-demo',
+      subject,
+      now,
+      signals: [{ signalType: 'self_declaration', sourceKind: 'self', sourceChannel: 'telegram', sourceExternalId: 'telegram-user-4', confidence: 0.6, createdAt: '2026-07-06T12:00:00.000Z' }],
+    });
+    expect(futureDated.explanation).not.toContain('fresh_signal');
+
     const negative = deriveCanonicalTrustState({
       incidentId: 'incident-zc-demo',
       subject,

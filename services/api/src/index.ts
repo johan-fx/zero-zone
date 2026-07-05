@@ -1827,7 +1827,7 @@ async function handleTrustSignalSyncOperation(db: D1Database, operation: Pending
   }
 
   const response = await createTrustSignal(db, incident.incidentId, payload.data, membership);
-  return acceptSyncOperation(db, operation, payloadHash, startedAt, response.trustSignal.trustSignalId);
+  return acceptSyncOperation(db, operation, payloadHash, startedAt, response.trustSignal.trustSignalId, { ...payload.data, trustState: response.trustState });
 }
 
 async function handleDisputeSyncOperation(db: D1Database, operation: PendingSignedOperation, startedAt: number): Promise<SyncPushOperationResult> {
@@ -1877,7 +1877,7 @@ async function handleDisputeSyncOperation(db: D1Database, operation: PendingSign
   }
 
   const response = await createDispute(db, incident.incidentId, payload.data, membership);
-  return acceptSyncOperation(db, operation, payloadHash, startedAt, response.dispute.disputeId);
+  return acceptSyncOperation(db, operation, payloadHash, startedAt, response.dispute.disputeId, { ...payload.data, trustState: response.trustState });
 }
 
 async function rejectAndRecordSyncOperation(
@@ -2214,8 +2214,9 @@ async function acceptSyncOperation(
   payloadHash: string,
   startedAt: number,
   resultEntityId: string = operation.entityId,
+  confirmedPayload: unknown = operation.payload,
 ): Promise<SyncPushOperationResult> {
-  const metadata = await recordSyncOperation(db, operation, payloadHash, 'accepted', null, null, resultEntityId);
+  const metadata = await recordSyncOperation(db, operation, payloadHash, 'accepted', null, null, resultEntityId, confirmedPayload);
   logOperationEvent({
     channel: 'mobile',
     opType: operation.opType,
@@ -2242,6 +2243,7 @@ async function recordSyncOperation(
   conflictCode: ContractErrorCode | null = null,
   conflictMessage: string | null = null,
   resultEntityId: string = operation.entityId,
+  confirmedPayload: unknown = operation.payload,
 ): Promise<{ serverVersion: number; serverUpdatedAt: string }> {
   const serverUpdatedAt = new Date().toISOString();
   let serverVersion = 0;
@@ -2261,7 +2263,7 @@ async function recordSyncOperation(
         resultEntityId,
         operation.entityType,
         operation.opType,
-        JSON.stringify({ ...operation, syncState: 'confirmed' }),
+        JSON.stringify({ ...operation, entityId: resultEntityId, payload: confirmedPayload, syncState: 'confirmed' }),
         serverUpdatedAt,
       )
       .run();
@@ -2869,7 +2871,7 @@ async function recordTrustRejectedAudit(
     `INSERT OR IGNORE INTO audit_events (audit_event_id, incident_id, channel_identity_id, incident_membership_id, event_type, payload_json)
      VALUES (?, ?, ?, ?, ?, ?)`,
   ).bind(
-    `audit_${eventType.replace(/\./g, '_')}_${slug(incidentId)}_${slug(channel)}_${slug(externalId)}_${slug(errorCode)}_${Date.now()}`,
+    `audit_${eventType.replace(/\./g, '_')}_${slug(incidentId)}_${slug(channel)}_${slug(externalId)}_${slug(errorCode)}_${crypto.randomUUID()}`,
     incidentId,
     membership.channelIdentityId,
     membership.incidentMembershipId,

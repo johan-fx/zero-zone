@@ -1128,15 +1128,19 @@ function formatTrustBadgeLabel(status: WorkCenterView['trustStatus'], signalCoun
 }
 
 function resolveTrustTone(status: WorkCenterView['trustStatus']) {
-  if (status === 'disputed' || status === 'degraded') {
+  if (status === 'disputed') {
     return 'risk';
+  }
+
+  if (status === 'degraded') {
+    return 'warning';
   }
 
   if (status === 'trusted_by_context' || status === 'field_attested') {
     return 'success';
   }
 
-  if (status === 'pending' || status === 'pending_corroboration') {
+  if (status === 'pending' || status === 'pending_corroboration' || status === 'self_declared') {
     return 'pending';
   }
 
