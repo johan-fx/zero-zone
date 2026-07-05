@@ -638,6 +638,7 @@ function createSchema(title: string, primaryKey: string, required: string[]): Lo
       code: stringProperty,
       hlc: stringProperty,
       createdAtDevice: stringProperty,
+      createdAt: stringProperty,
       updatedAt: stringProperty,
       materializedAt: nullableStringProperty,
       schemaVersion: numberProperty,

@@ -649,7 +649,12 @@ async function postOperationalUpdateAction<T>(
   );
 
   if (!response.ok) {
-    throw new Error(`Operational update action failed with status ${response.status}`);
+    throw new Error(
+      await readApiError(
+        response,
+        `Operational update action failed with status ${response.status}`,
+      ),
+    );
   }
 
   return schema.parse(await response.json());

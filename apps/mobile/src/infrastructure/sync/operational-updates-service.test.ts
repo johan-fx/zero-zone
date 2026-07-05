@@ -60,7 +60,11 @@ describe('mobile operational updates service', () => {
         action: { actionId: 'action-1', updateId: 'update-1', actionType: 'ack', status: 'accepted', idempotent: false, createdAt: '2026-06-29T09:03:00.000Z' },
       }),
     };
-    const clock = jest.fn().mockReturnValueOnce('2026-06-29T09:02:00.000Z').mockReturnValueOnce('2026-06-29T09:02:30.000Z');
+    const clock = jest
+      .fn()
+      .mockReturnValueOnce('2026-06-29T09:02:00.000Z')
+      .mockReturnValueOnce('2026-06-29T09:02:30.000Z')
+      .mockReturnValue('2026-06-29T09:03:00.000Z');
     const service = createOperationalUpdatesService({ database, client, actorExternalId: 'actor-key-1', clock });
 
     await service.syncUpdates({ incidentId: 'incident-1', cellId: 'cell-a' });

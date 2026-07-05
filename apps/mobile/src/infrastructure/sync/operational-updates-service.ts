@@ -7,6 +7,7 @@ import {
   type OperationalUpdateActionRequest,
   type OperationalUpdateActionResponse,
   type OperationalUpdateActionType,
+  type OperationalUpdateDeliveryStatus,
   type OperationalUpdateDisputeRequest,
   type OperationalUpdateLinkResponse,
   type OperationalUpdatePullResponse,
@@ -255,9 +256,9 @@ async function upsertOperationalUpdateView(database: LocalOperationDatabase, upd
     createdAt: update.createdAt,
     updatedAt: update.updatedAt,
     expiresAt: update.expiresAt,
-    readState: existing?.readState ?? (update.delivery?.status === 'read' || update.delivery?.status === 'acked' ? 'read' : 'unread'),
+    readState: mergeReadState(existing?.readState, update.delivery?.status),
     lifecycleState,
-    ackState: existing?.ackState ?? (update.delivery?.status === 'acked' ? 'confirmed' : 'none'),
+    ackState: mergeAckState(existing?.ackState, update.delivery?.status),
     actionState: existing?.actionState ?? 'idle',
     openedAt: existing?.openedAt,
     readAt: existing?.readAt ?? update.delivery?.readAt,
@@ -369,8 +370,50 @@ function resolveLifecycleState(update: OperationalUpdate, now: string): Operatio
   return update.expiresAt && Date.parse(update.expiresAt) <= Date.parse(now) ? 'expired' : 'active';
 }
 
+// Read/ack state advances monotonically: local optimistic progress is preserved, while
+// server-side delivery status (e.g. an ACK made from another channel) is still adopted so
+// the device does not stay stale after subsequent pulls.
+function mergeReadState(
+  local: OperationalUpdateLocalView['readState'] | undefined,
+  deliveryStatus: OperationalUpdateDeliveryStatus | undefined,
+): OperationalUpdateLocalView['readState'] {
+  if (local === 'read' || deliveryStatus === 'read' || deliveryStatus === 'acked') {
+    return 'read';
+  }
+
+  return 'unread';
+}
+
+function mergeAckState(
+  local: OperationalUpdateLocalView['ackState'] | undefined,
+  deliveryStatus: OperationalUpdateDeliveryStatus | undefined,
+): OperationalUpdateLocalView['ackState'] {
+  if (local === 'conflict' || local === 'confirmed') {
+    return local;
+  }
+
+  if (deliveryStatus === 'acked') {
+    return 'confirmed';
+  }
+
+  return local ?? 'none';
+}
+
 function classifyActionError(error: unknown): OperationalUpdateActionLocalDocument['syncState'] {
-  return error instanceof Error && error.message.startsWith('HTTP 4') ? 'conflict' : 'pending';
+  if (!(error instanceof Error)) {
+    return 'pending';
+  }
+
+  const status = Number(error.message.match(/^HTTP (\d{3})/)?.[1]);
+  if (!Number.isFinite(status) || status < 400 || status >= 500) {
+    return 'pending';
+  }
+
+  // Transient client errors (timeout / rate limit) must stay pending so the queued
+  // action is retried; only genuinely permanent 4xx responses become conflicts.
+  const isTransient = status === 408 || status === 429;
+
+  return isTransient ? 'pending' : 'conflict';
 }
 
 async function resolveHeaders(headers: CreateHttpOperationalUpdatesClientOptions['headers']): Promise<HeadersInit> {

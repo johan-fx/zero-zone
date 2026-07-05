@@ -1094,7 +1094,7 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
           aria-live="polite"
         >
           <HubBackLink onNavigate={navigate} />
-          <h2 id="operational-updates-shell-title">Operational updates</h2>
+          <h2 id="operational-updates-shell-title">{t("web.updates.title")}</h2>
           <OperationalUpdatesPanel
             incidentId={incidentId}
             cellId={cellId}

@@ -1281,6 +1281,7 @@ function createUnavailableOperationalUpdatesService(database: LocalOperationData
           ackState: input.actionType === 'ack' ? 'pending' : update.ackState,
           pendingActionType: input.actionType,
           lastActionType: input.actionType,
+          lastActionError: undefined,
           localUpdatedAt: now,
         });
       }

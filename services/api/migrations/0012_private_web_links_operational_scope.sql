@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS private_web_links_scope_migration (
   metadata_json TEXT NOT NULL DEFAULT '{}'
 );
 
-INSERT OR IGNORE INTO private_web_links_scope_migration (
+INSERT INTO private_web_links_scope_migration (
   link_id, incident_id, channel_identity_id, incident_membership_id, scope, token_hash, correlation_id,
   expires_at, consumed_at, max_uses, use_count, created_at, revoked_at, metadata_json
 )
