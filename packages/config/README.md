@@ -1,6 +1,6 @@
 # @zona-cero/config
 
-Shared workspace configuration package for TypeScript and Vitest defaults used by reusable packages.
+Shared workspace configuration package for TypeScript and Vitest defaults used by reusable packages and app workspaces.
 
 ## Ownership boundary
 

@@ -50,7 +50,9 @@ Artifacts are written under:
 |---|---|
 | Current screenshots | `docs/design-system-visual-regression/current/` |
 | Mock/current contact sheets | `docs/design-system-visual-regression/contact-sheets/` |
-| Audit notes/report | `docs/design-system-visual-regression/audit-report.md` |
+| Contact-sheet audit notes | `docs/design-system-visual-regression/notes.json` |
+
+`docs/design-system-visual-regression/audit-report.md` is a manually maintained summary, not an output of `pnpm visual:audit:contact-sheet`.
 
 If capture fails, check Simulator, Expo, Expo Go/development client routing, and Maestro availability before changing app code.
 
