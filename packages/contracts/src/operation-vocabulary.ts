@@ -9,11 +9,13 @@ export const operationTypes = [
   'dispatch_event.update',
   'sos.create',
   'sos.cancel',
+  'trust_signal.create',
+  'dispute.create',
 ] as const;
 
 export type OperationType = (typeof operationTypes)[number];
 
-export const operationFamilies = ['incident', 'work_center', 'presence', 'resource_report', 'dispatch_event', 'sos'] as const;
+export const operationFamilies = ['incident', 'work_center', 'presence', 'resource_report', 'dispatch_event', 'sos', 'trust_signal', 'dispute'] as const;
 
 export type OperationFamily = (typeof operationFamilies)[number];
 
@@ -32,4 +34,6 @@ export const operationTypeFamilies = {
   'dispatch_event.update': 'dispatch_event',
   'sos.create': 'sos',
   'sos.cancel': 'sos',
+  'trust_signal.create': 'trust_signal',
+  'dispute.create': 'dispute',
 } as const satisfies Record<OperationType, OperationFamily>;

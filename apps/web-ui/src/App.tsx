@@ -29,18 +29,24 @@ import type {
   SosAlert,
   SosAlertStatusResponse,
   SosFanoutStatus,
+  TrustState,
+  TrustSubject,
+  TrustSubjectEntityType,
   WorkCenterDetail,
   WorkCenterSummary,
   SyncFreshness,
 } from "@zona-cero/contracts";
 import {
   consumePrivateFamilyReunificationLink,
+  createDispute,
   createSosAlert,
+  createTrustSignal,
   fetchApiHealth,
   fetchDispatchTasks,
   fetchResourceReports,
   fetchSosStatus,
   fetchSyncFreshness,
+  fetchTrustState,
   fetchWorkCenterDetail,
   fetchWorkCenters,
   searchFamilyReunification,
@@ -67,6 +73,8 @@ import {
   riskTone,
   sosAlertStatusTone,
   sosFanoutStatTone,
+  trustStatusTone,
+  trustVisibilityTone,
   urgencyTone,
   workCenterStatusTone,
 } from "./statusTones";
@@ -108,6 +116,22 @@ type ResourceState =
   | { status: "loading" }
   | { status: "ready"; reports: ResourceReportSummary[] }
   | { status: "error"; message: string };
+
+type TrustUiState =
+  | { status: "loading"; states: Record<string, TrustState>; message?: string }
+  | { status: "ready"; states: Record<string, TrustState>; message?: string }
+  | { status: "error"; states: Record<string, TrustState>; message: string };
+
+type TrustActionState = Record<
+  string,
+  { status: "loading" | "success" | "error"; message: string }
+>;
+
+type TrustActionSubject = {
+  entityType: TrustSubjectEntityType;
+  entityId: string;
+  displayRef?: string;
+};
 
 type DispatchState =
   | { status: "loading" }
@@ -500,6 +524,13 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
   const [resourceState, setResourceState] = useState<ResourceState>({
     status: "loading",
   });
+  const [trustUiState, setTrustUiState] = useState<TrustUiState>({
+    status: "loading",
+    states: {},
+  });
+  const [trustActionState, setTrustActionState] = useState<TrustActionState>(
+    {},
+  );
   const [dispatchState, setDispatchState] = useState<DispatchState>({
     status: "loading",
   });
@@ -554,6 +585,16 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
 
       if (active)
         setWorkCenterState({ status: "ready", workCenters, selected });
+      void loadTrustStates(
+        workCenters.map((workCenter) =>
+          buildTrustSubject(
+            incidentId,
+            "work_center",
+            workCenter.workCenterId,
+            workCenter.name,
+          ),
+        ),
+      );
       reportWebTelemetry("work_centers.loaded", "accepted");
     }
 
@@ -561,6 +602,16 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
       const { resourceReports } = await fetchResourceReports(incidentId);
       if (active)
         setResourceState({ status: "ready", reports: resourceReports });
+      void loadTrustStates(
+        resourceReports.map((report) =>
+          buildTrustSubject(
+            incidentId,
+            "resource_report",
+            report.resourceReportId,
+            report.category,
+          ),
+        ),
+      );
       reportWebTelemetry("resources.loaded", "accepted");
     }
 
@@ -573,6 +624,16 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
     async function loadSosStatus() {
       const response = await fetchSosStatus(incidentId);
       if (active) setSosState({ status: "ready", response });
+      void loadTrustStates(
+        response.sosAlerts.map((alert) =>
+          buildTrustSubject(
+            incidentId,
+            "sos_alert",
+            alert.sosAlertId,
+            alert.sosAlertId,
+          ),
+        ),
+      );
     }
 
     loadChannelFreshness().catch((error: unknown) => {
@@ -606,7 +667,101 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
     return () => {
       active = false;
     };
-  }, [incidentId, cellId]);
+    async function loadTrustStates(subjects: TrustSubject[]) {
+      if (!active) return;
+      if (subjects.length === 0) {
+        setTrustUiState((previous) => ({ status: "ready", states: previous.states }));
+        return;
+      }
+
+      setTrustUiState((previous) => ({ ...previous, status: "loading" }));
+      const results = await Promise.allSettled(
+        subjects.map(async (subject) => {
+          const response = await fetchTrustState(incidentId, subject);
+          return [trustSubjectKey(subject), response.trustState] as const;
+        }),
+      );
+
+      if (!active) return;
+
+      const loaded = Object.fromEntries(
+        results
+          .filter(
+            (result): result is PromiseFulfilledResult<readonly [string, TrustState]> =>
+              result.status === "fulfilled",
+          )
+          .map((result) => result.value),
+      );
+      const failed = results.some((result) => result.status === "rejected");
+
+      setTrustUiState((previous) => {
+        const states = { ...previous.states, ...loaded };
+        return failed
+          ? { status: "error", states, message: t("web.trust.unavailable") }
+          : { status: "ready", states };
+      });
+    }
+  }, [incidentId, cellId, t]);
+
+  async function handleTrustAction(
+    subjectInput: TrustActionSubject,
+    action: "corroborate" | "dispute",
+  ) {
+    const subject = buildTrustSubject(
+      incidentId,
+      subjectInput.entityType,
+      subjectInput.entityId,
+      subjectInput.displayRef,
+    );
+    const key = trustSubjectKey(subject);
+    setTrustActionState((previous) => ({
+      ...previous,
+      [key]: { status: "loading", message: t("web.trust.action.loading") },
+    }));
+
+    try {
+      const response =
+        action === "corroborate"
+          ? await createTrustSignal(incidentId, {
+              channel: "web-ui",
+              externalId: webExternalId,
+              displayName: webDisplayName,
+              subject,
+              signalType: "context_corroboration",
+              sourceKind: "peer",
+              reason: "User corroborated this item from the web UI.",
+            })
+          : await createDispute(incidentId, {
+              channel: "web-ui",
+              externalId: webExternalId,
+              displayName: webDisplayName,
+              subject,
+              reason: "other",
+              description:
+                "User disputed this item from the web UI. Follow up in context before acting.",
+            });
+
+      setTrustUiState((previous) => ({
+        status: "ready",
+        states: { ...previous.states, [key]: response.trustState },
+      }));
+      setTrustActionState((previous) => ({
+        ...previous,
+        [key]: {
+          status: "success",
+          message:
+            action === "corroborate"
+              ? t("web.trust.action.corroborated")
+              : t("web.trust.action.disputed"),
+        },
+      }));
+    } catch (error: unknown) {
+      setTrustActionState((previous) => ({
+        ...previous,
+        [key]: { status: "error", message: errorMessage(error) },
+      }));
+    }
+  }
 
   async function handleDispatchAction(
     task: DispatchTask,
@@ -835,7 +990,12 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
               <p role="alert">{workCenterState.message}</p>
             ) : null}
             {workCenterState.status === "ready" ? (
-              <WorkCenterOnlineView state={workCenterState} />
+              <WorkCenterOnlineView
+                state={workCenterState}
+                trustUiState={trustUiState}
+                trustActionState={trustActionState}
+                onTrustAction={handleTrustAction}
+              />
             ) : null}
           </section>
         </section>
@@ -869,7 +1029,12 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
             <p role="alert">{resourceState.message}</p>
           ) : null}
           {resourceState.status === "ready" ? (
-            <ResourceReportView reports={resourceState.reports} />
+            <ResourceReportView
+              reports={resourceState.reports}
+              trustUiState={trustUiState}
+              trustActionState={trustActionState}
+              onTrustAction={handleTrustAction}
+            />
           ) : null}
         </section>
       ) : null}
@@ -907,6 +1072,9 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
               onConfirmationChange={setSosConfirmation}
               isSubmitting={isSosSubmitting}
               onSubmit={handleSosSubmit}
+              trustUiState={trustUiState}
+              trustActionState={trustActionState}
+              onTrustAction={handleTrustAction}
             />
           ) : null}
         </section>
@@ -1764,12 +1932,18 @@ function SosPanel({
   onConfirmationChange,
   isSubmitting,
   onSubmit,
+  trustUiState,
+  trustActionState,
+  onTrustAction,
 }: {
   state: Extract<SosState, { status: "ready" }>;
   confirmation: string;
   onConfirmationChange: (value: string) => void;
   isSubmitting: boolean;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  trustUiState: TrustUiState;
+  trustActionState: TrustActionState;
+  onTrustAction: (subject: TrustActionSubject, action: "corroborate" | "dispute") => void;
 }) {
   const { t } = useI18n();
 
@@ -1792,7 +1966,12 @@ function SosPanel({
           {isSubmitting ? t("web.sos.submitting") : t("web.sos.submit")}
         </button>
       </form>
-      <SosAlertList alerts={state.response.sosAlerts} />
+      <SosAlertList
+        alerts={state.response.sosAlerts}
+        trustUiState={trustUiState}
+        trustActionState={trustActionState}
+        onTrustAction={onTrustAction}
+      />
     </div>
   );
 }
@@ -1839,7 +2018,17 @@ function FanoutStrip({ fanout }: { fanout: SosFanoutStatus }) {
   );
 }
 
-function SosAlertList({ alerts }: { alerts: SosAlert[] }) {
+function SosAlertList({
+  alerts,
+  trustUiState,
+  trustActionState,
+  onTrustAction,
+}: {
+  alerts: SosAlert[];
+  trustUiState: TrustUiState;
+  trustActionState: TrustActionState;
+  onTrustAction: (subject: TrustActionSubject, action: "corroborate" | "dispute") => void;
+}) {
   const { t } = useI18n();
   if (alerts.length === 0)
     return <p>{t("web.sos.empty")}</p>;
@@ -1863,10 +2052,119 @@ function SosAlertList({ alerts }: { alerts: SosAlert[] }) {
               })}
             </p>
             <p>{formatSosAlertLocation(alert, t)}</p>
+            <TrustStatePanel
+              trustUiState={trustUiState}
+              actionState={trustActionState}
+              subject={{
+                entityType: "sos_alert",
+                entityId: alert.sosAlertId,
+                displayRef: alert.sosAlertId,
+              }}
+              onTrustAction={onTrustAction}
+            />
           </Card>
         </li>
       ))}
     </ul>
+  );
+}
+
+function TrustStatePanel({
+  trustUiState,
+  actionState,
+  subject,
+  onTrustAction,
+}: {
+  trustUiState: TrustUiState;
+  actionState: TrustActionState;
+  subject: TrustActionSubject;
+  onTrustAction: (subject: TrustActionSubject, action: "corroborate" | "dispute") => void;
+}) {
+  const { t } = useI18n();
+  const key = trustSubjectKey(subject);
+  const trustState = trustUiState.states[key];
+  const currentAction = actionState[key];
+  const isSubmitting = currentAction?.status === "loading";
+
+  return (
+    <section className="trust-panel" aria-label={t("web.trust.title")}>
+      <h5>{t("web.trust.title")}</h5>
+      {!trustState ? (
+        <p>
+          {trustUiState.status === "loading"
+            ? t("web.trust.loading")
+            : t("web.trust.unavailable")}
+        </p>
+      ) : (
+        <>
+          <MetaRow
+            aria-label={t("web.trust.title")}
+            items={[
+              {
+                key: "status",
+                label: t("web.trust.status.label"),
+                value: describeTrustStatus(trustState.status, t),
+                tone: trustStatusTone(trustState.status),
+              },
+              {
+                key: "visibility",
+                label: t("web.trust.visibility.label"),
+                value: describeTrustVisibility(trustState.visibility, t),
+                tone: trustVisibilityTone(trustState.visibility),
+              },
+              {
+                key: "score",
+                label: t("web.trust.score.label"),
+                value: formatTrustScore(trustState.score),
+                tone: trustStatusTone(trustState.status),
+              },
+              {
+                key: "signals",
+                label: t("web.trust.signals.label"),
+                value: trustState.signalCount,
+                tone: "info",
+              },
+              {
+                key: "disputes",
+                label: t("web.trust.disputes.label"),
+                value: trustState.disputeCount,
+                tone: trustState.disputeCount > 0 ? "conflict" : "success",
+              },
+            ]}
+          />
+          <p>
+            {trustState.explanation.length > 0
+              ? trustState.explanation.join(" ")
+              : t("web.trust.explanation.empty")}
+          </p>
+        </>
+      )}
+      {currentAction ? (
+        <p role={currentAction.status === "error" ? "alert" : "status"}>
+          {currentAction.message}
+        </p>
+      ) : null}
+      <div className="action-row">
+        <button
+          type="button"
+          disabled={isSubmitting}
+          onClick={() => onTrustAction(subject, "corroborate")}
+        >
+          {isSubmitting
+            ? t("web.trust.action.loading")
+            : t("web.trust.action.corroborate")}
+        </button>
+        <button
+          type="button"
+          disabled={isSubmitting}
+          onClick={() => onTrustAction(subject, "dispute")}
+        >
+          {isSubmitting
+            ? t("web.trust.action.loading")
+            : t("web.trust.action.dispute")}
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -2021,8 +2319,14 @@ function HelpPointsPublicLocationSummary({
 
 function WorkCenterOnlineView({
   state,
+  trustUiState,
+  trustActionState,
+  onTrustAction,
 }: {
   state: Extract<WorkCenterState, { status: "ready" }>;
+  trustUiState: TrustUiState;
+  trustActionState: TrustActionState;
+  onTrustAction: (subject: TrustActionSubject, action: "corroborate" | "dispute") => void;
 }) {
   const { t } = useI18n();
 
@@ -2055,6 +2359,16 @@ function WorkCenterOnlineView({
                     {workCenter.centerType ?? t("web.help.center_type.default")} ·{" "}
                     {t("web.help.priority.label")} {describePriority(workCenter.priority, t)}
                   </p>
+                  <TrustStatePanel
+                    trustUiState={trustUiState}
+                    actionState={trustActionState}
+                    subject={{
+                      entityType: "work_center",
+                      entityId: workCenter.workCenterId,
+                      displayRef: displayName.label,
+                    }}
+                    onTrustAction={onTrustAction}
+                  />
                 </Card>
               </li>
             );
@@ -2065,7 +2379,12 @@ function WorkCenterOnlineView({
       <div>
         <h3>{t("web.help.detail.title")}</h3>
         {state.selected ? (
-          <WorkCenterDetailCard workCenter={state.selected} />
+          <WorkCenterDetailCard
+            workCenter={state.selected}
+            trustUiState={trustUiState}
+            trustActionState={trustActionState}
+            onTrustAction={onTrustAction}
+          />
         ) : (
           <p>{t("web.help.detail.choose")}</p>
         )}
@@ -2095,7 +2414,17 @@ function WorkCenterOnlineView({
   );
 }
 
-function ResourceReportView({ reports }: { reports: ResourceReportSummary[] }) {
+function ResourceReportView({
+  reports,
+  trustUiState,
+  trustActionState,
+  onTrustAction,
+}: {
+  reports: ResourceReportSummary[];
+  trustUiState: TrustUiState;
+  trustActionState: TrustActionState;
+  onTrustAction: (subject: TrustActionSubject, action: "corroborate" | "dispute") => void;
+}) {
   const { t } = useI18n();
   if (reports.length === 0) return <p>{t("web.resources.empty")}</p>;
 
@@ -2108,11 +2437,17 @@ function ResourceReportView({ reports }: { reports: ResourceReportSummary[] }) {
         title={t("web.resources.needed.title")}
         emptyText={t("web.resources.needed.empty")}
         reports={needed}
+        trustUiState={trustUiState}
+        trustActionState={trustActionState}
+        onTrustAction={onTrustAction}
       />
       <ResourceColumn
         title={t("web.resources.surplus.title")}
         emptyText={t("web.resources.surplus.empty")}
         reports={surplus}
+        trustUiState={trustUiState}
+        trustActionState={trustActionState}
+        onTrustAction={onTrustAction}
       />
     </div>
   );
@@ -2122,10 +2457,16 @@ function ResourceColumn({
   title,
   emptyText,
   reports,
+  trustUiState,
+  trustActionState,
+  onTrustAction,
 }: {
   title: string;
   emptyText: string;
   reports: ResourceReportSummary[];
+  trustUiState: TrustUiState;
+  trustActionState: TrustActionState;
+  onTrustAction: (subject: TrustActionSubject, action: "corroborate" | "dispute") => void;
 }) {
   const { t } = useI18n();
 
@@ -2157,6 +2498,16 @@ function ResourceColumn({
                   ? report.constraints.join(", ")
                   : t("web.resources.notes.empty")}
               </p>
+              <TrustStatePanel
+                trustUiState={trustUiState}
+                actionState={trustActionState}
+                subject={{
+                  entityType: "resource_report",
+                  entityId: report.resourceReportId,
+                  displayRef: report.category,
+                }}
+                onTrustAction={onTrustAction}
+              />
             </Card>
           </li>
         ))}
@@ -2321,6 +2672,50 @@ function describeRisk(
   return t("web.help.risk.low");
 }
 
+function describeTrustStatus(status: TrustState["status"], t: Translate): string {
+  if (status === "self_declared") return t("web.trust.status.self_declared");
+  if (status === "field_attested") return t("web.trust.status.field_attested");
+  if (status === "trusted_by_context")
+    return t("web.trust.status.trusted_by_context");
+  if (status === "disputed") return t("web.trust.status.disputed");
+  if (status === "degraded") return t("web.trust.status.degraded");
+  return t("web.trust.status.pending_corroboration");
+}
+
+function describeTrustVisibility(
+  visibility: TrustState["visibility"],
+  t: Translate,
+): string {
+  if (visibility === "normal") return t("web.trust.visibility.normal");
+  if (visibility === "elevated") return t("web.trust.visibility.elevated");
+  if (visibility === "limited") return t("web.trust.visibility.limited");
+  return t("web.trust.visibility.blocked");
+}
+
+function formatTrustScore(score: number): string {
+  return `${Math.round(score * 100)}%`;
+}
+
+function buildTrustSubject(
+  incidentId: string,
+  entityType: TrustSubjectEntityType,
+  entityId: string,
+  displayRef?: string,
+): TrustSubject {
+  return {
+    incidentId,
+    entityType,
+    entityId,
+    ...(displayRef?.trim() ? { displayRef: displayRef.trim() } : {}),
+  };
+}
+
+function trustSubjectKey(
+  subject: Pick<TrustSubject, "entityType" | "entityId">,
+): string {
+  return `${subject.entityType}:${subject.entityId}`;
+}
+
 function describeSignalSummary(
   workCenter: WorkCenterDetail,
   t: Translate,
@@ -2368,8 +2763,14 @@ function describeSosSeverity(
 
 function WorkCenterDetailCard({
   workCenter,
+  trustUiState,
+  trustActionState,
+  onTrustAction,
 }: {
   workCenter: WorkCenterDetail;
+  trustUiState: TrustUiState;
+  trustActionState: TrustActionState;
+  onTrustAction: (subject: TrustActionSubject, action: "corroborate" | "dispute") => void;
 }) {
   const { t } = useI18n();
   const displayName = getCivilWorkCenterDisplayName(workCenter, t);
@@ -2411,6 +2812,16 @@ function WorkCenterDetailCard({
           </li>
         ))}
       </ul>
+      <TrustStatePanel
+        trustUiState={trustUiState}
+        actionState={trustActionState}
+        subject={{
+          entityType: "work_center",
+          entityId: workCenter.workCenterId,
+          displayRef: displayName.label,
+        }}
+        onTrustAction={onTrustAction}
+      />
     </Card>
   );
 }

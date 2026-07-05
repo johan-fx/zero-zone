@@ -115,7 +115,7 @@ export async function handleTelegramResourceReportFlow(
         const request = text && !isSkip(text) && !text.startsWith('/')
           ? ResourceReportConnectedCreateRequestSchema.parse({ ...state.request, payload: { ...state.request.payload, workCenterId: text } })
           : state.request;
-        return { state: { step: 'awaitingConfirmation', incident: state.incident, externalUserId: state.externalUserId, displayName: state.displayName, preferredLocale: locale, request }, responseText: formatResourceReportConfirmation(locale, state.incident, request) };
+        return { state: { step: 'awaitingConfirmation', incident: state.incident, externalUserId: state.externalUserId, displayName: state.displayName, preferredLocale: locale, request }, responseText: `${formatResourceReportConfirmation(locale, state.incident, request)}\n${resourceTrustContextCopy(locale, 'confirmation')}` };
       }
 
       if (state.step === 'awaitingConfirmation') {
@@ -123,7 +123,7 @@ export async function handleTelegramResourceReportFlow(
         if (!isConfirmation(text)) return { state, responseText: formatMessage(locale, 'telegram.resource.confirmation.required') };
         try {
           const response = await ports.createResourceReport(state.incident.incidentId, state.request);
-          return { state: { step: 'reported', response }, responseText: formatResourceReportSuccess(locale, response) };
+          return { state: { step: 'reported', response }, responseText: `${formatResourceReportSuccess(locale, response)}\n${resourceTrustContextCopy(locale, 'success')}` };
         } catch (error) {
           const errorCode = readErrorCode(error);
           return {
@@ -138,6 +138,18 @@ export async function handleTelegramResourceReportFlow(
   );
 
   return withTelegramResourceFlowContextPreface(result, flowContext);
+}
+
+function resourceTrustContextCopy(locale: SupportedLocale, phase: 'confirmation' | 'success'): string {
+  if (locale === 'es') {
+    return phase === 'confirmation'
+      ? 'Confianza contextual: este aviso de recurso queda como información civil pendiente de señales. No promete disponibilidad ni entrega.'
+      : 'Confianza contextual: el servidor podrá recibir corroboraciones o disputas; no calcules prioridad fuera del estado canónico.';
+  }
+
+  return phase === 'confirmation'
+    ? 'Contextual trust: this resource report remains civil information pending signals. It does not promise availability or delivery.'
+    : 'Contextual trust: the server can receive corroborations or disputes; do not calculate priority outside the canonical state.';
 }
 
 function withTelegramResourceFlowContextPreface(
