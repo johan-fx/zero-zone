@@ -24,6 +24,7 @@ import {
   OperationalUpdateActionResponseSchema,
   OperationalUpdateCorroborateRequestSchema,
   OperationalUpdateDisputeRequestSchema,
+  OperationalUpdateDeliverySchema,
   OperationalUpdateLinkRequestSchema,
   OperationalUpdateLinkResponseSchema,
   OperationalUpdatePullResponseSchema,
@@ -505,6 +506,11 @@ describe('contracts package', () => {
     expect(OperationalUpdateSchema.safeParse({ ...update, sourceExternalId: 'telegram-user-1' }).success).toBe(false);
     expect(OperationalUpdatePullResponseSchema.parse({ updates: [update], cursor: null, hasMore: false }).updates[0]?.updateId).toBe('upd-1');
 
+    expect(OperationalUpdateDeliverySchema.safeParse({ channel: 'mobile', status: 'delivered', attemptCount: 1 }).success).toBe(false);
+    expect(OperationalUpdateDeliverySchema.safeParse({ channel: 'mobile', status: 'read', deliveredAt: '2026-07-05T12:00:30.000Z', attemptCount: 1 }).success).toBe(false);
+    expect(OperationalUpdateDeliverySchema.safeParse({ channel: 'mobile', status: 'acked', deliveredAt: '2026-07-05T12:00:30.000Z', readAt: '2026-07-05T12:00:45.000Z', attemptCount: 1 }).success).toBe(false);
+    expect(OperationalUpdateDeliverySchema.parse({ channel: 'mobile', status: 'acked', deliveredAt: '2026-07-05T12:00:30.000Z', readAt: '2026-07-05T12:00:45.000Z', ackedAt: '2026-07-05T12:01:00.000Z', attemptCount: 1 }).ackedAt).toBe('2026-07-05T12:01:00.000Z');
+
     const actionRequest = OperationalUpdateActionRequestSchema.parse({ channel: 'telegram', externalId: 'telegram-user-1', idempotencyKey: 'ack-1' });
     expect(actionRequest.channel).toBe('telegram');
     expect(OperationalUpdateActionRequestSchema.safeParse({ ...actionRequest, phone: '+34 600 000 000' }).success).toBe(false);
@@ -634,6 +640,8 @@ describe('contracts package', () => {
     expect(issueRequest.scope).toBe('family_reunification.search');
     expect(PrivateWebLinkIssueRequestSchema.safeParse({ ...issueRequest, unexpected: true }).success).toBe(false);
     expect(PrivateWebLinkIssueRequestSchema.safeParse({ ...issueRequest, scope: 'admin.raw' }).success).toBe(false);
+    expect(PrivateWebLinkIssueRequestSchema.safeParse({ ...issueRequest, scope: 'operational_update.detail', maxUses: 2 }).success).toBe(false);
+    expect(PrivateWebLinkIssueRequestSchema.parse({ ...issueRequest, scope: 'operational_update.detail', maxUses: 1 }).maxUses).toBe(1);
 
     expect(
       PrivateWebLinkIssueResponseSchema.parse({

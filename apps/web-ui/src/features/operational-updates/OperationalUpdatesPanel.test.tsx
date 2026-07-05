@@ -47,7 +47,7 @@ describe("OperationalUpdatesPanel", () => {
       }
       if (url.endsWith("/incidents/incident-zc-demo/updates/upd-sos-1/ack")) {
         return jsonResponse({
-          update: { ...updateFixture, delivery: { channel: "web-ui", status: "acked", attemptCount: 1 } },
+          update: { ...updateFixture, delivery: { channel: "web-ui", status: "acked", attemptCount: 1, deliveredAt: "2026-07-05T12:00:30.000Z", readAt: "2026-07-05T12:00:45.000Z", ackedAt: "2026-07-05T12:01:00.000Z" } },
           action: {
             actionId: "act-1",
             updateId: "upd-sos-1",

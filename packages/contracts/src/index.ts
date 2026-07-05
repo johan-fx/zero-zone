@@ -586,7 +586,19 @@ export const OperationalUpdateDeliverySchema = z.object({
   readAt: z.string().min(1).optional(),
   ackedAt: z.string().min(1).optional(),
   attemptCount: z.number().int().nonnegative().default(0),
-}).strict();
+}).strict().superRefine((delivery, ctx) => {
+  if ((delivery.status === 'delivered' || delivery.status === 'read' || delivery.status === 'acked') && !delivery.deliveredAt) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['deliveredAt'], message: 'deliveredAt is required for delivered, read, and acked deliveries.' });
+  }
+
+  if ((delivery.status === 'read' || delivery.status === 'acked') && !delivery.readAt) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['readAt'], message: 'readAt is required for read and acked deliveries.' });
+  }
+
+  if (delivery.status === 'acked' && !delivery.ackedAt) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ackedAt'], message: 'ackedAt is required for acked deliveries.' });
+  }
+});
 export type OperationalUpdateDelivery = z.infer<typeof OperationalUpdateDeliverySchema>;
 
 export const OperationalUpdateSourceSchema = z.object({
@@ -1355,7 +1367,11 @@ export const PrivateWebLinkIssueRequestSchema = z.object({
   ttlSeconds: z.number().int().positive().max(86_400).default(900),
   maxUses: z.number().int().positive().max(5).default(1),
   metadata: JsonObjectPayloadSchema.optional(),
-}).strict();
+}).strict().superRefine((request, ctx) => {
+  if (request.scope === 'operational_update.detail' && request.maxUses !== 1) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['maxUses'], message: 'operational_update.detail private links must be single-use.' });
+  }
+});
 export type PrivateWebLinkIssueRequest = z.infer<typeof PrivateWebLinkIssueRequestSchema>;
 
 export const PrivateWebLinkIssueResponseSchema = z.object({

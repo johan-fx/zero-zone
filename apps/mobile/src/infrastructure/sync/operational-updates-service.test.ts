@@ -68,12 +68,33 @@ describe('mobile operational updates service', () => {
     expect(stored?.reasonCode).toBeUndefined();
   });
 
+
+  it('preserves an existing reasonCode only when the incoming update omits it', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    const client: OperationalUpdatesClient = {
+      list: jest
+        .fn()
+        .mockResolvedValueOnce({ updates: [updateFixture], cursor: null, hasMore: false })
+        .mockResolvedValueOnce({ updates: [{ ...updateFixture, reasonCode: 'resource.match.need_for_open_offer' }], cursor: null, hasMore: false })
+        .mockResolvedValueOnce({ updates: [{ ...updateFixture, reasonCode: undefined }], cursor: null, hasMore: false }),
+      sendAction: jest.fn(),
+    };
+    const service = createOperationalUpdatesService({ database, client, actorExternalId: 'actor-key-1', clock: () => '2026-06-29T09:02:00.000Z' });
+
+    await service.syncUpdates({ incidentId: 'incident-1', cellId: 'cell-a', limit: 20 });
+    await service.syncUpdates({ incidentId: 'incident-1', cellId: 'cell-a', limit: 20 });
+    expect(await database.views.operationalUpdates.findById('update-1')).toEqual(expect.objectContaining({ reasonCode: 'resource.match.need_for_open_offer' }));
+
+    await service.syncUpdates({ incidentId: 'incident-1', cellId: 'cell-a', limit: 20 });
+    expect(await database.views.operationalUpdates.findById('update-1')).toEqual(expect.objectContaining({ reasonCode: 'resource.match.need_for_open_offer' }));
+  });
+
   it('queues ACK locally when offline and confirms it when the action endpoint accepts it', async () => {
     const database = createInMemoryLocalOperationDatabase();
     const client: OperationalUpdatesClient = {
       list: jest.fn().mockResolvedValue({ updates: [updateFixture], cursor: null, hasMore: false }),
       sendAction: jest.fn().mockResolvedValue({
-        update: { ...updateFixture, delivery: { channel: 'mobile', status: 'acked', attemptCount: 1, ackedAt: '2026-06-29T09:03:00.000Z' } },
+        update: { ...updateFixture, delivery: { channel: 'mobile', status: 'acked', attemptCount: 1, deliveredAt: '2026-06-29T09:02:00.000Z', readAt: '2026-06-29T09:02:30.000Z', ackedAt: '2026-06-29T09:03:00.000Z' } },
         action: { actionId: 'action-1', updateId: 'update-1', actionType: 'ack', status: 'accepted', idempotent: false, createdAt: '2026-06-29T09:03:00.000Z' },
       }),
     };

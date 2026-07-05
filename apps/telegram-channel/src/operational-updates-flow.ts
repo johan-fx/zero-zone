@@ -61,7 +61,7 @@ export async function handleTelegramOperationalUpdateCommand(
     return listTelegramOperationalUpdates(command, args, update, ports);
   }
 
-  if (command === '/quiet' || command === '/unquiet') {
+  if (command === '/quietupdates' || command === '/unquietupdates') {
     return setTelegramProactivePreference(command, args, update, ports);
   }
 
@@ -149,13 +149,13 @@ async function setTelegramProactivePreference(
   update: TelegramUpdateLike,
   ports: TelegramOperationalUpdatePorts,
 ): Promise<TelegramOperationalUpdateCommandResult> {
-  const quietProactiveUpdates = command === '/quiet';
+  const quietProactiveUpdates = command === '/quietupdates';
   const incidentId = args[0];
   if (!incidentId) {
     return {
       handled: true,
       command,
-      responseText: `Usage: /${quietProactiveUpdates ? 'quiet' : 'unquiet'} <incidentId>.`,
+      responseText: `Usage: /${quietProactiveUpdates ? 'quietupdates' : 'unquietupdates'} <incidentId>.`,
     };
   }
 
@@ -298,12 +298,12 @@ function formatOperationalUpdateActionResult(action: TelegramOperationalUpdateAc
 }
 
 // Honest copy for the proactive-match opt-out. Quieting only silences proactive match alerts;
-// SOS/critical and the cell feed keep flowing. /unquiet reverses it.
+// SOS/critical and the cell feed keep flowing. /unquietupdates reverses it.
 function formatProactivePreferenceResult(quietProactiveUpdates: boolean): string {
   if (quietProactiveUpdates) {
-    return 'Silenciadas las alertas proactivas de match. Seguirás viendo SOS y el feed de tu celda. Usa /unquiet para reactivarlas.';
+    return 'Silenciadas las alertas proactivas de match. Seguirás viendo SOS y el feed de tu celda. Usa /unquietupdates para reactivarlas.';
   }
-  return 'Reactivadas las alertas proactivas de match. Volverás a recibir posibles coincidencias de recursos. Usa /quiet para silenciarlas de nuevo.';
+  return 'Reactivadas las alertas proactivas de match. Volverás a recibir posibles coincidencias de recursos. Usa /quietupdates para silenciarlas de nuevo.';
 }
 
 function formatUrgency(urgency: OperationalUpdate['urgency']): string {
@@ -339,15 +339,15 @@ function readMetadataString(metadata: OperationalUpdate['metadata'], key: string
   return typeof value === 'string' && value.trim() ? value : null;
 }
 
-function isOperationalUpdateCommand(command: string | null): command is '/updates' | '/ack' | '/open' | '/corroborate' | '/dispute' | '/quiet' | '/unquiet' {
+function isOperationalUpdateCommand(command: string | null): command is '/updates' | '/ack' | '/open' | '/corroborate' | '/dispute' | '/quietupdates' | '/unquietupdates' {
   return (
     command === '/updates' ||
     command === '/ack' ||
     command === '/open' ||
     command === '/corroborate' ||
     command === '/dispute' ||
-    command === '/quiet' ||
-    command === '/unquiet'
+    command === '/quietupdates' ||
+    command === '/unquietupdates'
   );
 }
 

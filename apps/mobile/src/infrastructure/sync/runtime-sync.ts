@@ -33,14 +33,16 @@ export function createMobileRuntimeSync({ database, env = process.env, fetchImpl
   }
 
   const actorExternalId = resolveMobileActorExternalId(env);
+  const client = createHttpScopedSyncClient({ baseUrl: apiBaseUrl, fetchImpl, headers });
+
   if (!actorExternalId) {
     return {
-      networkAvailable: false,
-      syncUnavailableReason: 'Sync unavailable: set EXPO_PUBLIC_ACTOR_EXTERNAL_ID before enabling mobile operational updates.',
+      networkAvailable: true,
+      syncService: createScopedOperationSyncService({ database, client }),
+      syncUnavailableReason: 'Operational updates unavailable: set EXPO_PUBLIC_ACTOR_EXTERNAL_ID before enabling mobile operational updates.',
     };
   }
 
-  const client = createHttpScopedSyncClient({ baseUrl: apiBaseUrl, fetchImpl, headers });
   const operationalUpdatesClient = createHttpOperationalUpdatesClient({ baseUrl: apiBaseUrl, fetchImpl, headers, actorExternalId });
 
   return {

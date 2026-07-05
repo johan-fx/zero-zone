@@ -443,6 +443,11 @@ export function LiveOperationalEntryScreen({
   const [quietProactiveUpdates, setQuietProactiveUpdates] = useState(false);
   const [quietPreferencePending, setQuietPreferencePending] = useState(false);
 
+  useEffect(() => {
+    setQuietProactiveUpdates(false);
+    setQuietPreferencePending(false);
+  }, [activeIncidentId]);
+
   const refresh = useCallback(
     async (incidentId: string) => {
       if (!incidentId) {
@@ -676,7 +681,7 @@ export function LiveOperationalEntryScreen({
   // volunteer's choice to silence proactive match updates. SOS/critical alerts and the cell
   // feed are never affected. When there is no network client we keep the toggle disabled so
   // the UI never pretends a preference was saved offline.
-  const canToggleQuietProactiveUpdates = Boolean(operationalUpdatesClient?.setPreference) && networkAvailable && !quietPreferencePending;
+  const canToggleQuietProactiveUpdates = Boolean(state?.incident) && Boolean(operationalUpdatesClient?.setPreference) && networkAvailable && !quietPreferencePending;
 
   const handleToggleQuietProactiveUpdates = useCallback(async () => {
     if (!state?.incident || !operationalUpdatesClient?.setPreference || !networkAvailable) {

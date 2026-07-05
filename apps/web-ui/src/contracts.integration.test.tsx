@@ -293,7 +293,7 @@ describe('web ui contract integration', () => {
   it('fetches operational updates and posts safe update actions through canonical endpoints', async () => {
     const pullResponse = { updates: [operationalUpdateFixture], cursor: null, hasMore: false };
     const ackResponse = {
-      update: { ...operationalUpdateFixture, delivery: { channel: 'web-ui', status: 'acked', attemptCount: 1 } },
+      update: { ...operationalUpdateFixture, delivery: { channel: 'web-ui', status: 'acked', attemptCount: 1, deliveredAt: '2026-07-05T12:00:30.000Z', readAt: '2026-07-05T12:00:45.000Z', ackedAt: '2026-07-05T12:01:00.000Z' } },
       action: operationalUpdateReceiptFixture,
     };
     const linkResponse = {

@@ -656,12 +656,12 @@ describe('telegram channel flows', () => {
     expect(open.responseText).toContain('does not grant sensitive permissions');
   });
 
-  it('mutes proactive match alerts with /quiet and confirms SOS and cell feed still flow', async () => {
+  it('mutes proactive match alerts with /quietupdates and confirms SOS and cell feed still flow', async () => {
     const ports = createOperationalUpdatePorts();
 
-    const quiet = await handleTelegramOperationalUpdateCommand(telegramUserUpdate('/quiet incident-zc-demo'), ports);
+    const quiet = await handleTelegramOperationalUpdateCommand(telegramUserUpdate('/quietupdates incident-zc-demo'), ports);
 
-    expect(quiet).toMatchObject({ handled: true, command: '/quiet' });
+    expect(quiet).toMatchObject({ handled: true, command: '/quietupdates' });
     expect(ports.setProactivePreference).toHaveBeenCalledWith('incident-zc-demo', {
       channel: 'telegram',
       externalId: '1001',
@@ -669,23 +669,33 @@ describe('telegram channel flows', () => {
     });
     expect(quiet.responseText).toContain('Silenciadas las alertas proactivas de match');
     expect(quiet.responseText).toContain('SOS');
-    expect(quiet.responseText).toContain('/unquiet');
+    expect(quiet.responseText).toContain('/unquietupdates');
   });
 
-  it('reactivates proactive match alerts with /unquiet', async () => {
+  it('reactivates proactive match alerts with /unquietupdates', async () => {
     const ports = createOperationalUpdatePorts({
       setProactivePreference: vi.fn().mockResolvedValue({ quietProactiveUpdates: false }),
     });
 
-    const unquiet = await handleTelegramOperationalUpdateCommand(telegramUserUpdate('/unquiet incident-zc-demo'), ports);
+    const unquiet = await handleTelegramOperationalUpdateCommand(telegramUserUpdate('/unquietupdates incident-zc-demo'), ports);
 
-    expect(unquiet).toMatchObject({ handled: true, command: '/unquiet' });
+    expect(unquiet).toMatchObject({ handled: true, command: '/unquietupdates' });
     expect(ports.setProactivePreference).toHaveBeenCalledWith('incident-zc-demo', {
       channel: 'telegram',
       externalId: '1001',
       quietProactiveUpdates: false,
     });
     expect(unquiet.responseText).toContain('Reactivadas las alertas proactivas de match');
+  });
+
+
+
+  it('does not keep generic /quiet and /unquiet aliases in the Telegram namespace', async () => {
+    const ports = createOperationalUpdatePorts();
+
+    await expect(handleTelegramOperationalUpdateCommand(telegramUserUpdate('/quiet incident-zc-demo'), ports)).resolves.toMatchObject({ handled: false, command: '/quiet' });
+    await expect(handleTelegramOperationalUpdateCommand(telegramUserUpdate('/unquiet incident-zc-demo'), ports)).resolves.toMatchObject({ handled: false, command: '/unquiet' });
+    expect(ports.setProactivePreference).not.toHaveBeenCalled();
   });
 
   it('builds HTTP ports against the operational update endpoints', async () => {

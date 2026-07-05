@@ -3607,19 +3607,22 @@ async function recordOperationalUpdateAction(
   ).run();
 
   if (actionType === 'read' || actionType === 'ack' || actionType === 'open') {
-    const field = actionType === 'ack' ? 'acked_at' : 'read_at';
     const status = actionType === 'ack' ? 'acked' : 'read';
     const deliveryId = `del_${slug(update.updateId)}_${slug(request.channel)}_${actorHash.slice(0, 16)}`;
+    const readAt = actionType === 'read' || actionType === 'open' || actionType === 'ack' ? createdAt : null;
+    const ackedAt = actionType === 'ack' ? createdAt : null;
     await db.prepare(
       `INSERT INTO operational_update_deliveries (
-         delivery_id, update_id, incident_id, channel, status, target_hash, ${field}, attempt_count, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
+         delivery_id, update_id, incident_id, channel, status, target_hash, delivered_at, read_at, acked_at, attempt_count, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
        ON CONFLICT(update_id, channel, target_hash) DO UPDATE SET
          status = excluded.status,
-         ${field} = excluded.${field},
+         delivered_at = COALESCE(operational_update_deliveries.delivered_at, excluded.delivered_at),
+         read_at = COALESCE(operational_update_deliveries.read_at, excluded.read_at),
+         acked_at = COALESCE(operational_update_deliveries.acked_at, excluded.acked_at),
          updated_at = excluded.updated_at`,
     )
-      .bind(deliveryId, update.updateId, update.incidentId, request.channel, status, actorHash, createdAt, createdAt)
+      .bind(deliveryId, update.updateId, update.incidentId, request.channel, status, actorHash, createdAt, readAt, ackedAt, createdAt)
       .run();
   }
 

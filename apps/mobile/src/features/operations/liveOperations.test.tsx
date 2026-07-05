@@ -238,12 +238,36 @@ describe('live operational flow wiring', () => {
     await seedPreparedIncident(database);
     await seedOperationalUpdate(database);
 
-    const { screen } = await renderLiveOperations({ database, initialIncidentId: 'incident-prepared', networkAvailable: false });
+    const { screen } = await renderLiveOperations({ database, initialIncidentId: 'incident-prepared', networkAvailable: true });
 
     await waitFor(() => expect(screen.getByTestId('toggle_quiet_proactive_updates_button')).toBeTruthy());
 
     expect(screen.getByTestId('toggle_quiet_proactive_updates_button')).toBeDisabled();
     expect(screen.getByText('Connect to sync to change this preference. · Conéctate para sincronizar y cambiar esta preferencia.')).toBeTruthy();
+  });
+
+
+  it('resets the proactive alert quiet state when the active incident changes', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    await seedPreparedIncident(database);
+    await seedOperationalUpdate(database);
+    const setPreference = jest.fn<ReturnType<NonNullable<OperationalUpdatesClient['setPreference']>>, Parameters<NonNullable<OperationalUpdatesClient['setPreference']>>>().mockResolvedValue({ quietProactiveUpdates: true });
+
+    const { screen } = await renderLiveOperations({
+      database,
+      initialIncidentId: 'incident-prepared',
+      networkAvailable: true,
+      operationalUpdatesClient: { list: jest.fn(), sendAction: jest.fn(), setPreference },
+    });
+
+    await waitFor(() => expect(screen.getByTestId('toggle_quiet_proactive_updates_button')).toBeEnabled());
+    await pressAndFlush(screen.getByTestId('toggle_quiet_proactive_updates_button'));
+    await waitFor(() => expect(screen.getByText('Proactive match alerts: silenced · silenciadas')).toBeTruthy());
+
+    await pressAndFlush(screen.getByTestId('open_map_preparation_button'));
+
+    await waitFor(() => expect(screen.getByText('Incident: Map preparation drill')).toBeTruthy());
+    expect(screen.getByText('Proactive match alerts: on · activas')).toBeTruthy();
   });
 
   it('pulls dedicated operational updates during Sync now when Equipo B API client is wired', async () => {
