@@ -47,7 +47,7 @@ Usar este reparto como contrato de trabajo para todas las slices. La clave es qu
 | 17 | Telegram `/reunificacion` natural-language assistant | 🟢 | 🟢 | 🟢 | Hecho |
 | 18 | Telegram `/dispatch` natural-language assistant | 🟢 | 🟢 | 🟢 | Hecho |
 | 19 | Telegram `/start` + incident join natural-language onboarding | 🟢 | 🟢 | N/A | Hecho |
-| 20 | Social-first trust + dispute lifecycle | ✅ | ✅ | ✅ | Implementado/validado — sync canónico trust/dispute remediado |
+| 20 | Social-first trust + dispute lifecycle | ✅ | ✅ | ✅ | Cerrado en `main` — staging, Cubic y E2E real validados |
 
 Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloqueado · N/A No aplica.
 
@@ -1150,7 +1150,7 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 
 **Decisión de producto:** confianza social/contextual afecta visibilidad, prioridad, peso operativo y explicación de estado; no otorga credenciales profesionales, safeguarding, entrega de menores, acceso a datos sensibles ni permisos críticos.
 
-**Estado de implementación:** implementado y validado. La remediación crítica cerró el bypass donde sync push aceptaba `trust_signal.create` y `dispute.create` por fallback genérico; ahora pasan por validación/membership/rate-limit/auditoría/scoring canónico.
+**Estado de implementación:** cerrado en `main`. La remediación crítica cerró el bypass donde sync push aceptaba `trust_signal.create` y `dispute.create` por fallback genérico; ahora pasan por validación/membership/rate-limit/auditoría/scoring canónico. La rama final integrada se redeplegó en staging antes del merge a `main`, Cubic terminó en `SUCCESS` y la validación E2E/strict pasó.
 
 **Principio de seguridad:** apertura civil no significa autoridad automática. Toda creación abierta debe incluir deduplicación, rate limits/throttling, penalización Sybil, auditoría, disputas y degradación clara cuando la confianza sea baja.
 
@@ -1205,6 +1205,15 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 - E2E/smoke multi-canal para crear, corroborar, disputar y degradar un reporte operativo.
 - Tests de permisos: `self_declared`, `field_attested` y `trusted_by_context` no acceden a datos sensibles ni acciones de safeguarding.
 - Remediación crítica Slice 20 ejecutada: `pnpm --filter @zona-cero/api test -- src/index.test.ts`, `pnpm e2e:slice20:social-trust` y `pnpm test:strict` pasan tras cubrir sync canónico para `trust_signal.create`/`dispute.create`.
+- Gate final antes de `main`: staging API/Web redeplegado, `pnpm e2e:slice20:social-trust`, `pnpm e2e:telegram:dry-run:social-trust`, `pnpm e2e:telegram:typecheck`, `pnpm e2e:staging:telegram`, `pnpm test:strict` y Cubic `SUCCESS`.
+
+**Cierre Slice 20**
+
+- PR chain integrada con GitHub CLI: #26 → #25 → #24 → #23 → #22; solo #22 apuntó a `main`.
+- Staging redeplegado desde la rama final integrada: D1 migrations revisadas, seed staging aplicado, API Worker y Web Pages publicados.
+- E2E real de staging validó Telegram → API/D1 → Web/API fallback y flujos naturales de SOS, reunificación familiar, dispatch e incident join: `pnpm e2e:staging:telegram` pasó 5/5.
+- E2E específico de Slice 20 validó comando/API y lenguaje natural dry-run para crear, corroborar, disputar y degradar confianza sin permisos sensibles: `pnpm e2e:slice20:social-trust` pasó.
+- Cubic AI terminó en `SUCCESS` tras la integración final y #22 se mergeó a `main` con `feat(slice-20): implement social-first trust lifecycle` (`a7f539e960d1843a19efabc8c16ba80888b1d40a`).
 
 ## Gates antes de implementar cada slice
 
