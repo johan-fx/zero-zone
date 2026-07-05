@@ -541,6 +541,166 @@ export const TrustStateResponseSchema = z.object({
 }).strict();
 export type TrustStateResponse = z.infer<typeof TrustStateResponseSchema>;
 
+export const operationalUpdateTypes = ['sos_alert', 'resource_need', 'resource_offer', 'trust_signal', 'dispute', 'system_notice'] as const;
+export const OperationalUpdateTypeSchema = z.enum(operationalUpdateTypes);
+export type OperationalUpdateType = z.infer<typeof OperationalUpdateTypeSchema>;
+
+export const operationalUpdateUrgencies = ['low', 'medium', 'high', 'critical'] as const;
+export const OperationalUpdateUrgencySchema = z.enum(operationalUpdateUrgencies);
+export type OperationalUpdateUrgency = z.infer<typeof OperationalUpdateUrgencySchema>;
+
+export const operationalUpdateSourceKinds = ['sos_alert', 'resource_report', 'trust_signal', 'dispute', 'system'] as const;
+export const OperationalUpdateSourceKindSchema = z.enum(operationalUpdateSourceKinds);
+export type OperationalUpdateSourceKind = z.infer<typeof OperationalUpdateSourceKindSchema>;
+
+export const operationalUpdateActionTypes = ['ack', 'read', 'open', 'corroborate', 'dispute', 'link'] as const;
+export const OperationalUpdateActionTypeSchema = z.enum(operationalUpdateActionTypes);
+export type OperationalUpdateActionType = z.infer<typeof OperationalUpdateActionTypeSchema>;
+
+export const operationalUpdateDeliveryStatuses = ['pending', 'delivered', 'read', 'acked', 'failed'] as const;
+export const OperationalUpdateDeliveryStatusSchema = z.enum(operationalUpdateDeliveryStatuses);
+export type OperationalUpdateDeliveryStatus = z.infer<typeof OperationalUpdateDeliveryStatusSchema>;
+
+// Slice 21.1 — explica POR QUÉ una operational update llega a un actor concreto.
+// El targeting real (audiencia dirigida) lo emite el backend; este código viaja en el
+// contrato para que Telegram/Web/Mobile puedan renderizar un motivo honesto y no-autoritativo.
+export const operationalUpdateReasonCodes = [
+  'resource.match.offer_for_open_need',
+  'resource.match.need_for_open_offer',
+  'resource.report.cell_broadcast',
+] as const;
+export const OperationalUpdateReasonCodeSchema = z.enum(operationalUpdateReasonCodes);
+export type OperationalUpdateReasonCode = z.infer<typeof OperationalUpdateReasonCodeSchema>;
+
+export const OperationalUpdateActionSchema = z.object({
+  type: OperationalUpdateActionTypeSchema,
+  label: z.string().min(1).max(80),
+  messageCode: z.string().min(1).max(120).optional(),
+}).strict();
+export type OperationalUpdateAction = z.infer<typeof OperationalUpdateActionSchema>;
+
+export const OperationalUpdateDeliverySchema = z.object({
+  channel: ChannelSchema,
+  status: OperationalUpdateDeliveryStatusSchema,
+  deliveredAt: z.string().min(1).optional(),
+  readAt: z.string().min(1).optional(),
+  ackedAt: z.string().min(1).optional(),
+  attemptCount: z.number().int().nonnegative().default(0),
+}).strict().superRefine((delivery, ctx) => {
+  if ((delivery.status === 'delivered' || delivery.status === 'read' || delivery.status === 'acked') && !delivery.deliveredAt) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['deliveredAt'], message: 'deliveredAt is required for delivered, read, and acked deliveries.' });
+  }
+
+  if ((delivery.status === 'read' || delivery.status === 'acked') && !delivery.readAt) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['readAt'], message: 'readAt is required for read and acked deliveries.' });
+  }
+
+  if (delivery.status === 'acked' && !delivery.ackedAt) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ackedAt'], message: 'ackedAt is required for acked deliveries.' });
+  }
+});
+export type OperationalUpdateDelivery = z.infer<typeof OperationalUpdateDeliverySchema>;
+
+export const OperationalUpdateSourceSchema = z.object({
+  kind: OperationalUpdateSourceKindSchema,
+  entityId: z.string().min(1).optional(),
+}).strict();
+export type OperationalUpdateSource = z.infer<typeof OperationalUpdateSourceSchema>;
+
+export const OperationalUpdateSchema = z.object({
+  updateId: z.string().min(1),
+  incidentId: z.string().min(1),
+  cellId: z.string().min(1),
+  type: OperationalUpdateTypeSchema,
+  urgency: OperationalUpdateUrgencySchema,
+  title: z.string().min(1).max(120),
+  summary: z.string().min(1).max(280),
+  body: z.string().min(1).max(1000).optional(),
+  source: OperationalUpdateSourceSchema,
+  subject: TrustSubjectSchema.optional(),
+  actions: z.array(OperationalUpdateActionSchema).min(1),
+  delivery: OperationalUpdateDeliverySchema.optional(),
+  reasonCode: OperationalUpdateReasonCodeSchema.optional(),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+  expiresAt: z.string().min(1).optional(),
+  metadata: JsonObjectPayloadSchema.optional(),
+}).strict();
+export type OperationalUpdate = z.infer<typeof OperationalUpdateSchema>;
+
+export const OperationalUpdatePullResponseSchema = z.object({
+  updates: z.array(OperationalUpdateSchema),
+  cursor: z.string().nullable(),
+  hasMore: z.boolean(),
+}).strict();
+export type OperationalUpdatePullResponse = z.infer<typeof OperationalUpdatePullResponseSchema>;
+
+// Slice 21.1 Fase 2 — opt-out/quieting: un actor puede silenciar las updates proactivas de
+// match dirigidas a él. No afecta a SOS/críticos ni a su feed general de celda.
+export const OperationalUpdatePreferenceRequestSchema = z.object({
+  channel: ChannelSchema,
+  externalId: z.string().min(1),
+  quietProactiveUpdates: z.boolean(),
+}).strict();
+export type OperationalUpdatePreferenceRequest = z.infer<typeof OperationalUpdatePreferenceRequestSchema>;
+
+export const OperationalUpdatePreferenceResponseSchema = z.object({
+  quietProactiveUpdates: z.boolean(),
+}).strict();
+export type OperationalUpdatePreferenceResponse = z.infer<typeof OperationalUpdatePreferenceResponseSchema>;
+
+export const OperationalUpdateActionRequestSchema = z.object({
+  channel: ChannelSchema,
+  externalId: z.string().min(1),
+  displayName: z.string().min(1).max(120).optional(),
+  idempotencyKey: z.string().min(1).max(160).optional(),
+  occurredAt: z.string().min(1).optional(),
+  note: z.string().min(1).max(280).optional(),
+}).strict();
+export type OperationalUpdateActionRequest = z.infer<typeof OperationalUpdateActionRequestSchema>;
+
+export const OperationalUpdateCorroborateRequestSchema = OperationalUpdateActionRequestSchema.extend({
+  confidence: z.number().min(0).max(1).optional(),
+}).strict();
+export type OperationalUpdateCorroborateRequest = z.infer<typeof OperationalUpdateCorroborateRequestSchema>;
+
+export const OperationalUpdateDisputeRequestSchema = OperationalUpdateActionRequestSchema.extend({
+  reason: DisputeReasonSchema.default('context_mismatch'),
+}).strict();
+export type OperationalUpdateDisputeRequest = z.infer<typeof OperationalUpdateDisputeRequestSchema>;
+
+export const OperationalUpdateLinkRequestSchema = OperationalUpdateActionRequestSchema.extend({
+  returnState: z.string().min(1).max(240).optional(),
+}).strict();
+export type OperationalUpdateLinkRequest = z.infer<typeof OperationalUpdateLinkRequestSchema>;
+
+export const OperationalUpdateActionReceiptSchema = z.object({
+  actionId: z.string().min(1),
+  updateId: z.string().min(1),
+  actionType: OperationalUpdateActionTypeSchema,
+  status: z.literal('accepted'),
+  idempotent: z.boolean(),
+  createdAt: z.string().min(1),
+}).strict();
+export type OperationalUpdateActionReceipt = z.infer<typeof OperationalUpdateActionReceiptSchema>;
+
+export const OperationalUpdateActionResponseSchema = z.object({
+  update: OperationalUpdateSchema,
+  action: OperationalUpdateActionReceiptSchema,
+  trustState: TrustStateSchema.optional(),
+  audit: AuditReferenceSchema.optional(),
+}).strict();
+export type OperationalUpdateActionResponse = z.infer<typeof OperationalUpdateActionResponseSchema>;
+
+export const OperationalUpdateLinkResponseSchema = OperationalUpdateActionResponseSchema.extend({
+  link: z.object({
+    href: z.string().min(1),
+    scope: z.literal('operational_update.detail'),
+    expiresAt: z.string().min(1),
+  }).strict(),
+}).strict();
+export type OperationalUpdateLinkResponse = z.infer<typeof OperationalUpdateLinkResponseSchema>;
+
 export const workCenterStatuses = ['reported', 'active', 'inactive', 'archived'] as const;
 export const WorkCenterStatusSchema = z.enum(workCenterStatuses);
 export type WorkCenterStatus = z.infer<typeof WorkCenterStatusSchema>;
@@ -1165,7 +1325,7 @@ export const TelegramIntentClassificationSchema = z.object({
 }).strict();
 export type TelegramIntentClassification = z.infer<typeof TelegramIntentClassificationSchema>;
 
-export const webLinkScopes = ['incident.join', 'work_center.detail', 'family_reunification.search'] as const;
+export const webLinkScopes = ['incident.join', 'work_center.detail', 'family_reunification.search', 'operational_update.detail'] as const;
 
 export const WebLinkScopeSchema = z.enum(webLinkScopes);
 export type WebLinkScope = z.infer<typeof WebLinkScopeSchema>;
@@ -1207,7 +1367,11 @@ export const PrivateWebLinkIssueRequestSchema = z.object({
   ttlSeconds: z.number().int().positive().max(86_400).default(900),
   maxUses: z.number().int().positive().max(5).default(1),
   metadata: JsonObjectPayloadSchema.optional(),
-}).strict();
+}).strict().superRefine((request, ctx) => {
+  if (request.scope === 'operational_update.detail' && request.maxUses !== 1) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['maxUses'], message: 'operational_update.detail private links must be single-use.' });
+  }
+});
 export type PrivateWebLinkIssueRequest = z.infer<typeof PrivateWebLinkIssueRequestSchema>;
 
 export const PrivateWebLinkIssueResponseSchema = z.object({

@@ -17,6 +17,7 @@ type RunnerStep = {
 
 type RunnerResult = {
   marker?: unknown;
+  proactiveUpdatesMarker?: unknown;
   preConfirmationMarkerVisible?: unknown;
   sentSteps?: unknown;
 };
@@ -151,6 +152,7 @@ test('incident join staging Telegram handles command and natural language with c
   expect(String(naturalRoleSelection.botReplyPreview ?? '')).toMatch(/Joined|Te uniste/i);
 });
 
+
 async function ensureTelegramSessionExists(): Promise<void> {
   const sessionFile = requiredEnv('TELEGRAM_E2E_SESSION_FILE');
   try {
@@ -160,7 +162,7 @@ async function ensureTelegramSessionExists(): Promise<void> {
   }
 }
 
-async function runTelegramRunner(scenario: 'full' | 'natural-sos' | 'family-reunification' | 'dispatch' | 'incident-join' = 'full'): Promise<RunnerResult & { marker: string; preConfirmationMarkerVisible?: boolean }> {
+async function runTelegramRunner(scenario: 'full' | 'natural-sos' | 'family-reunification' | 'dispatch' | 'incident-join' | 'proactive-updates' = 'full'): Promise<RunnerResult & { marker: string; preConfirmationMarkerVisible?: boolean }> {
   const args = ['tsx', 'e2e/telegram/staging-telegram-runner.ts', 'run', '--json'];
   if (scenario !== 'full') args.push('--scenario', scenario);
 

@@ -8,6 +8,7 @@ import {
 } from "react";
 import {
   AlertTriangle,
+  Bell,
   CheckCircle2,
   CircleDot,
   ClipboardCheck,
@@ -63,6 +64,7 @@ import {
 import { I18nProvider, LanguageSelector, useI18n } from "./i18n";
 import { type AppThemeOverride, useAppThemeMode } from "./themeMode";
 import type { OperationsMapPanelCopy } from "./features/operations-map/OperationsMapPanel";
+import { OperationalUpdatesPanel } from "./features/operational-updates/OperationalUpdatesPanel";
 
 type AppThemeController = ReturnType<typeof useAppThemeMode>;
 import {
@@ -171,6 +173,7 @@ type HubRoute =
   | "resource-report"
   | "task"
   | "nearby-sos"
+  | "updates"
   | "map";
 
 const hubRoutes: readonly HubRoute[] = [
@@ -180,6 +183,7 @@ const hubRoutes: readonly HubRoute[] = [
   "resource-report",
   "task",
   "nearby-sos",
+  "updates",
   "map",
 ];
 const hubRouteAliases: Record<string, HubRoute> = {
@@ -200,6 +204,9 @@ const hubRouteAliases: Record<string, HubRoute> = {
   sos: "nearby-sos",
   "nearby-sos": "nearby-sos",
   "sos-cercano": "nearby-sos",
+  updates: "updates",
+  inbox: "updates",
+  "operational-updates": "updates",
 };
 
 function isHubRoute(value: string): value is HubRoute {
@@ -1080,6 +1087,23 @@ function OperationsPanel({ theme }: { theme: AppThemeController }) {
         </section>
       ) : null}
 
+      {route === "updates" ? (
+        <section
+          className="status-card"
+          aria-labelledby="operational-updates-shell-title"
+          aria-live="polite"
+        >
+          <HubBackLink onNavigate={navigate} />
+          <h2 id="operational-updates-shell-title">{t("web.updates.title")}</h2>
+          <OperationalUpdatesPanel
+            incidentId={incidentId}
+            cellId={cellId}
+            externalId={webExternalId}
+            displayName={webDisplayName}
+          />
+        </section>
+      ) : null}
+
       {route === "task" ? (
         <section
           className="status-card"
@@ -1191,6 +1215,7 @@ const hubNavTabs: {
   },
   { route: "task", labelKey: "web.nav.task", Icon: ClipboardCheck },
   { route: "nearby-sos", labelKey: "web.nav.nearby_sos", Icon: Siren },
+  { route: "updates", labelKey: "web.nav.updates", Icon: Bell },
 ];
 
 function HubNav({
@@ -1414,6 +1439,14 @@ function HomeDashboard({
           Icon={Siren}
           actionLabel={t("web.home.sos.action")}
           onOpen={() => onNavigate("nearby-sos")}
+        />
+        <CivilActionCard
+          title={t("web.updates.title")}
+          description={t("web.home.updates.description")}
+          tone="info"
+          Icon={Bell}
+          actionLabel={t("web.home.updates.action")}
+          onOpen={() => onNavigate("updates")}
         />
       </aside>
     </section>

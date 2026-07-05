@@ -149,7 +149,7 @@ describe('testing package', () => {
 
 
   it('exposes happy and error web link fixtures for every final Equipo A scope', () => {
-    expect(Object.keys(webLinkFlowFixtures)).toEqual(['incident.join', 'work_center.detail', 'family_reunification.search']);
+    expect(Object.keys(webLinkFlowFixtures)).toEqual(['incident.join', 'work_center.detail', 'family_reunification.search', 'operational_update.detail']);
 
     for (const [scope, fixtures] of Object.entries(webLinkFlowFixtures)) {
       expect(WebLinkRequestSchema.parse(fixtures.happy).scope).toBe(scope);

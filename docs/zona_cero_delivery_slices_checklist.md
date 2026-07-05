@@ -48,6 +48,7 @@ Usar este reparto como contrato de trabajo para todas las slices. La clave es qu
 | 18 | Telegram `/dispatch` natural-language assistant | 🟢 | 🟢 | 🟢 | Hecho |
 | 19 | Telegram `/start` + incident join natural-language onboarding | 🟢 | 🟢 | N/A | Hecho |
 | 20 | Social-first trust + dispute lifecycle | ✅ | ✅ | ✅ | Cerrado en `main` — staging, Cubic y E2E real validados |
+| 21 | Proactive social updates + channel verification UX | 🟢 | 🟢 | 🟢 | Implementado en `feat/slice-21-proactive-updates` — PR pendiente contra `main` |
 
 Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloqueado · N/A No aplica.
 
@@ -1214,6 +1215,137 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 - E2E real de staging validó Telegram → API/D1 → Web/API fallback y flujos naturales de SOS, reunificación familiar, dispatch e incident join: `pnpm e2e:staging:telegram` pasó 5/5.
 - E2E específico de Slice 20 validó comando/API y lenguaje natural dry-run para crear, corroborar, disputar y degradar confianza sin permisos sensibles: `pnpm e2e:slice20:social-trust` pasó.
 - Cubic AI terminó en `SUCCESS` tras la integración final y #22 se mergeó a `main` con `feat(slice-20): implement social-first trust lifecycle` (`a7f539e960d1843a19efabc8c16ba80888b1d40a`).
+
+
+## Slice 21 - Proactive social updates + channel verification UX
+
+**Objetivo:** convertir el trust lifecycle de Slice 20 en una experiencia social-first realmente accionable: cuando aparece un SOS, recurso, centro, requerimiento, disputa o match relevante, las personas afectadas se enteran por el canal adecuado y pueden corroborar, disputar, abrir detalle seguro o acusar recibo sin tener que revisar manualmente la Web UI.
+
+**Decisión de producto:** Telegram debe funcionar como inbox operativo proactivo para novedades conectadas y acciones rápidas; Web UI debe concentrar el detalle estructurado, privacidad, contexto y links firmados; Mobile debe seguir siendo el canal crítico/offline con materialización local, outbox, mapa y degradación clara.
+
+**Estado de implementación:** implementado en la rama `feat/slice-21-proactive-updates` y pendiente de PR/merge a `main`. La sesión cerró el contrato de comunicación evento → audiencia → canal → TTL/retry → copy visible → acción rápida → link firmado → ACK/estado leído → límites de autoridad con contratos, API, Telegram/Web UI, mobile local-first y E2E targeted.
+
+**Principio UX:** en catástrofe, el usuario no debe tener que buscar constantemente si hay novedades. El sistema debe empujar solo lo relevante, explicar por qué llega, permitir una acción segura en pocos toques y nunca convertir una notificación social en autoridad oficial.
+
+### Reparto de ownership
+
+| Equipo | Owns | Consume de | No debe hacer | Handoff esperado |
+|---|---|---|---|---|
+| A | UX Telegram + Web UI para notificaciones operativas, acciones rápidas, links firmados, confirmaciones, estados de lectura/ACK y copy de límites. | Contrato de eventos/audiencia de B, estados de confianza de Slice 20 y necesidades de campo de C. | Convertir Telegram en panel complejo, enviar datos sensibles por chat o depender de que usuarios revisen manualmente la Web UI. | Flujos donde Telegram avisa, permite corroborar/disputar/abrir detalle y Web UI muestra contexto seguro con retorno claro al canal. |
+| B | Event router canónico, audience resolver, subscriptions por incidente/celda/rol, delivery jobs, deduplicación, rate limits, TTL/retry, auditoría y endpoints de ACK. | Casos UX de A, materialización/offline de C y reglas de permisos/trust existentes. | Hacer broadcast indiscriminado, filtrar datos sensibles en mensajes, duplicar lógica de confianza en colas o saltarse permisos por urgencia. | Contrato `operational_update` con delivery por canal, pruebas de audiencia/permisos y trazabilidad completa por evento. |
+| C | Materialización mobile de updates relevantes, inbox/local feed, estado offline/sync, push local si aplica y acciones desde mapa/detalle. | Event stream y sync pull de B, copy/estados compartidos con A. | Depender de Telegram para alertas críticas, ocultar estado offline o calcular prioridad divergente. | App nativa muestra novedades por proximidad/celda, conserva updates pendientes offline y sincroniza ACK/señales sin duplicar reglas. |
+| Todos | Matriz evento → audiencia → canal → acción → límite de autoridad. | PRD, wireflows, threat model, API contracts y Slice 20. | Diseñar “notificaciones” como spam o como sustituto de verificación humana. | Demo multi-canal: SOS/recurso/match/disputa generan update dirigido y acción verificable sin permisos sensibles. |
+
+| Equipo | Checklist |
+|---|---|
+| A | 🟢 Diseñar Telegram como inbox operativo proactivo: mensajes breves, motivo de relevancia, confianza/frescura y acciones rápidas. |
+| A | 🟢 Añadir acciones Telegram para corroborar, disputar, acusar recibo y abrir detalle Web UI con link firmado cuando Telegram no baste. |
+| A | 🟢 Añadir vistas Web UI de detalle seguro para SOS, recurso/match, centro y disputa con estado de confianza, auditoría mínima y retorno al canal. |
+| A | 🟢 Revisar copy crítico para que cada update diga qué se sabe, qué no se sabe, qué acción segura puede tomar el usuario y qué autoridad NO concede. |
+| B | 🟢 Definir contrato `OperationalUpdate` con entidad, severidad, audiencia, reason codes, TTL, retry policy, canal permitido, estado de delivery y audit trail. |
+| B | 🔴 Implementar audience resolver por incidente, celda, rol, membership, proximidad aproximada, permisos y opt-out/quieting cuando aplique. **(Estado real 2026-07-05: solo se resuelve por membership de incidente/celda; sin rol, proximidad, opt-out ni targeting oferta↔demanda. Ver Sub-slice 21.1.)** |
+| B | 🔴 Implementar delivery jobs para Telegram/Web/Mobile sin broadcast indiscriminado y con deduplicación/rate limits. **(Estado real 2026-07-05: `upsertOperationalUpdate` inserta la audiencia con `target_hash NULL` = broadcast a toda la celda en todos los canales. Ver Sub-slice 21.1.)** |
+| B | 🟢 Añadir endpoints/operaciones para ACK, leído, abrir detalle, corroborar/disputar desde update y expiración segura de links. |
+| B | 🟢 Probar que updates no exponen datos sensibles ni desbloquean permisos `org_verified`, safeguarding o respuesta oficial. |
+| C | 🟢 Materializar operational updates en mobile como feed/inbox local vinculado al mapa y a entidades sincronizadas. |
+| C | 🟢 Soportar estado offline: update recibido, pendiente, expirado, acción en outbox, ACK pendiente y conflicto tras sync. |
+| C | 🟢 Alinear SOS crítico/local-first para que mobile no dependa de Telegram y pueda reconciliar fan-out/ACK cuando vuelva la red. |
+| Todos | 🟡 Actualizar `docs/zona_cero_persona_channel_wireflows.md` con flujos proactivos por persona y canal. Pendiente documental de seguimiento; la implementación y el E2E targeted ya existen. |
+| Todos | 🟡 Actualizar `docs/zona_cero_api_contracts.md` con trust/dispute/update lifecycle como capability duradera, no solo checklist de Slice 20. Pendiente documental de seguimiento; contratos Zod y tests ya quedaron implementados. |
+
+**Definition of Done**
+
+- Existe una matriz documental evento → audiencia → canal → acción → TTL/retry → ACK → límite de autoridad para SOS, centros, recursos/requerimientos, matches y disputas.
+- Un nuevo SOS conectado genera update dirigido a audiencia relevante por Telegram/Web/Mobile sin exponer datos sensibles ni prometer rescate.
+- ❌ **[No cumplido — 2026-07-05, ver Sub-slice 21.1]** Un nuevo recurso/sobrante compatible con una necesidad genera match explicable y update al demandante o actor logístico adecuado. *(Hoy: el reporte genera una update en broadcast por celda; el matcher `matchResourceReports` solo se expone por pull en `GET /incidents/:id/resource-reports/matches`. No hay push dirigido al demandante ni `reason code` de match en la update.)*
+- Una disputa o degradación de confianza genera update solo a actores afectados, con explicación y acción segura.
+- Telegram permite actuar rápido; Web UI permite revisar contexto estructurado; Mobile conserva comportamiento offline/local-first.
+- Todos los updates tienen auditoría, deduplicación, rate limits, estado de delivery, expiración y copia honesta de límites.
+- Social updates pueden subir/bajar atención, visibilidad o prioridad operativa, pero no conceden permisos sensibles ni autoridad oficial.
+
+**Riesgos y límites**
+
+- Convertir Telegram en spam o canal de pánico.
+- Enviar datos sensibles o ubicaciones exactas por chat.
+- Notificar a una audiencia demasiado amplia y crear saturación o desplazamientos peligrosos.
+- Confundir ACK/corroboración con rescate, autorización o verificación oficial.
+- Diseñar links firmados demasiado largos, reutilizables o sin scope mínimo.
+- Duplicar reglas de audiencia, confianza o prioridad en clientes.
+
+**Cierre de implementación en rama**
+
+- Rama: `feat/slice-21-proactive-updates`.
+- Commits de trabajo:
+  - `docs(slice-21): add proactive updates checklist`
+  - `feat(operational-updates): add audience-secure backend`
+  - `feat(channels): add proactive update inbox UX`
+  - `feat(mobile): materialize proactive update inbox`
+  - `test(e2e): cover Slice 21 proactive updates`
+- Backend/contratos: `OperationalUpdate`, audiencias por canal/actor, delivery state, acciones `ack/read/open/corroborate/dispute`, links privados con scope `operational_update.detail` y consumo de `maxUses=1`.
+- Seguridad corregida por revisión fresca: los comandos reales de `/telegram/webhook` para `corroborate`/`dispute` pasan por handlers audience-aware; membership por sí sola no autoriza mutar un update.
+- Telegram/Web UI: inbox operativo proactivo, copy de límites de autoridad, ACK/open/corroborate/dispute y detalle seguro.
+- Mobile: pull dedicado de updates, feed/inbox local, estado offline/expirado/pendiente/confirmado/conflicto y acciones locales seguras sin recalcular audiencia/prioridad/trust.
+- E2E activo: `pnpm e2e:slice21:proactive-updates` y `pnpm e2e:telegram:dry-run:proactive-updates`.
+- Staging real proactive-updates: no registrado como gate hasta que el runner pueda seed/discover un `updateId` real; esto evita falsos verdes.
+
+**Evidencia esperada de verificación**
+
+- `pnpm contracts:test:strict`
+- `pnpm --filter @zona-cero/api exec vitest run src/index.test.ts src/operational-updates.test.ts`
+- `pnpm --filter @zona-cero/telegram-channel test:strict`
+- `pnpm web:test:strict`
+- `pnpm mobile:test:strict`
+- E2E local targeted: `pnpm e2e:slice21:proactive-updates` cubre SOS/recurso → operational update → audience pull → ACK/open/link → audit/trust sin escalada de permisos.
+- E2E lenguaje natural/dry-run: `pnpm e2e:telegram:dry-run:proactive-updates` cubre comandos y copy de límites de autoridad.
+- Mobile strict: `pnpm mobile:test:strict` cubre materialización local, estados de acción y runtime sin `actor-key-local` implícito.
+- Tests de seguridad: audience resolver/list/action endpoints rechazan outsiders y actores no-target; links privados son de un uso; updates no filtran datos sensibles ni conceden permisos críticos.
+
+### Estado real verificado (2026-07-05, revisión post-merge PR #28)
+
+Auditoría de código tras el merge de la Slice 21. Detectada una divergencia entre el DoD (que promete matching dirigido al demandante) y lo implementado (broadcast por celda). Se documenta aquí para no arrastrar "falsos verdes".
+
+- **Qué SÍ está implementado y verificado:** contrato `OperationalUpdate`; generación de update a partir de SOS/recurso/dispute; pull dedicado por canal; acciones `ack/read/open/corroborate/dispute`; links privados scope `operational_update.detail` de un uso; auditoría/trust sin escalada de permisos; materialización mobile offline-first. Cubierto por `e2e:slice21:proactive-updates` (local) y `e2e:telegram:dry-run:proactive-updates` (copy/comandos).
+- **Qué NO está implementado (gap real):**
+  - El targeting es **broadcast por incidente/celda**: `upsertOperationalUpdate` (`services/api/src/index.ts` ~L3495) inserta audiencia con `target_hash NULL` para todos los canales; `isOperationalUpdateTargetedToActor` acepta `NULL` ⇒ llega a todos los miembros de la celda. No hay resolución por rol, proximidad, opt-out ni emparejamiento oferta↔demanda.
+  - No existe el flujo **"oferta de recurso → alerta dirigida a los demandantes de ese recurso"**. El matcher `matchResourceReports` es solo pull (`GET …/resource-reports/matches`) y no alimenta ninguna update dirigida.
+- **Qué NO cubre el e2e:** el e2e local usa un único persona (crea y hace pull con el mismo `externalId`; el segundo actor solo prueba un 403). Nunca valida entrega dirigida a un demandante distinto. El e2e de **staging real** (`e2e:staging:telegram`) no invoca el escenario `proactive-updates` en absoluto.
+
+### Sub-slice 21.1 — Matching dirigido oferta↔demanda (propuesta)
+
+**Motivación:** en catástrofe, el broadcast por celda es precisamente el riesgo que el DoD marca como límite ("saturación / desplazamientos peligrosos", "spam o canal de pánico"). El targeting no es pulido: es un requisito de seguridad. Motor **determinista y explicable** (no IA), coherente con un producto trust/safety donde priman auditabilidad y predecibilidad sobre recall.
+
+**Decisión de producto pendiente (gate previo):** confirmar que 21.1 entra en alcance ahora vs. backlog. Si se aparca, la acción mínima honesta es renombrar la capability a "broadcast por celda" y no venderla como "alerta a demandantes".
+
+**Avance 2026-07-05 (implementación en curso).** Verificación posible en este entorno: typecheck limpio en los 6 paquetes (contracts, api, web-ui, telegram, mobile, e2e) + jest mobile 33/33 + 5/5. Pendiente de correr por el usuario en local/CI: vitest de api/web/telegram y Playwright e2e (el sandbox no tiene los bindings nativos de arquitectura).
+
+**Fase 0 — Alinear documentación y contrato**
+- ✅ Sincerar el checklist de Slice 21 (ítems B a 🔴, DoD de match a ❌).
+- ⬜ Definir en PRD/wireflows el matcher como determinista (categoría + constraints + celda/celda adyacente) y cerrar el "Definir alcance" abierto en `zona_cero_persona_channel_wireflows.md` (L145/L170). *(pendiente decisión de producto)*
+- ✅ Añadir `reasonCode` al contrato `OperationalUpdate` (`operationalUpdateReasonCodes` + campo opcional). `packages/contracts/src/index.ts`.
+
+**Fase 1 — Audiencia dirigida server-side**
+- ✅ Al crear un `resource_offer`, reutilizar `matchResourceReports` para resolver demandantes con necesidad compatible y escribir `target_hash` por actor (audiencia+delivery dirigidos). `services/api/src/index.ts` (`resolveResourceMatchTargeting`, `upsertOperationalUpdate` con `targeting`). Migración `0013_resource_report_reporter_target_hash.sql` para persistir el hash del reportante.
+- ✅ Simétrico para `resource_need` (dirige a ofertantes compatibles con `resource.match.need_for_open_offer`).
+- ✅ Resolución 100% en `services/api` (clientes solo muestran `reasonCode`).
+- ✅ Fallback seguro: sin match (o contraparte sin identidad direccionable, p.ej. reporte de sync mobile), `reasonCode = resource.report.cell_broadcast` y sin push dirigido.
+- ⚠️ **Límite de alcance conocido:** solo los reportantes por canal *connected* (Telegram/Web, con `externalId`) son direccionables. Reportes originados en mobile (solo `actorKeyId`, sin `externalId`) caen al fallback. Documentado; resolución de identidad mobile queda para follow-up.
+
+**Fase 2 — Rails de seguridad** *(2026-07-05: cap de audiencia + opt-out implementados; rate-limit temporal diferido)*
+- 🟡 Dedup + rate-limit por actor: dedup ✅ vía `updateId` determinista (re-report = upsert, no duplica). Rate-limit temporal "recurso caliente" **DIFERIDO** a follow-up.
+- ✅ Opt-out/quieting por actor: tabla `proactive_update_optouts` (migración `0014`, keyed por hash de actor, sin PII) + endpoint `POST /incidents/:id/updates/preferences` (auth de membership) + enforcement en targeting (`filterQuietedTargets`) + superficies en paralelo: Telegram (`/quietupdates`, `/unquietupdates`), Web UI (toggle) y mobile (toggle). El webhook Telegram in-process del API también quedó cableado.
+- ✅ Copy de límite en canales: A/C renderizan copy no-autoritativo por `reasonCode`; opt-out con copy honesto (SOS y feed de celda siguen llegando). Detalle sensible solo vía link firmado one-use (ya en Fase 1).
+- ✅ Tope de audiencia (anti-convergencia): `MAX_PROACTIVE_MATCH_TARGETS = 20` por update, priorizando por score de match. Nuevo modo **suppressed**: si un match no tiene audiencia direccionable (sin identidad connected o todos con opt-out), la update NO hace broadcast a la celda — se suprime el push. Confirmación de coordinador en urgencia alta **DIFERIDA** a follow-up.
+
+**Fase 3 — Tests y gate**
+- ✅ (autoría) E2E local dos personas: `e2e/proactive-social-updates.spec.ts` — demandante + ofertante ⇒ el demandante recibe la update dirigida con `reasonCode`, el outsider NO. **Pendiente de ejecutar en local** (`pnpm e2e:slice21:proactive-updates`).
+- ✅ (autoría) Test unitario de API: `services/api/src/operational-updates.test.ts` — targeting + no-fuga de identidad. **Pendiente de ejecutar** (`pnpm api:test`).
+- ⬜ Registrar el escenario `proactive-updates` como gate en staging real (`e2e:staging:telegram`).
+
+**Definition of Done 21.1**
+- 🟡 Un `resource_offer` compatible genera update dirigida SOLO al demandante, con `reasonCode`, sin exponer identidades. *(implementado + typecheck; falta ejecutar tests)*
+- 🟡 Un outsider no-target no la recibe (filtro `target_hash` en `listOperationalUpdates`) ni puede accionarla (403 vía `isOperationalUpdateTargetedToActor`). *(implementado; falta ejecutar tests)*
+- 🟡 Rails de anti-saturación: tope de audiencia ✅, opt-out ✅ y dedup ✅ con test; rate-limit temporal y confirmación de coordinador **diferidos** a follow-up. *(implementado + typecheck + jest mobile; falta correr vitest api/e2e)*
+- ⬜ Gate de staging real verde para el escenario proactive-updates dirigido.
 
 ## Gates antes de implementar cada slice
 

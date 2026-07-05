@@ -22,6 +22,9 @@ import {
   type DispatchTask,
   type DispatchTaskResponse,
   type ResourceReportCreateResponse,
+  type OperationalUpdate,
+  type OperationalUpdateActionResponse,
+  type OperationalUpdatePullResponse,
   type SyncFreshness,
 } from '@zona-cero/contracts';
 import {
@@ -34,9 +37,11 @@ import {
   handleTelegramFamilyReunificationFlow,
   handleTelegramDispatchTaskFlow,
   handleTelegramIncidentJoinFlow,
+  handleTelegramOperationalUpdateCommand,
   handleTelegramResourceReportFlow,
   handleTelegramSosFlow,
   handleTelegramWorkCenterReportFlow,
+  createTelegramOperationalUpdateHttpPorts,
   formatTelegramChannelLimitation,
   handleTelegramWebhookUpdate,
   isTerminalTelegramIncidentJoinState,
@@ -57,6 +62,7 @@ import {
   type TelegramFamilyReunificationState,
   type TelegramFlowContext,
   type TelegramIncidentJoinPorts,
+  type TelegramOperationalUpdatePorts,
   type TelegramResourceNeedRecommendation,
   type TelegramResourceReportPorts,
   type TelegramResourceReportState,
@@ -153,6 +159,52 @@ const resourceNeedRecommendationFixture: TelegramResourceNeedRecommendation = {
   reasons: ['same_category', 'linked_work_center', 'urgency_high'],
 };
 
+const operationalUpdateTrustSubject = {
+  entityType: 'sos_alert',
+  entityId: 'sos_public_ref',
+  incidentId: 'incident-zc-demo',
+  displayRef: 'SOS public reference',
+} as const;
+
+const operationalUpdateFixture: OperationalUpdate = {
+  updateId: 'upd_sos_public_ref',
+  incidentId: 'incident-zc-demo',
+  cellId: 'connected-telegram',
+  type: 'sos_alert',
+  urgency: 'critical',
+  title: 'SOS alert near north triage',
+  summary: 'A critical SOS was reported for the incident area.',
+  source: { kind: 'sos_alert', entityId: 'sos_public_ref' },
+  subject: operationalUpdateTrustSubject,
+  actions: [
+    { type: 'ack', label: 'Acknowledge' },
+    { type: 'open', label: 'Open detail' },
+    { type: 'corroborate', label: 'Corroborate' },
+    { type: 'dispute', label: 'Dispute' },
+  ],
+  createdAt: '2026-07-05T10:00:00.000Z',
+  updatedAt: '2026-07-05T10:01:00.000Z',
+  metadata: { confidence: 'low', freshness: 'fresh' },
+};
+
+const operationalUpdatePullResponseFixture: OperationalUpdatePullResponse = {
+  updates: [operationalUpdateFixture],
+  cursor: 'cursor-next',
+  hasMore: false,
+};
+
+const operationalUpdateActionResponseFixture: OperationalUpdateActionResponse = {
+  update: operationalUpdateFixture,
+  action: {
+    actionId: 'oua_ack',
+    updateId: operationalUpdateFixture.updateId,
+    actionType: 'ack',
+    status: 'accepted',
+    idempotent: false,
+    createdAt: '2026-07-05T10:02:00.000Z',
+  },
+};
+
 
 const dispatchTaskFixture: DispatchTask = {
   dispatchTaskId: 'dispatch-task-water-1',
@@ -225,6 +277,51 @@ function createFamilyReunificationPorts(overrides: Partial<TelegramFamilyReunifi
     listIncidents: vi.fn().mockResolvedValue(incidentListHappyFixture),
     createPrivateLink: vi.fn().mockResolvedValue(privateFamilyReunificationIssueResponseFixture),
     formatPrivateLinkUrl: vi.fn((response) => `https://safe.example/family-reunification?token=${response.token}&correlationId=${response.correlationId}`),
+    ...overrides,
+  };
+}
+
+function createOperationalUpdatePorts(overrides: Partial<TelegramOperationalUpdatePorts> = {}): TelegramOperationalUpdatePorts {
+  return {
+    listUpdates: vi.fn().mockResolvedValue(operationalUpdatePullResponseFixture),
+    ackUpdate: vi.fn().mockResolvedValue(operationalUpdateActionResponseFixture),
+    openUpdate: vi.fn().mockResolvedValue({
+      ...operationalUpdateActionResponseFixture,
+      action: { ...operationalUpdateActionResponseFixture.action, actionType: 'open' },
+    }),
+    corroborateUpdate: vi.fn().mockResolvedValue({
+      ...operationalUpdateActionResponseFixture,
+      action: { ...operationalUpdateActionResponseFixture.action, actionType: 'corroborate' },
+      trustState: {
+        incidentId: 'incident-zc-demo',
+        subject: operationalUpdateTrustSubject,
+        status: 'trusted_by_context',
+        visibility: 'normal',
+        priorityWeight: 0.75,
+        score: 0.75,
+        explanation: ['corroborated by field context'],
+        signalCount: 1,
+        disputeCount: 0,
+        updatedAt: '2026-07-05T10:03:00.000Z',
+      },
+    }),
+    disputeUpdate: vi.fn().mockResolvedValue({
+      ...operationalUpdateActionResponseFixture,
+      action: { ...operationalUpdateActionResponseFixture.action, actionType: 'dispute' },
+      trustState: {
+        incidentId: 'incident-zc-demo',
+        subject: operationalUpdateTrustSubject,
+        status: 'disputed',
+        visibility: 'limited',
+        priorityWeight: 0.1,
+        score: 0.1,
+        explanation: ['disputed by field context'],
+        signalCount: 1,
+        disputeCount: 1,
+        updatedAt: '2026-07-05T10:04:00.000Z',
+      },
+    }),
+    setProactivePreference: vi.fn().mockResolvedValue({ quietProactiveUpdates: true }),
     ...overrides,
   };
 }
@@ -491,6 +588,152 @@ describe('telegram channel flows', () => {
     expect(result.responseText).toContain('phone numbers');
     expect(result.responseText).toContain('exact locations');
     expect(result.responseText).toContain('complete descriptions');
+  });
+
+  it('lists operational updates with safe action copy and authority limits', async () => {
+    const ports = createOperationalUpdatePorts();
+    const result = await handleTelegramOperationalUpdateCommand(telegramUserUpdate('/updates incident-zc-demo connected-telegram'), ports);
+
+    expect(result).toMatchObject({ handled: true, command: '/updates' });
+    expect(ports.listUpdates).toHaveBeenCalledWith('incident-zc-demo', 'connected-telegram', {
+      cursor: null,
+      limit: 5,
+      channel: 'telegram',
+      externalId: '1001',
+      displayName: 'Field',
+    });
+    expect(result.responseText).toContain('🚨 CRITICAL SOS alert near north triage');
+    expect(result.responseText).toContain('Reason: A critical SOS was reported for the incident area.');
+    expect(result.responseText).toContain('Confidence: low. Freshness: fresh.');
+    expect(result.responseText).toContain('/ack incident-zc-demo upd_sos_public_ref');
+    expect(result.responseText).toContain('ACK is not rescue');
+    expect(result.responseText).toContain('Corroboration adds context only');
+    expect(result.responseText).toContain('Social trust does not grant sensitive permissions');
+  });
+
+  it('renders an honest, non-authoritative reason line when the update carries a reasonCode', async () => {
+    const ports = createOperationalUpdatePorts();
+    ports.listUpdates = vi.fn().mockResolvedValue({
+      ...operationalUpdatePullResponseFixture,
+      updates: [{ ...operationalUpdateFixture, reasonCode: 'resource.match.offer_for_open_need' }],
+    });
+
+    const result = await handleTelegramOperationalUpdateCommand(telegramUserUpdate('/updates incident-zc-demo connected-telegram'), ports);
+
+    expect(result.responseText).toContain('Why you: it matches a resource you requested');
+    expect(result.responseText).toContain('Possible match, not a reservation');
+  });
+
+  it('omits the reason line when the update has no reasonCode', async () => {
+    const ports = createOperationalUpdatePorts();
+    const result = await handleTelegramOperationalUpdateCommand(telegramUserUpdate('/updates incident-zc-demo connected-telegram'), ports);
+
+    expect(result.responseText).not.toContain('Why you:');
+  });
+
+  it('submits operational update actions with Telegram actor context and safe confirmations', async () => {
+    const ports = createOperationalUpdatePorts();
+
+    const ack = await handleTelegramOperationalUpdateCommand(telegramUserUpdate('/ack incident-zc-demo upd_sos_public_ref'), ports);
+    expect(ports.ackUpdate).toHaveBeenCalledWith('incident-zc-demo', 'upd_sos_public_ref', {
+      channel: 'telegram',
+      externalId: '1001',
+      displayName: 'Field',
+      idempotencyKey: 'telegram:ack:incident-zc-demo:upd_sos_public_ref:1001',
+    });
+    expect(ack.responseText).toContain('ACK is not rescue');
+
+    const corroborate = await handleTelegramOperationalUpdateCommand(telegramUserUpdate('/corroborate incident-zc-demo upd_sos_public_ref 0.8'), ports);
+    expect(ports.corroborateUpdate).toHaveBeenCalledWith('incident-zc-demo', 'upd_sos_public_ref', expect.objectContaining({ confidence: 0.8 }));
+    expect(corroborate.responseText).toContain('does not grant authority or sensitive permissions');
+
+    const dispute = await handleTelegramOperationalUpdateCommand(telegramUserUpdate('/dispute incident-zc-demo upd_sos_public_ref outdated'), ports);
+    expect(ports.disputeUpdate).toHaveBeenCalledWith('incident-zc-demo', 'upd_sos_public_ref', expect.objectContaining({ reason: 'outdated' }));
+    expect(dispute.responseText).toContain('does not remove the update by itself');
+
+    const open = await handleTelegramOperationalUpdateCommand(telegramUserUpdate('/open incident-zc-demo upd_sos_public_ref'), ports);
+    expect(ports.openUpdate).toHaveBeenCalledWith('incident-zc-demo', 'upd_sos_public_ref', expect.objectContaining({ channel: 'telegram' }));
+    expect(open.responseText).toContain('does not grant sensitive permissions');
+  });
+
+  it('mutes proactive match alerts with /quietupdates and confirms SOS and cell feed still flow', async () => {
+    const ports = createOperationalUpdatePorts();
+
+    const quiet = await handleTelegramOperationalUpdateCommand(telegramUserUpdate('/quietupdates incident-zc-demo'), ports);
+
+    expect(quiet).toMatchObject({ handled: true, command: '/quietupdates' });
+    expect(ports.setProactivePreference).toHaveBeenCalledWith('incident-zc-demo', {
+      channel: 'telegram',
+      externalId: '1001',
+      quietProactiveUpdates: true,
+    });
+    expect(quiet.responseText).toContain('Silenciadas las alertas proactivas de match');
+    expect(quiet.responseText).toContain('SOS');
+    expect(quiet.responseText).toContain('/unquietupdates');
+  });
+
+  it('reactivates proactive match alerts with /unquietupdates', async () => {
+    const ports = createOperationalUpdatePorts({
+      setProactivePreference: vi.fn().mockResolvedValue({ quietProactiveUpdates: false }),
+    });
+
+    const unquiet = await handleTelegramOperationalUpdateCommand(telegramUserUpdate('/unquietupdates incident-zc-demo'), ports);
+
+    expect(unquiet).toMatchObject({ handled: true, command: '/unquietupdates' });
+    expect(ports.setProactivePreference).toHaveBeenCalledWith('incident-zc-demo', {
+      channel: 'telegram',
+      externalId: '1001',
+      quietProactiveUpdates: false,
+    });
+    expect(unquiet.responseText).toContain('Reactivadas las alertas proactivas de match');
+  });
+
+
+
+  it('does not keep generic /quiet and /unquiet aliases in the Telegram namespace', async () => {
+    const ports = createOperationalUpdatePorts();
+
+    await expect(handleTelegramOperationalUpdateCommand(telegramUserUpdate('/quiet incident-zc-demo'), ports)).resolves.toMatchObject({ handled: false, command: '/quiet' });
+    await expect(handleTelegramOperationalUpdateCommand(telegramUserUpdate('/unquiet incident-zc-demo'), ports)).resolves.toMatchObject({ handled: false, command: '/unquiet' });
+    expect(ports.setProactivePreference).not.toHaveBeenCalled();
+  });
+
+  it('builds HTTP ports against the operational update endpoints', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify(operationalUpdatePullResponseFixture), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(operationalUpdateActionResponseFixture), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ quietProactiveUpdates: true }), { status: 200 }));
+    const ports = createTelegramOperationalUpdateHttpPorts({ baseUrl: 'https://api.example.test', fetch: fetchMock });
+
+    await ports.listUpdates('incident-zc-demo', 'connected-telegram', { cursor: 'cursor-1', limit: 3, channel: 'telegram', externalId: '1001' });
+    await ports.ackUpdate('incident-zc-demo', 'upd_sos_public_ref', {
+      channel: 'telegram',
+      externalId: '1001',
+      idempotencyKey: 'ack-once',
+    });
+    const preference = await ports.setProactivePreference('incident-zc-demo', {
+      channel: 'telegram',
+      externalId: '1001',
+      quietProactiveUpdates: true,
+    });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      new URL('https://api.example.test/incidents/incident-zc-demo/cells/connected-telegram/updates?cursor=cursor-1&limit=3&channel=telegram&externalId=1001'),
+      undefined,
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      new URL('https://api.example.test/incidents/incident-zc-demo/updates/upd_sos_public_ref/ack'),
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      new URL('https://api.example.test/incidents/incident-zc-demo/updates/preferences'),
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(preference).toEqual({ quietProactiveUpdates: true });
   });
 
   it('parses every valid incident join state variant and round-trips through JSON', () => {

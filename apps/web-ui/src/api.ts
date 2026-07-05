@@ -8,6 +8,15 @@ import {
   HealthResponseSchema,
   PrivateWebLinkConsumeRequestSchema,
   OperationalMapResponseSchema,
+  OperationalUpdateActionRequestSchema,
+  OperationalUpdateActionResponseSchema,
+  OperationalUpdateCorroborateRequestSchema,
+  OperationalUpdateDisputeRequestSchema,
+  OperationalUpdateLinkRequestSchema,
+  OperationalUpdateLinkResponseSchema,
+  OperationalUpdatePreferenceRequestSchema,
+  OperationalUpdatePreferenceResponseSchema,
+  OperationalUpdatePullResponseSchema,
   PrivateWebLinkConsumeResponseSchema,
   PrivateWebLinkValidateRequestSchema,
   PrivateWebLinkValidateResponseSchema,
@@ -33,6 +42,15 @@ import {
   type CountryListResponse,
   type HealthResponse,
   type OperationalMapResponse,
+  type OperationalUpdateActionRequest,
+  type OperationalUpdateActionResponse,
+  type OperationalUpdateCorroborateRequest,
+  type OperationalUpdateDisputeRequest,
+  type OperationalUpdateLinkRequest,
+  type OperationalUpdateLinkResponse,
+  type OperationalUpdatePreferenceRequest,
+  type OperationalUpdatePreferenceResponse,
+  type OperationalUpdatePullResponse,
   type PrivateWebLinkConsumeRequest,
   type PrivateWebLinkConsumeResponse,
   type PrivateWebLinkValidateRequest,
@@ -109,6 +127,152 @@ export async function fetchOperationalMap(
   }
 
   return OperationalMapResponseSchema.parse(await response.json());
+}
+
+export async function fetchOperationalUpdates(
+  incidentId: string,
+  cellId: string,
+  options: { cursor?: string | null; limit?: number; channel?: "web-ui"; externalId?: string } = {},
+  fetcher: Fetcher = fetch,
+): Promise<OperationalUpdatePullResponse> {
+  const params = new URLSearchParams();
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.channel) params.set("channel", options.channel);
+  if (options.externalId) params.set("externalId", options.externalId);
+  const query = params.toString();
+  const response = await fetcher(
+    `${getApiBaseUrl()}${operationalUpdatesPath(incidentId, cellId)}${query ? `?${query}` : ""}`,
+  );
+
+  if (!response.ok) {
+    throw new Error(`Operational updates failed with status ${response.status}`);
+  }
+
+  return OperationalUpdatePullResponseSchema.parse(await response.json());
+}
+
+export async function acknowledgeOperationalUpdate(
+  incidentId: string,
+  updateId: string,
+  request: OperationalUpdateActionRequest,
+  fetcher: Fetcher = fetch,
+): Promise<OperationalUpdateActionResponse> {
+  return postOperationalUpdateAction(
+    incidentId,
+    updateId,
+    "ack",
+    OperationalUpdateActionRequestSchema.parse(request),
+    OperationalUpdateActionResponseSchema,
+    fetcher,
+  );
+}
+
+export async function readOperationalUpdate(
+  incidentId: string,
+  updateId: string,
+  request: OperationalUpdateActionRequest,
+  fetcher: Fetcher = fetch,
+): Promise<OperationalUpdateActionResponse> {
+  return postOperationalUpdateAction(
+    incidentId,
+    updateId,
+    "read",
+    OperationalUpdateActionRequestSchema.parse(request),
+    OperationalUpdateActionResponseSchema,
+    fetcher,
+  );
+}
+
+export async function openOperationalUpdate(
+  incidentId: string,
+  updateId: string,
+  request: OperationalUpdateActionRequest,
+  fetcher: Fetcher = fetch,
+): Promise<OperationalUpdateActionResponse> {
+  return postOperationalUpdateAction(
+    incidentId,
+    updateId,
+    "open",
+    OperationalUpdateActionRequestSchema.parse(request),
+    OperationalUpdateActionResponseSchema,
+    fetcher,
+  );
+}
+
+export async function corroborateOperationalUpdate(
+  incidentId: string,
+  updateId: string,
+  request: OperationalUpdateCorroborateRequest,
+  fetcher: Fetcher = fetch,
+): Promise<OperationalUpdateActionResponse> {
+  return postOperationalUpdateAction(
+    incidentId,
+    updateId,
+    "corroborate",
+    OperationalUpdateCorroborateRequestSchema.parse(request),
+    OperationalUpdateActionResponseSchema,
+    fetcher,
+  );
+}
+
+export async function disputeOperationalUpdate(
+  incidentId: string,
+  updateId: string,
+  request: OperationalUpdateDisputeRequest,
+  fetcher: Fetcher = fetch,
+): Promise<OperationalUpdateActionResponse> {
+  return postOperationalUpdateAction(
+    incidentId,
+    updateId,
+    "dispute",
+    OperationalUpdateDisputeRequestSchema.parse(request),
+    OperationalUpdateActionResponseSchema,
+    fetcher,
+  );
+}
+
+export async function createOperationalUpdateLink(
+  incidentId: string,
+  updateId: string,
+  request: OperationalUpdateLinkRequest,
+  fetcher: Fetcher = fetch,
+): Promise<OperationalUpdateLinkResponse> {
+  return postOperationalUpdateAction(
+    incidentId,
+    updateId,
+    "links",
+    OperationalUpdateLinkRequestSchema.parse(request),
+    OperationalUpdateLinkResponseSchema,
+    fetcher,
+  );
+}
+
+export async function setOperationalUpdatePreference(
+  incidentId: string,
+  request: OperationalUpdatePreferenceRequest,
+  fetcher: Fetcher = fetch,
+): Promise<OperationalUpdatePreferenceResponse> {
+  const payload = OperationalUpdatePreferenceRequestSchema.parse(request);
+  const response = await fetcher(
+    `${getApiBaseUrl()}${operationalUpdatePreferencePath(incidentId)}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      await readApiError(
+        response,
+        `Operational update preference failed with status ${response.status}`,
+      ),
+    );
+  }
+
+  return OperationalUpdatePreferenceResponseSchema.parse(await response.json());
 }
 
 export async function fetchWorkCenters(
@@ -428,6 +592,22 @@ function syncPullPath(incidentId: string, cellId: string): string {
   return `/incidents/${encodeURIComponent(incidentId)}/cells/${encodeURIComponent(cellId)}/sync/pull`;
 }
 
+function operationalUpdatesPath(incidentId: string, cellId: string): string {
+  return `/incidents/${encodeURIComponent(incidentId)}/cells/${encodeURIComponent(cellId)}/updates`;
+}
+
+function operationalUpdateActionPath(
+  incidentId: string,
+  updateId: string,
+  action: "ack" | "read" | "open" | "corroborate" | "dispute" | "links",
+): string {
+  return `/incidents/${encodeURIComponent(incidentId)}/updates/${encodeURIComponent(updateId)}/${action}`;
+}
+
+function operationalUpdatePreferencePath(incidentId: string): string {
+  return `/incidents/${encodeURIComponent(incidentId)}/updates/preferences`;
+}
+
 function workCenterCollectionPath(incidentId: string): string {
   return `/incidents/${encodeURIComponent(incidentId)}/work-centers`;
 }
@@ -484,4 +664,33 @@ async function readApiError(
     return body.error;
   }
   return fallback;
+}
+
+async function postOperationalUpdateAction<T>(
+  incidentId: string,
+  updateId: string,
+  action: "ack" | "read" | "open" | "corroborate" | "dispute" | "links",
+  payload: OperationalUpdateActionRequest,
+  schema: { parse(value: unknown): T },
+  fetcher: Fetcher,
+): Promise<T> {
+  const response = await fetcher(
+    `${getApiBaseUrl()}${operationalUpdateActionPath(incidentId, updateId, action)}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      await readApiError(
+        response,
+        `Operational update action failed with status ${response.status}`,
+      ),
+    );
+  }
+
+  return schema.parse(await response.json());
 }

@@ -43,6 +43,8 @@ describe('local operation database contract', () => {
       'resource_reports',
       'dispatch_events',
       'sos_signals',
+      'operational_updates',
+      'operational_update_actions',
       'local_summaries',
     ]);
 
@@ -59,6 +61,10 @@ describe('local operation database contract', () => {
     expect(Object.keys(localDbSchemas.resource_reports.properties)).toEqual(expect.arrayContaining(['category', 'quantityApprox', 'urgency', 'constraints', 'reportKind', 'workCenterId', 'trustStatus', 'trustVisibility', 'trustSignalCount', 'trustDisputeCount', 'trustExplanation', 'provisional', 'provisionalReason', 'syncState']));
     expect(Object.keys(localDbSchemas.dispatch_events.properties)).toEqual(expect.arrayContaining(['dispatchTaskId', 'category', 'quantityApprox', 'fromResourceReportId', 'toResourceReportId', 'targetWorkCenterId', 'notes', 'provisional', 'provisionalReason']));
     expect(Object.keys(localDbSchemas.sos_signals.properties)).toEqual(expect.arrayContaining(['severity', 'message', 'trustStatus', 'trustVisibility', 'trustSignalCount', 'trustDisputeCount', 'trustExplanation']));
+    expect(localDbSchemas.operational_updates.primaryKey).toBe('updateId');
+    expect(Object.keys(localDbSchemas.operational_updates.properties)).toEqual(expect.arrayContaining(['updateId', 'type', 'urgency', 'summary', 'source', 'subject', 'actions', 'delivery', 'readState', 'lifecycleState', 'ackState', 'actionState', 'pendingActionType', 'lastActionError']));
+    expect(localDbSchemas.operational_update_actions.primaryKey).toBe('localActionId');
+    expect(Object.keys(localDbSchemas.operational_update_actions.properties)).toEqual(expect.arrayContaining(['localActionId', 'updateId', 'actionType', 'request', 'receiptId', 'errorCode', 'errorMessage']));
     expect(Object.keys(localDbSchemas.local_summaries.properties)).toEqual(expect.arrayContaining(['roleCounts']));
     expect(Object.keys(localDbSchemas.map_packs.properties)).toEqual(expect.arrayContaining(['failureReason']));
     expect(localDbSchemas.sync_issues.primaryKey).toBe('issueId');
@@ -79,6 +85,8 @@ describe('local operation database contract', () => {
         work_centers: expect.objectContaining({ schema: localDbSchemas.work_centers }),
         map_packs: expect.objectContaining({ schema: localDbSchemas.map_packs }),
         sync_issues: expect.objectContaining({ schema: localDbSchemas.sync_issues }),
+        operational_updates: expect.objectContaining({ schema: localDbSchemas.operational_updates }),
+        operational_update_actions: expect.objectContaining({ schema: localDbSchemas.operational_update_actions }),
       }),
     );
   });
@@ -136,11 +144,13 @@ describe('local operation database contract', () => {
     await db.views.incidents.upsert({ incidentId: 'incident-1', cellId: 'cell-a', title: 'Local incident', status: 'unverified', syncState: 'pending', updatedAt: operation.createdAtDevice });
     await db.views.workCenters.upsert({ centerId: 'center-rxdb', incidentId: 'incident-1', cellId: 'cell-a', name: 'RxDB center', status: 'pending', syncState: 'pending', updatedAt: operation.createdAtDevice });
     await db.views.mapPacks.upsert({ packId: 'incident-1:cell-a', incidentId: 'incident-1', cellId: 'cell-a', bounds: { west: 2.1, south: 41.3, east: 2.2, north: 41.4 }, state: 'downloaded', progress: 1, estimatedBytes: 42, downloadedBytes: 42, updatedAt: operation.createdAtDevice });
+    await db.views.operationalUpdates.upsert({ updateId: 'update-1', incidentId: 'incident-1', cellId: 'cell-a', type: 'system_notice', urgency: 'medium', title: 'Notice', summary: 'Local notice', source: { kind: 'system' }, actions: [{ type: 'read', label: 'Read' }], createdAt: operation.createdAtDevice, updatedAt: operation.createdAtDevice, readState: 'unread', lifecycleState: 'active', ackState: 'none', actionState: 'idle', localUpdatedAt: operation.createdAtDevice });
 
     expect(await db.syncOps.findByIncident('incident-1')).toEqual([operation]);
     expect(await db.views.incidents.findByIncident('incident-1')).toEqual([expect.objectContaining({ incidentId: 'incident-1', syncState: 'pending' })]);
     expect(await db.views.workCenters.findByIncident('incident-1')).toEqual([expect.objectContaining({ centerId: 'center-rxdb', status: 'pending' })]);
     expect(await db.views.mapPacks.findByIncident('incident-1')).toEqual([expect.objectContaining({ packId: 'incident-1:cell-a', state: 'downloaded' })]);
+    expect(await db.views.operationalUpdates.findByIncident('incident-1')).toEqual([expect.objectContaining({ updateId: 'update-1', readState: 'unread' })]);
   });
 
   it('resets spike data for one incident without deleting unrelated local data', async () => {
@@ -152,10 +162,12 @@ describe('local operation database contract', () => {
     await db.syncOps.upsert(incidentTwo);
     await db.views.workCenters.upsert({ centerId: 'center-1', incidentId: 'incident-1', cellId: 'cell-a', name: 'One', status: 'pending', syncState: 'pending', updatedAt: incidentOne.createdAtDevice });
     await db.views.workCenters.upsert({ centerId: 'center-2', incidentId: 'incident-2', cellId: 'cell-a', name: 'Two', status: 'pending', syncState: 'pending', updatedAt: incidentTwo.createdAtDevice });
+    await db.views.operationalUpdates.upsert({ updateId: 'update-1', incidentId: 'incident-1', cellId: 'cell-a', type: 'system_notice', urgency: 'medium', title: 'Notice', summary: 'Local notice', source: { kind: 'system' }, actions: [{ type: 'read', label: 'Read' }], createdAt: incidentOne.createdAtDevice, updatedAt: incidentOne.createdAtDevice, readState: 'unread', lifecycleState: 'active', ackState: 'none', actionState: 'idle', localUpdatedAt: incidentOne.createdAtDevice });
+    await db.operationalUpdateActions.upsert({ localActionId: 'action-1', updateId: 'update-1', incidentId: 'incident-1', cellId: 'cell-a', actionType: 'read', request: { channel: 'mobile', externalId: 'actor-key-1' }, syncState: 'pending', createdAt: incidentOne.createdAtDevice, updatedAt: incidentOne.createdAtDevice });
 
     const result = await db.resetIncident('incident-1');
 
-    expect(result).toEqual({ removedOperations: 1, removedViews: 1, warning: 'Unsynchronized operations may be lost.' });
+    expect(result).toEqual({ removedOperations: 2, removedViews: 2, warning: 'Unsynchronized operations may be lost.' });
     expect(await db.syncOps.findByIncident('incident-1')).toEqual([]);
     expect(await db.syncOps.findByIncident('incident-2')).toEqual([incidentTwo]);
   });
@@ -198,6 +210,8 @@ function createFakeRxdbCollections() {
     resource_reports: new FakeRxCollection('reportId'),
     dispatch_events: new FakeRxCollection('dispatchEventId'),
     sos_signals: new FakeRxCollection('sosId'),
+    operational_updates: new FakeRxCollection('updateId'),
+    operational_update_actions: new FakeRxCollection('localActionId'),
     local_summaries: new FakeRxCollection('summaryId'),
   };
 }

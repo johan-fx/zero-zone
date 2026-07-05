@@ -120,6 +120,8 @@ function createFakeRxdbCollections(writeOrder: string[]) {
     resource_reports: new FakeRxCollection('resource_reports', 'reportId', writeOrder),
     dispatch_events: new FakeRxCollection('dispatch_events', 'dispatchEventId', writeOrder),
     sos_signals: new FakeRxCollection('sos_signals', 'sosId', writeOrder),
+    operational_updates: new FakeRxCollection('operational_updates', 'updateId', writeOrder),
+    operational_update_actions: new FakeRxCollection('operational_update_actions', 'localActionId', writeOrder),
     local_summaries: new FakeRxCollection('local_summaries', 'summaryId', writeOrder),
   };
 }

@@ -5,6 +5,8 @@ import {
   DispatchTaskListResponseSchema,
   DispatchTaskResponseSchema,
   HealthResponseSchema,
+  OperationalUpdateActionResponseSchema,
+  OperationalUpdatePullResponseSchema,
   ResourceReportListResponseSchema,
   SosAlertCreateResponseSchema,
   SosAlertStatusResponseSchema,
@@ -26,7 +28,7 @@ import {
   workCenterDetailHappyFixture,
   workCenterListHappyFixture,
 } from '../../../packages/testing/src';
-import { createDispute, createSosAlert, createTrustSignal, createWorkCenter, fetchApiHealth, fetchDispatchTasks, fetchResourceReports, fetchSosStatus, fetchTrustState, fetchWorkCenterDetail, fetchWorkCenters, updateDispatchTask } from './api';
+import { acknowledgeOperationalUpdate, createDispute, createOperationalUpdateLink, createSosAlert, createTrustSignal, createWorkCenter, fetchApiHealth, fetchDispatchTasks, fetchOperationalUpdates, fetchResourceReports, fetchSosStatus, fetchTrustState, fetchWorkCenterDetail, fetchWorkCenters, updateDispatchTask } from './api';
 
 
 const resourceReportListFixture = {
@@ -126,6 +128,40 @@ const disputeCreateResponseFixture = {
   trustState: { ...trustStateFixture, status: 'disputed', disputeCount: 1 },
   audit: { auditEventId: 'audit_dispute_created' },
   idempotent: false,
+} as const;
+
+const operationalUpdateFixture = {
+  updateId: 'upd-sos-1',
+  incidentId: 'incident-zc-demo',
+  cellId: 'cell-zc-demo',
+  type: 'sos_alert',
+  urgency: 'critical',
+  title: 'Critical SOS nearby',
+  summary: 'A critical SOS was reported near this cell.',
+  source: { kind: 'sos_alert', entityId: 'sos-public-1' },
+  subject: {
+    entityType: 'sos_alert',
+    entityId: 'sos-public-1',
+    incidentId: 'incident-zc-demo',
+    displayRef: 'SOS public ref',
+  },
+  actions: [
+    { type: 'ack', label: 'Acknowledge' },
+    { type: 'link', label: 'Open detail' },
+  ],
+  delivery: { channel: 'web-ui', status: 'pending', attemptCount: 0 },
+  createdAt: '2026-07-05T12:00:00.000Z',
+  updatedAt: '2026-07-05T12:00:00.000Z',
+  metadata: { confidence: 0.78 },
+} as const;
+
+const operationalUpdateReceiptFixture = {
+  actionId: 'act-ack-1',
+  updateId: 'upd-sos-1',
+  actionType: 'ack',
+  status: 'accepted',
+  idempotent: false,
+  createdAt: '2026-07-05T12:01:00.000Z',
 } as const;
 
 describe('web ui contract integration', () => {
@@ -250,6 +286,54 @@ describe('web ui contract integration', () => {
     expect(fetcher).toHaveBeenNthCalledWith(
       3,
       'http://127.0.0.1:8787/incidents/incident-zc-demo/disputes',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('fetches operational updates and posts safe update actions through canonical endpoints', async () => {
+    const pullResponse = { updates: [operationalUpdateFixture], cursor: null, hasMore: false };
+    const ackResponse = {
+      update: { ...operationalUpdateFixture, delivery: { channel: 'web-ui', status: 'acked', attemptCount: 1, deliveredAt: '2026-07-05T12:00:30.000Z', readAt: '2026-07-05T12:00:45.000Z', ackedAt: '2026-07-05T12:01:00.000Z' } },
+      action: operationalUpdateReceiptFixture,
+    };
+    const linkResponse = {
+      update: operationalUpdateFixture,
+      action: { ...operationalUpdateReceiptFixture, actionType: 'link' },
+      link: {
+        href: '/operational-updates/private-detail#token=opaque&scope=operational_update.detail&correlationId=corr-update',
+        scope: 'operational_update.detail',
+        expiresAt: '2026-07-05T12:16:00.000Z',
+      },
+    };
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(pullResponse))
+      .mockResolvedValueOnce(jsonResponse(ackResponse))
+      .mockResolvedValueOnce(jsonResponse(linkResponse));
+
+    await expect(fetchOperationalUpdates('incident-zc-demo', 'cell-zc-demo', { limit: 5, channel: 'web-ui', externalId: 'web-user-1001' }, fetcher)).resolves.toEqual(
+      OperationalUpdatePullResponseSchema.parse(pullResponse),
+    );
+    await expect(acknowledgeOperationalUpdate('incident-zc-demo', 'upd-sos-1', {
+      channel: 'web-ui',
+      externalId: 'web-user-1001',
+      idempotencyKey: 'ack-1',
+    }, fetcher)).resolves.toEqual(OperationalUpdateActionResponseSchema.parse(ackResponse));
+    await expect(createOperationalUpdateLink('incident-zc-demo', 'upd-sos-1', {
+      channel: 'web-ui',
+      externalId: 'web-user-1001',
+      returnState: 'web-ui:update:upd-sos-1',
+    }, fetcher)).resolves.toEqual(linkResponse);
+
+    expect(fetcher).toHaveBeenNthCalledWith(1, 'http://127.0.0.1:8787/incidents/incident-zc-demo/cells/cell-zc-demo/updates?limit=5&channel=web-ui&externalId=web-user-1001');
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:8787/incidents/incident-zc-demo/updates/upd-sos-1/ack',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      3,
+      'http://127.0.0.1:8787/incidents/incident-zc-demo/updates/upd-sos-1/links',
       expect.objectContaining({ method: 'POST' }),
     );
   });

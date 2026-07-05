@@ -6,6 +6,8 @@ import {
   TrustSignalCreateRequestSchema,
   WorkCenterCreatePayloadSchema,
   type DisputeCreateRequest,
+  type OperationalUpdateActionType,
+  type OperationalUpdateReasonCode,
   type ResourceReportKind,
   type ResourceReportPayload,
   type ResourceReportUrgency,
@@ -14,17 +16,18 @@ import {
   type TrustSignalCreateRequest,
   type WorkCenterCreatePayload,
 } from '@zona-cero/contracts';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
 import { Paragraph, Text, XStack, YStack } from 'tamagui';
 
-import { createInMemoryLocalOperationDatabase, type DispatchEventLocalView, type LocalOperationDatabase, type PresenceLocalView, type ResourceReportLocalView, type SosSignalLocalView, type SyncIssueLocalView, type SyncOperationLocalDocument, type WorkCenterView } from '@/infrastructure/local-db/local-db';
+import { createInMemoryLocalOperationDatabase, type DispatchEventLocalView, type LocalOperationDatabase, type OperationalUpdateLocalView, type PresenceLocalView, type ResourceReportLocalView, type SosSignalLocalView, type SyncIssueLocalView, type SyncOperationLocalDocument, type WorkCenterView } from '@/infrastructure/local-db/local-db';
 import { resolveMapPreparationCoverage, resolveMapRenderState, type MapPackMetadata, type MapRenderState } from '@/infrastructure/maps';
 import { appendSignedOperationAndMaterialize } from '@/infrastructure/oplog/outbox-service';
 import { FakeOperationSigner, type OperationSigner } from '@/infrastructure/security';
-import type { ScopedOperationSyncService } from '@/infrastructure/sync';
+import type { OperationalUpdatesClient, ScopedOperationSyncService } from '@/infrastructure/sync';
 import { createUnavailableMeshtasticSosAdapter, type MeshtasticSosAdapter } from '@/infrastructure/transport';
 import { ActionButton, OperationalCard, StatusBadge } from '@/shared/ui';
+import type { OperationalUpdatesService } from '@/infrastructure/sync';
 
 const DEFAULT_ACTOR_KEY_ID = 'actor-key-local';
 const DEFAULT_DEVICE_ID = 'device-local';
@@ -52,6 +55,8 @@ export type LiveOperationalEntryScreenProps = {
   networkAvailable?: boolean;
   sosTransport?: MeshtasticSosAdapter;
   syncService?: ScopedOperationSyncService;
+  operationalUpdatesService?: OperationalUpdatesService;
+  operationalUpdatesClient?: OperationalUpdatesClient;
   syncUnavailableReason?: string;
 };
 
@@ -72,6 +77,7 @@ type LiveOperationalState = {
   rejectedOperations: number;
   syncIssues: SyncIssueLocalView[];
   retryMetadata: SyncOperationRetryMetadata[];
+  operationalUpdates: OperationalUpdateLocalView[];
 };
 
 type SyncOperationRetryMetadata = {
@@ -348,7 +354,7 @@ export async function createOfflineDispute(input: {
 export async function loadLiveOperationalState(database: LocalOperationDatabase, incidentId: string): Promise<LiveOperationalState> {
   const incident = await database.views.incidents.findById(incidentId);
   const cellId = incident?.cellId ?? DEFAULT_CELL_ID;
-  const [centers, mapPacks, syncIssues, operations, presenceSessions, resourceReports, dispatchEvents, sosSignals] = await Promise.all([
+  const [centers, mapPacks, syncIssues, operations, presenceSessions, resourceReports, dispatchEvents, sosSignals, operationalUpdates] = await Promise.all([
     database.views.workCenters.findByIncident(incidentId),
     database.views.mapPacks.findByIncident(incidentId),
     database.views.syncIssues.findByIncident(incidentId),
@@ -357,6 +363,7 @@ export async function loadLiveOperationalState(database: LocalOperationDatabase,
     database.views.resourceReports.findByIncident(incidentId),
     database.views.dispatchEvents.findByIncident(incidentId),
     database.views.sosSignals.findByIncident(incidentId),
+    database.views.operationalUpdates.findByIncident(incidentId),
   ]);
   const pendingOperations = operations.filter((operation) => 'syncState' in operation && operation.syncState === 'pending').length;
   const sentOperations = operations.filter((operation) => 'syncState' in operation && operation.syncState === 'sent').length;
@@ -384,6 +391,9 @@ export async function loadLiveOperationalState(database: LocalOperationDatabase,
     rejectedOperations,
     syncIssues,
     retryMetadata,
+    operationalUpdates: operationalUpdates
+      .filter((update) => update.cellId === cellId)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.updateId.localeCompare(left.updateId)),
   };
 }
 
@@ -419,6 +429,8 @@ export function LiveOperationalEntryScreen({
   networkAvailable = false,
   sosTransport = createUnavailableMeshtasticSosAdapter(),
   syncService,
+  operationalUpdatesService,
+  operationalUpdatesClient,
   syncUnavailableReason,
 }: LiveOperationalEntryScreenProps) {
   const database = useMemo(() => providedDatabase ?? createInMemoryLocalOperationDatabase(), [providedDatabase]);
@@ -428,6 +440,13 @@ export function LiveOperationalEntryScreen({
   const [error, setError] = useState<string | null>(null);
   const [sosTransportNotice, setSosTransportNotice] = useState<SosTransportNotice>(null);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
+  const [quietProactiveUpdates, setQuietProactiveUpdates] = useState(false);
+  const [quietPreferencePending, setQuietPreferencePending] = useState(false);
+
+  useEffect(() => {
+    setQuietProactiveUpdates(false);
+    setQuietPreferencePending(false);
+  }, [activeIncidentId]);
 
   const refresh = useCallback(
     async (incidentId: string) => {
@@ -623,14 +642,70 @@ export function LiveOperationalEntryScreen({
     setError(null);
     try {
       const result = await syncService.sync({ incidentId: state.incident.incidentId, cellId: state.incident.cellId });
-      setSyncNotice(`Sync complete: ${result.confirmed} confirmed, ${result.conflicts} conflicts, ${result.rejected} rejected.`);
+      const updatesResult = operationalUpdatesService ? await operationalUpdatesService.syncUpdates({ incidentId: state.incident.incidentId, cellId: state.incident.cellId, limit: 20 }) : null;
+      setSyncNotice(`Sync complete: ${result.confirmed} confirmed, ${result.conflicts} conflicts, ${result.rejected} rejected.${updatesResult ? ` Updates: ${updatesResult.pulled} pulled, ${updatesResult.unread} unread.` : ''}`);
       await refresh(state.incident.incidentId);
     } catch (caughtError) {
       setSyncNotice('Sync failed; pending operations will retry.');
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to sync operations');
       await refresh(state.incident.incidentId);
     }
-  }, [networkAvailable, refresh, state?.incident, syncService]);
+  }, [networkAvailable, operationalUpdatesService, refresh, state?.incident, syncService]);
+
+  const handleOperationalUpdateAction = useCallback(
+    async (update: OperationalUpdateLocalView, actionType: Exclude<OperationalUpdateActionType, 'link'>) => {
+      if (!operationalUpdatesService) {
+        setSyncNotice('Operational updates are local only; action queued until API config is available.');
+      }
+
+      setError(null);
+      try {
+        await (operationalUpdatesService ?? createUnavailableOperationalUpdatesService(database)).performAction({
+          incidentId: update.incidentId,
+          cellId: update.cellId,
+          updateId: update.updateId,
+          actionType,
+          networkAvailable,
+        });
+        await refresh(update.incidentId);
+      } catch (caughtError) {
+        setSyncNotice('Update action saved locally; it will retry when connectivity is available.');
+        setError(caughtError instanceof Error ? caughtError.message : 'Unable to send operational update action');
+        await refresh(update.incidentId);
+      }
+    },
+    [database, networkAvailable, operationalUpdatesService, refresh],
+  );
+
+  // Slice 21.1 Fase 2 — opt-out/quieting. The client owns targeting; here we only relay the
+  // volunteer's choice to silence proactive match updates. SOS/critical alerts and the cell
+  // feed are never affected. When there is no network client we keep the toggle disabled so
+  // the UI never pretends a preference was saved offline.
+  const canToggleQuietProactiveUpdates = Boolean(state?.incident) && Boolean(operationalUpdatesClient?.setPreference) && networkAvailable && !quietPreferencePending;
+
+  const handleToggleQuietProactiveUpdates = useCallback(async () => {
+    if (!state?.incident || !operationalUpdatesClient?.setPreference || !networkAvailable) {
+      return;
+    }
+
+    const nextQuiet = !quietProactiveUpdates;
+    setError(null);
+    setQuietPreferencePending(true);
+    try {
+      const result = await operationalUpdatesClient.setPreference({ incidentId: state.incident.incidentId, quietProactiveUpdates: nextQuiet });
+      setQuietProactiveUpdates(result.quietProactiveUpdates);
+      setSyncNotice(
+        result.quietProactiveUpdates
+          ? 'Proactive match alerts silenced. SOS, critical alerts, and your cell feed still arrive. · Alertas proactivas de match silenciadas. SOS, alertas críticas y el feed de tu celda siguen llegando.'
+          : 'Proactive match alerts re-enabled. · Alertas proactivas de match reactivadas.',
+      );
+    } catch (caughtError) {
+      setSyncNotice('Could not update proactive-alert preference; try again when connected. · No se pudo actualizar la preferencia de alertas proactivas; inténtalo de nuevo con conexión.');
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to update operational update preference');
+    } finally {
+      setQuietPreferencePending(false);
+    }
+  }, [networkAvailable, operationalUpdatesClient, quietProactiveUpdates, state?.incident]);
 
   const mapState = resolveMapRenderState({ pack: state?.mapPack ?? null, networkAvailable });
   const missingRequestedIncident = Boolean(activeIncidentId && state && !state.incident);
@@ -709,6 +784,19 @@ export function LiveOperationalEntryScreen({
         </OperationalCard>
 
         {state ? <OutboxStatePanel state={state} /> : null}
+
+        {state ? (
+          <OperationalUpdatesPanel
+            canToggleQuietProactiveUpdates={canToggleQuietProactiveUpdates}
+            networkAvailable={networkAvailable}
+            onAction={handleOperationalUpdateAction}
+            onToggleQuietProactiveUpdates={handleToggleQuietProactiveUpdates}
+            quietPreferencePending={quietPreferencePending}
+            quietProactiveUpdates={quietProactiveUpdates}
+            serviceAvailable={Boolean(operationalUpdatesService)}
+            updates={state.operationalUpdates}
+          />
+        ) : null}
 
         <LiveMapLibreSurface centers={state?.centers ?? []} mapState={mapState} />
 
@@ -794,6 +882,155 @@ function OutboxStatePanel({ state }: { state: LiveOperationalState }) {
   );
 }
 
+const OperationalUpdatesPanel = memo(function OperationalUpdatesPanel({
+  canToggleQuietProactiveUpdates,
+  networkAvailable,
+  onAction,
+  onToggleQuietProactiveUpdates,
+  quietPreferencePending,
+  quietProactiveUpdates,
+  serviceAvailable,
+  updates,
+}: {
+  canToggleQuietProactiveUpdates: boolean;
+  networkAvailable: boolean;
+  onAction: (update: OperationalUpdateLocalView, actionType: Exclude<OperationalUpdateActionType, 'link'>) => void;
+  onToggleQuietProactiveUpdates: () => void;
+  quietPreferencePending: boolean;
+  quietProactiveUpdates: boolean;
+  serviceAvailable: boolean;
+  updates: OperationalUpdateLocalView[];
+}) {
+  const summary = useMemo(
+    () => ({
+      unread: updates.filter((update) => update.readState === 'unread' && update.lifecycleState !== 'expired').length,
+      expired: updates.filter((update) => update.lifecycleState === 'expired').length,
+      pending: updates.filter((update) => update.actionState === 'pending' || update.ackState === 'pending').length,
+      conflicts: updates.filter((update) => update.actionState === 'conflict' || update.ackState === 'conflict').length,
+    }),
+    [updates],
+  );
+
+  return (
+    <OperationalCard testID="operational_updates_panel">
+      <YStack gap="$3">
+        <XStack items="center" justify="space-between" gap="$3">
+          <YStack grow={1} gap="$1">
+            <Text color="$text" fontSize="$lg" fontWeight="900">
+              Operational updates
+            </Text>
+            <Text color="$textMuted" fontSize="$sm" fontWeight="700">
+              Backend-prioritized updates for this cell. Mobile only stores status and queues safe actions.
+            </Text>
+          </YStack>
+          <StatusBadge tone={summary.unread > 0 ? 'warning' : 'stale'} label={`${summary.unread} unread`} />
+        </XStack>
+
+        <XStack flexWrap="wrap" gap="$2">
+          <StatusBadge tone={networkAvailable && serviceAvailable ? 'success' : 'stale'} label={networkAvailable && serviceAvailable ? 'Updates API available' : 'Updates API offline/degraded'} />
+          <StatusBadge tone={summary.pending > 0 ? 'pending' : 'stale'} label={`${summary.pending} pending actions`} />
+          <StatusBadge tone={summary.conflicts > 0 ? 'risk' : 'stale'} label={`${summary.conflicts} action conflicts`} />
+          <StatusBadge tone={summary.expired > 0 ? 'warning' : 'stale'} label={`${summary.expired} expired`} />
+        </XStack>
+
+        <YStack borderTopColor="$borderColor" borderTopWidth={1} gap="$2" pt="$3">
+          <Text color="$text" fontSize="$md" fontWeight="900">
+            Silenciar alertas proactivas de match · Silence proactive match alerts
+          </Text>
+          <Paragraph color="$textMuted" fontSize="$sm" lineHeight={20}>
+            Solo silencia las coincidencias proactivas de recursos dirigidas a ti. Los SOS, las alertas críticas y el feed de tu celda siguen llegando. · Only silences proactive resource matches aimed at you. SOS, critical alerts, and your cell feed still arrive.
+          </Paragraph>
+          <XStack items="center" gap="$2">
+            <StatusBadge tone={quietProactiveUpdates ? 'warning' : 'success'} label={quietProactiveUpdates ? 'Proactive match alerts: silenced · silenciadas' : 'Proactive match alerts: on · activas'} />
+            {quietPreferencePending ? <StatusBadge tone="pending" label="Saving… · Guardando…" /> : null}
+          </XStack>
+          {!canToggleQuietProactiveUpdates && !quietPreferencePending ? (
+            <Text color="$textMuted" fontSize="$xs" fontWeight="700">
+              Connect to sync to change this preference. · Conéctate para sincronizar y cambiar esta preferencia.
+            </Text>
+          ) : null}
+          <ActionButton
+            accessibilityLabel={quietProactiveUpdates ? 'Reactivar alertas proactivas de match · Re-enable proactive match alerts' : 'Silenciar alertas proactivas de match · Silence proactive match alerts'}
+            disabled={!canToggleQuietProactiveUpdates}
+            label={quietProactiveUpdates ? 'Reactivar alertas proactivas · Re-enable proactive alerts' : 'Silenciar alertas proactivas · Silence proactive alerts'}
+            onPress={onToggleQuietProactiveUpdates}
+            testID="toggle_quiet_proactive_updates_button"
+            tone={quietProactiveUpdates ? 'success' : 'warning'}
+          />
+        </YStack>
+
+        {updates.length === 0 ? (
+          <Text color="$textMuted" fontSize="$sm" fontWeight="700">
+            No operational updates stored locally for this incident and cell yet. Use Sync now when connected.
+          </Text>
+        ) : (
+          updates.map((update) => (
+            <OperationalUpdateRow key={update.updateId} onAction={onAction} update={update} />
+          ))
+        )}
+      </YStack>
+    </OperationalCard>
+  );
+});
+
+const OperationalUpdateRow = memo(function OperationalUpdateRow({
+  onAction,
+  update,
+}: {
+  onAction: (update: OperationalUpdateLocalView, actionType: Exclude<OperationalUpdateActionType, 'link'>) => void;
+  update: OperationalUpdateLocalView;
+}) {
+  const availableActions = new Set(update.actions.map((action) => action.type));
+  const reasonLabel = resolveOperationalUpdateReasonLabel(update.reasonCode);
+
+  return (
+    <YStack borderTopColor="$borderColor" borderTopWidth={1} gap="$2" pt="$3" testID={`operational_update_${update.updateId}`}>
+      <XStack items="center" justify="space-between" gap="$2">
+        <YStack grow={1} gap="$1">
+          <Text color="$text" fontSize="$md" fontWeight="900">
+            {update.title}
+          </Text>
+          <Text color="$textMuted" fontSize="$xs" fontWeight="700">
+            {formatCanonicalValue(update.type)} · {formatCanonicalValue(update.urgency)}
+          </Text>
+        </YStack>
+        <StatusBadge tone={resolveUpdateUrgencyTone(update.urgency)} label={formatCanonicalValue(update.urgency)} />
+      </XStack>
+
+      {reasonLabel ? (
+        <Text color="$primary" fontSize="$xs" fontWeight="800" testID={`operational_update_reason_${update.updateId}`}>
+          {reasonLabel}
+        </Text>
+      ) : null}
+
+      <Paragraph color="$textMuted" fontSize="$sm" lineHeight={20}>
+        {update.summary}
+      </Paragraph>
+
+      <XStack flexWrap="wrap" gap="$2">
+        <StatusBadge tone={update.readState === 'unread' ? 'warning' : 'success'} label={formatCanonicalValue(update.readState)} />
+        <StatusBadge tone={update.lifecycleState === 'expired' ? 'stale' : 'info'} label={formatCanonicalValue(update.lifecycleState)} />
+        <StatusBadge tone={update.ackState === 'conflict' ? 'risk' : update.ackState === 'pending' ? 'pending' : update.ackState === 'confirmed' ? 'success' : 'stale'} label={`ACK: ${formatCanonicalValue(update.ackState)}`} />
+        <StatusBadge tone={update.actionState === 'conflict' ? 'risk' : update.actionState === 'pending' ? 'pending' : update.actionState === 'confirmed' ? 'success' : 'stale'} label={`Action: ${formatCanonicalValue(update.actionState)}`} />
+      </XStack>
+
+      {update.lastActionError ? (
+        <Text color="$risk" fontSize="$xs" fontWeight="800">
+          Last action error: {update.lastActionError}
+        </Text>
+      ) : null}
+
+      <XStack flexWrap="wrap" gap="$2">
+        <ActionButton disabled={!availableActions.has('read') || update.lifecycleState === 'expired'} label="Mark read" onPress={() => onAction(update, 'read')} testID={`update_read_${update.updateId}`} tone="info" />
+        <ActionButton disabled={!availableActions.has('open') || update.lifecycleState === 'expired'} label="Open" onPress={() => onAction(update, 'open')} testID={`update_open_${update.updateId}`} tone="primary" />
+        <ActionButton disabled={!availableActions.has('ack') || update.ackState === 'confirmed' || update.lifecycleState === 'expired'} label="ACK" onPress={() => onAction(update, 'ack')} testID={`update_ack_${update.updateId}`} tone="success" />
+        <ActionButton disabled={!availableActions.has('corroborate') || update.lifecycleState === 'expired'} label="Corroborate" onPress={() => onAction(update, 'corroborate')} testID={`update_corroborate_${update.updateId}`} tone="success" />
+        <ActionButton disabled={!availableActions.has('dispute') || update.lifecycleState === 'expired'} label="Dispute" onPress={() => onAction(update, 'dispute')} testID={`update_dispute_${update.updateId}`} tone="risk" />
+      </XStack>
+    </YStack>
+  );
+});
+
 function LiveMapLibreSurface({ centers, mapState }: { centers: WorkCenterView[]; mapState: MapRenderState }) {
   return (
     <OperationalCard testID="maplibre-operational-map">
@@ -828,6 +1065,31 @@ function resolveMapCoverageTone(coverage: MapRenderState['coverage']) {
   }
 
   return 'info';
+}
+
+// Honest, non-authoritative motive shown so the volunteer understands WHY a backend-prioritized
+// update reached them. The backend owns targeting/priority; the client only materializes and
+// renders this label. Never implies rescue, reservation, or authority.
+const operationalUpdateReasonLabels: Record<OperationalUpdateReasonCode, string> = {
+  'resource.match.offer_for_open_need': 'Coincide con un recurso que pediste',
+  'resource.match.need_for_open_offer': 'Coincide con un recurso que ofreciste',
+  'resource.report.cell_broadcast': 'Novedad de tu celda',
+};
+
+function resolveOperationalUpdateReasonLabel(reasonCode: OperationalUpdateReasonCode | undefined): string | null {
+  return reasonCode ? operationalUpdateReasonLabels[reasonCode] ?? null : null;
+}
+
+function resolveUpdateUrgencyTone(urgency: OperationalUpdateLocalView['urgency']) {
+  if (urgency === 'critical') {
+    return 'sos';
+  }
+
+  if (urgency === 'high') {
+    return 'warning';
+  }
+
+  return urgency === 'medium' ? 'info' : 'stale';
 }
 
 function SosPanel({
@@ -1076,6 +1338,62 @@ function createDefaultWorkCenterPayload(overrides: Partial<WorkCenterPayload> = 
     reportedAt: DEFAULT_TIMESTAMP,
     ...overrides,
   });
+}
+
+function createUnavailableOperationalUpdatesService(database: LocalOperationDatabase): OperationalUpdatesService {
+  return {
+    async syncUpdates(input) {
+      const updates = await database.views.operationalUpdates.findByIncident(input.incidentId);
+      const scopedUpdates = updates.filter((update) => update.cellId === input.cellId);
+
+      return {
+        pulled: 0,
+        unread: scopedUpdates.filter((update) => update.readState === 'unread' && update.lifecycleState !== 'expired').length,
+        expired: scopedUpdates.filter((update) => update.lifecycleState === 'expired').length,
+        queuedActions: 0,
+        failedActions: 0,
+        cursor: input.cursor ?? null,
+        hasMore: false,
+      };
+    },
+    async performAction(input) {
+      const now = new Date().toISOString();
+      const localAction = {
+        localActionId: `${input.incidentId}:${input.updateId}:${input.actionType}:${now}`,
+        updateId: input.updateId,
+        incidentId: input.incidentId,
+        cellId: input.cellId,
+        actionType: input.actionType,
+        request: {
+          channel: 'mobile' as const,
+          externalId: DEFAULT_ACTOR_KEY_ID,
+          idempotencyKey: `${input.incidentId}:${input.updateId}:${input.actionType}:${now}`,
+          occurredAt: now,
+          ...(input.actionType === 'dispute' ? { reason: input.reason ?? 'context_mismatch' as const } : {}),
+        },
+        syncState: 'pending' as const,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const update = await database.views.operationalUpdates.findById(input.updateId);
+
+      await database.operationalUpdateActions.upsert(localAction);
+      if (update) {
+        await database.views.operationalUpdates.upsert({
+          ...update,
+          readState: input.actionType === 'read' || input.actionType === 'open' || input.actionType === 'ack' ? 'read' : update.readState,
+          actionState: 'pending',
+          ackState: input.actionType === 'ack' ? 'pending' : update.ackState,
+          pendingActionType: input.actionType,
+          lastActionType: input.actionType,
+          lastActionError: undefined,
+          localUpdatedAt: now,
+        });
+      }
+
+      return localAction;
+    },
+  };
 }
 
 function createDefaultResourceReportPayload(reportKind: ResourceReportIntent): ResourceReportPayload {
