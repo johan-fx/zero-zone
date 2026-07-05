@@ -38,17 +38,19 @@ Usar este reparto como contrato de trabajo para todas las slices. La clave es qu
 | 8 | Observabilidad + seguridad | 🟢 | 🟢 | 🟢 | Hecho |
 | 9 | Localización multi-idioma | 🟢 | 🟢 | 🟢 | Hecho |
 | 10 | Telegram intent routing con Workers AI | 🟢 | 🟢 | 🟢 | Hecho |
-| 11 | Telegram intent extraction v2 + prefill seguro | 🟡 | 🟡 | 🟡 | En progreso |
+| 11 | Telegram intent extraction v2 + prefill seguro | 🟢 | 🟢 | 🟢 | Hecho |
 | 12 | Telegram resource need matching + recomendaciones | 🟢 | 🟢 | ⬜ | Implementado |
-| 13 | Telegram channel modularization | 🟢 | 🟢 | ⬜ | Implementado |
-| 14 | Telegram intent facts v3 contract + router context | 🟡 | 🟡 | 🟡 | Planificado |
-| 15 | Telegram `/workcenter` natural-language prefill | 🟡 | 🟡 | ⬜ | Planificado |
+| 13 | Telegram channel modularization | 🟢 | 🟢 | N/A | Implementado |
+| 14 | Telegram intent facts v3 contract + router context | 🟢 | 🟢 | 🟢 | Hecho |
+| 15 | Telegram `/workcenter` natural-language prefill | 🟢 | 🟢 | 🟢 | Hecho |
 | 16 | Telegram `/sos` natural-language prefill | 🟢 | 🟢 | 🟢 | Hecho |
 | 17 | Telegram `/reunificacion` natural-language assistant | 🟢 | 🟢 | 🟢 | Hecho |
 | 18 | Telegram `/dispatch` natural-language assistant | 🟢 | 🟢 | 🟢 | Hecho |
-| 19 | Telegram `/start` + incident join natural-language onboarding | 🟡 | 🟡 | ⬜ | Planificado |
+| 19 | Telegram `/start` + incident join natural-language onboarding | 🟢 | 🟢 | N/A | Hecho |
 
-Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloqueado.
+Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloqueado · N/A No aplica.
+
+`N/A` significa que el canal/equipo no aplica a esa slice; no debe leerse como trabajo pendiente ni como implementación mobile.
 
 ## Slice 0 - Monorepo foundation
 
@@ -605,12 +607,12 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 
 | Equipo | Checklist |
 |---|---|
-| A | 🟡 Definir facts de recurso: `resourceDirection`, `resourceType`, `resourceLabel`, cantidad/unidad opcional, ubicación opcional y pregunta implícita opcional. |
-| A | 🟡 Añadir tests de contrato para facts válidos e inválidos. |
-| B | 🟡 Mejorar prompt con ejemplos: “tengo agua potable, dónde la necesitan?”, “puedo llevar comida”, “me sobra medicina”, “necesitamos mantas”. |
-| B | 🟡 Añadir tests del clasificador con respuestas mockeadas y parsing de facts. |
-| C | 🟡 Pasar facts aceptados al inicio del flujo resource como prefill seguro. |
-| C | 🟡 Responder en español con confirmación contextual cuando el intent venga de lenguaje natural. |
+| A | 🟢 Definir facts de recurso: `resourceDirection`, `resourceType`, `resourceLabel`, cantidad/unidad opcional, ubicación opcional y pregunta implícita opcional. |
+| A | 🟢 Añadir tests de contrato para facts válidos e inválidos. |
+| B | 🟢 Mejorar prompt con ejemplos: “tengo agua potable, dónde la necesitan?”, “puedo llevar comida”, “me sobra medicina”, “necesitamos mantas”. |
+| B | 🟢 Añadir tests del clasificador con respuestas mockeadas y parsing de facts. |
+| C | 🟢 Pasar facts aceptados al inicio del flujo resource como contexto/preface seguro. |
+| C | 🟢 Responder en español con confirmación contextual cuando el intent venga de lenguaje natural. |
 | Todos | 🟢 Fresh review independiente antes de cerrar. |
 
 **Definition of Done**
@@ -637,6 +639,21 @@ Leyenda sugerida: ⬜ No iniciado · 🟡 En progreso · 🟢 Hecho · 🔴 Bloq
 - `git diff --check`
 - Fresh review independiente sin defectos confirmados
 
+**Cierre Slice 11**
+
+- Los facts de recurso están tipados en contratos y cubren dirección, tipo, etiqueta, cantidad aproximada, ubicación textual y pregunta implícita.
+- El clasificador conserva facts de recurso para frases como “tengo agua potable, dónde la necesitan?” y mantiene fallback seguro para baja confianza, facts inválidos o fallo de Workers AI.
+- El router API valida `extractedFacts` antes de construir `TelegramFlowContext`; no concatena texto libre ni registra PII.
+- El flujo `/resource` usa los facts como contexto/preface seguro antes del flujo; no crea reportes ni carga campos persistidos sin confirmación.
+
+**Evidencia ejecutada en reconciliación documental**
+
+- `pnpm --filter @zona-cero/contracts test:strict` — ✅ 27 tests.
+- `pnpm --filter @zona-cero/api exec vitest run src/telegram-intent-classifier.test.ts src/index.test.ts` — ✅ 115 tests.
+- `pnpm --filter @zona-cero/telegram-channel test:strict` — ✅ 68 tests.
+- `git diff --check` — ✅.
+- Fresh review independiente — ✅ sin CRITICAL; se ajustó la redacción de `prefill` a contexto/preface para no sobreprometer.
+- No se re-ejecutaron `typecheck` ni `build` en esta reconciliación; quedan cubiertos como gates esperados si se prepara release/PR.
 
 ## Slice 12 - Telegram resource need matching + recomendaciones
 
