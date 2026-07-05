@@ -53,6 +53,7 @@ type OperationalUpdate = {
   source: { kind: 'sos_alert' | 'resource_report' | 'trust_signal' | 'dispute' | 'system'; entityId?: string };
   subject?: TrustSubject;
   actions: { type: OperationalUpdateActionType; label: string; messageCode: string }[];
+  reasonCode?: 'resource.match.offer_for_open_need' | 'resource.match.need_for_open_offer' | 'resource.report.cell_broadcast';
   metadata?: Record<string, unknown>;
 };
 
@@ -201,6 +202,36 @@ test.describe('Slice 21 proactive social updates E2E', () => {
     expect(result.sentSteps[6]?.message).toMatch(/no concede permisos sensibles|no sustituye rescate|no asigna respondedores/i);
     expect(JSON.stringify(result)).not.toMatch(/TELEGRAM_E2E_API_HASH|SESSION|secret/i);
   });
+
+  test('Slice 21.1: a resource offer is directed to the matching demander and not to unrelated members', async ({ request }) => {
+    const unique = `${Date.now()}-${test.info().workerIndex}`;
+    const demander = `slice21_1-demander-${unique}`;
+    const supplier = `slice21_1-supplier-${unique}`;
+    const outsider = `slice21_1-outsider-${unique}`;
+    // Categoría compartida y única por corrida: garantiza el match need<->surplus sin ruido.
+    const category = `water-${unique}`;
+
+    for (const externalId of [demander, supplier, outsider]) {
+      const joined = await joinIncident(request, { channel: 'telegram', externalId, role: 'volunteer', displayName: `S21.1 ${externalId}` });
+      expect(joined.membership.permissions).toMatchObject(noSensitiveManagementPermissions());
+    }
+
+    // El demandante pide primero (aún sin oferta -> no hay match, cae a broadcast de celda).
+    await createResourceReport(request, demander, category, 'needed');
+    // El proveedor ofrece lo mismo -> debe emitir un resource_offer DIRIGIDO al demandante.
+    await createResourceReport(request, supplier, category, 'surplus');
+
+    const demanderUpdates = await pullUpdatesUntil(request, demander, (update) => update.reasonCode === 'resource.match.offer_for_open_need');
+    const matchUpdate = demanderUpdates.find((update) => update.type === 'resource_offer' && update.reasonCode === 'resource.match.offer_for_open_need');
+    if (!matchUpdate) throw new Error('El demandante debería recibir la update de oferta dirigida con reasonCode de match.');
+
+    // Un miembro no relacionado (outsider) NO debe recibir la update dirigida.
+    const outsiderUpdates = await pullUpdatesUntil(request, outsider, () => false);
+    expect(outsiderUpdates.some((update) => update.updateId === matchUpdate.updateId)).toBe(false);
+
+    // Privacidad: el targeting no debe filtrar identidades de reportantes en el payload.
+    expect(JSON.stringify(demanderUpdates)).not.toMatch(new RegExp(`${demander}|${supplier}`, 'i'));
+  });
 });
 
 type JoinIncidentInput = {
@@ -226,16 +257,25 @@ async function joinIncident(request: APIRequestContext, input: JoinIncidentInput
 }
 
 async function createResourceNeed(request: APIRequestContext, externalId: string, marker: string): Promise<void> {
+  await createResourceReport(request, externalId, marker, 'needed');
+}
+
+async function createResourceReport(
+  request: APIRequestContext,
+  externalId: string,
+  category: string,
+  reportKind: 'needed' | 'surplus',
+): Promise<void> {
   const response = await request.post(`${apiBaseUrl}/incidents/${incidentId}/resource-reports`, {
     data: {
       channel: 'telegram',
       externalId,
       payload: {
-        category: marker,
-        quantityApprox: `20 sealed bottles for ${marker}`,
+        category,
+        quantityApprox: `20 sealed bottles for ${category}`,
         urgency: 'high',
         constraints: ['sealed'],
-        reportKind: 'needed',
+        reportKind,
       },
     },
   });

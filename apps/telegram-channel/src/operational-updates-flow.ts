@@ -208,9 +208,11 @@ function formatOperationalUpdateList(updates: OperationalUpdate[], incidentId: s
     const confidence = readMetadataString(update.metadata, 'confidence') ?? 'unknown';
     const freshness = readMetadataString(update.metadata, 'freshness') ?? readMetadataString(update.metadata, 'status') ?? 'unknown';
     const sourceRef = update.source.entityId ? ` Source ref: ${update.source.entityId}.` : '';
+    const whyLine = formatReasonCode(update.reasonCode);
     return [
       `${index + 1}. ${formatUrgency(update.urgency)} ${update.title}`,
       `Reason: ${update.summary}`,
+      ...(whyLine ? [`Why you: ${whyLine}`] : []),
       `Severity: ${update.urgency}. Confidence: ${confidence}. Freshness: ${freshness}.${sourceRef}`,
       `Actions: /ack ${update.incidentId} ${update.updateId} · /open ${update.incidentId} ${update.updateId} · /corroborate ${update.incidentId} ${update.updateId} 0.7 · /dispute ${update.incidentId} ${update.updateId} context_mismatch`,
     ].join('\n');
@@ -244,6 +246,23 @@ function formatUrgency(urgency: OperationalUpdate['urgency']): string {
   if (urgency === 'critical') return '🚨 CRITICAL';
   if (urgency === 'high') return '⚠️ HIGH';
   return urgency.toUpperCase();
+}
+
+// Honest, non-authoritative "why you got this" line for a targeted operational update.
+// A possible match is never a reservation, assignment, or authority to move. An absent
+// reasonCode simply hides this line; it never breaks the list.
+function formatReasonCode(reasonCode: OperationalUpdate['reasonCode']): string | null {
+  if (!reasonCode) return null;
+  if (reasonCode === 'resource.match.offer_for_open_need') {
+    return 'it matches a resource you requested. Possible match, not a reservation; coordinate before you move.';
+  }
+  if (reasonCode === 'resource.match.need_for_open_offer') {
+    return 'it matches a resource you offered. Possible match, not an official assignment.';
+  }
+  if (reasonCode === 'resource.report.cell_broadcast') {
+    return 'general update for your cell.';
+  }
+  return null;
 }
 
 function parseDisputeReason(value: string | undefined): DisputeReason {

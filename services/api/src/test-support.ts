@@ -10,6 +10,7 @@ import channelIdentityPreferredLocaleMigration from '../migrations/0009_channel_
 import incidentGeographyMigration from '../migrations/0010_incident_geography.sql?raw';
 import operationalUpdatesMigration from '../migrations/0011_operational_updates.sql?raw';
 import privateWebLinksOperationalScopeMigration from '../migrations/0012_private_web_links_operational_scope.sql?raw';
+import resourceReportReporterTargetHashMigration from '../migrations/0013_resource_report_reporter_target_hash.sql?raw';
 import incidentDemoSeed from '../seeds/incident-zc-demo.sql?raw';
 
 export async function resetApiTestDatabase(db: D1Database): Promise<void> {
@@ -25,6 +26,7 @@ export async function resetApiTestDatabase(db: D1Database): Promise<void> {
   await execSqlStatements(db, incidentGeographyMigration);
   await execSqlStatements(db, operationalUpdatesMigration);
   await execSqlStatements(db, privateWebLinksOperationalScopeMigration);
+  await execSqlStatements(db, resourceReportReporterTargetHashMigration);
   await execSqlStatements(
     db,
     `
@@ -69,7 +71,7 @@ async function execSqlStatements(db: D1Database, sql: string): Promise<void> {
       await db.exec(normalized);
     } catch (error) {
       if (error instanceof Error && error.message.includes('duplicate column name')) {
-        const duplicateSafeColumns = ['preferred_locale', 'country_code', 'country_name', 'latitude', 'longitude'];
+        const duplicateSafeColumns = ['preferred_locale', 'country_code', 'country_name', 'latitude', 'longitude', 'reporter_target_hash'];
         if (duplicateSafeColumns.some((column) => normalized.includes(`ADD COLUMN ${column} `))) {
           continue;
         }

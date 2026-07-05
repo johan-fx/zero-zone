@@ -130,6 +130,41 @@ describe("OperationalUpdatesPanel", () => {
     );
     expect(screen.queryByText("web-user-1001")).not.toBeInTheDocument();
   });
+
+  it("shows an honest, non-authoritative reason when the update carries a reasonCode", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/incidents/incident-zc-demo/cells/cell-zc-demo/updates?limit=10&channel=web-ui&externalId=web-user-1001")) {
+        return jsonResponse({
+          updates: [{ ...updateFixture, reasonCode: "resource.match.offer_for_open_need" }],
+          cursor: null,
+          hasMore: false,
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    render(<OperationalUpdatesPanel incidentId="incident-zc-demo" cellId="cell-zc-demo" externalId="web-user-1001" />);
+
+    expect(await screen.findByText("Why you're seeing this")).toBeInTheDocument();
+    expect(screen.getByText(/it matches a resource you requested/i)).toBeInTheDocument();
+    expect(screen.getByText(/Possible match, not a reservation/i)).toBeInTheDocument();
+  });
+
+  it("omits the reason row when the update has no reasonCode", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/incidents/incident-zc-demo/cells/cell-zc-demo/updates?limit=10&channel=web-ui&externalId=web-user-1001")) {
+        return jsonResponse({ updates: [updateFixture], cursor: null, hasMore: false });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    render(<OperationalUpdatesPanel incidentId="incident-zc-demo" cellId="cell-zc-demo" externalId="web-user-1001" />);
+
+    await screen.findByRole("heading", { name: "Critical SOS nearby" });
+    expect(screen.queryByText("Why you're seeing this")).not.toBeInTheDocument();
+  });
 });
 
 function jsonResponse(body: unknown): Response {

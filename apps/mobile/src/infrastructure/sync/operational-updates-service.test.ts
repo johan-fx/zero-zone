@@ -13,6 +13,7 @@ const updateFixture: OperationalUpdate = {
   title: 'Water needed',
   summary: 'North point needs sealed water.',
   source: { kind: 'resource_report', entityId: 'resource-1' },
+  reasonCode: 'resource.match.offer_for_open_need',
   subject: { entityType: 'resource_report', entityId: 'resource-1', incidentId: 'incident-1' },
   actions: [
     { type: 'read', label: 'Mark as read' },
@@ -46,9 +47,25 @@ describe('mobile operational updates service', () => {
 
     expect(result).toMatchObject({ pulled: 1, unread: 1, expired: 0, cursor: 'cursor-next' });
     expect(await database.views.operationalUpdates.findByIncident('incident-1')).toEqual([
-      expect.objectContaining({ updateId: 'update-1', readState: 'unread', lifecycleState: 'active', ackState: 'none', actionState: 'idle' }),
+      expect.objectContaining({ updateId: 'update-1', reasonCode: 'resource.match.offer_for_open_need', readState: 'unread', lifecycleState: 'active', ackState: 'none', actionState: 'idle' }),
     ]);
     expect(await database.syncOps.findByIncident('incident-1')).toEqual([]);
+  });
+
+  it('materializes an absent reasonCode as undefined without breaking the local view', async () => {
+    const database = createInMemoryLocalOperationDatabase();
+    const { reasonCode: _reasonCode, ...updateWithoutReason } = updateFixture;
+    const client: OperationalUpdatesClient = {
+      list: jest.fn().mockResolvedValue({ updates: [updateWithoutReason], cursor: null, hasMore: false }),
+      sendAction: jest.fn(),
+    };
+    const service = createOperationalUpdatesService({ database, client, actorExternalId: 'actor-key-1', clock: () => '2026-06-29T09:02:00.000Z' });
+
+    await service.syncUpdates({ incidentId: 'incident-1', cellId: 'cell-a', limit: 20 });
+
+    const stored = await database.views.operationalUpdates.findById('update-1');
+    expect(stored).toEqual(expect.objectContaining({ updateId: 'update-1', readState: 'unread' }));
+    expect(stored?.reasonCode).toBeUndefined();
   });
 
   it('queues ACK locally when offline and confirms it when the action endpoint accepts it', async () => {

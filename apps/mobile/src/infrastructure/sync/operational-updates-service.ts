@@ -244,6 +244,7 @@ async function upsertOperationalUpdateView(database: LocalOperationDatabase, upd
     incidentId: update.incidentId,
     cellId: update.cellId,
     type: update.type,
+    reasonCode: existing?.reasonCode ?? update.reasonCode,
     urgency: update.urgency,
     title: update.title,
     summary: update.summary,

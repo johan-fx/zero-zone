@@ -158,6 +158,14 @@ export function OperationalUpdatesPanel({
                 <dd>{formatFreshness(update)}</dd>
                 <dt>Authority</dt>
                 <dd>Use for awareness and coordination only; it does not unlock restricted incident data.</dd>
+                {describeReasonCode(update.reasonCode) ? (
+                  <>
+                    <dt>Why you're seeing this</dt>
+                    <dd>
+                      <span className="reason-code-badge">{describeReasonCode(update.reasonCode)}</span>
+                    </dd>
+                  </>
+                ) : null}
               </dl>
               <div className="action-row">
                 {update.actions.map((action) => (
@@ -194,6 +202,23 @@ function urgencyTone(urgency: OperationalUpdate["urgency"]) {
 
 function describeType(type: OperationalUpdate["type"]): string {
   return type.replaceAll("_", " ");
+}
+
+// Honest, non-authoritative explanation of why this targeted update reached the operator.
+// A possible match is never a reservation, assignment, or authority. A missing reasonCode
+// hides the row and never breaks rendering.
+function describeReasonCode(reasonCode: OperationalUpdate["reasonCode"]): string | null {
+  if (!reasonCode) return null;
+  if (reasonCode === "resource.match.offer_for_open_need") {
+    return "You're seeing this because it matches a resource you requested. Possible match, not a reservation; coordinate before you move.";
+  }
+  if (reasonCode === "resource.match.need_for_open_offer") {
+    return "You're seeing this because it matches a resource you offered. Possible match, not an official assignment.";
+  }
+  if (reasonCode === "resource.report.cell_broadcast") {
+    return "General update for your cell.";
+  }
+  return null;
 }
 
 function formatFreshness(update: OperationalUpdate): string {

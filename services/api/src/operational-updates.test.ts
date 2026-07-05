@@ -292,4 +292,60 @@ describe('operational updates API', () => {
       expect(response.status).toBe(403);
     }
   });
+
+  it('directs a resource-offer update to the matching demander and not to unrelated members (Slice 21.1)', async () => {
+    const demander = 'telegram-demander-water';
+    const supplier = 'telegram-supplier-water';
+    const outsider = 'telegram-outsider-water';
+
+    for (const externalId of [demander, supplier, outsider]) {
+      await request('/incidents/incident-zc-demo/join', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...telegramIncidentJoinRequestFixture, externalId, role: 'volunteer' }),
+      });
+    }
+
+    // Demander asks for water first (no surplus yet -> falls back to cell broadcast).
+    await request('/incidents/incident-zc-demo/resource-reports', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        channel: 'telegram',
+        externalId: demander,
+        payload: { category: 'water', quantityApprox: '20 bottles', urgency: 'high', constraints: ['sealed'], reportKind: 'needed' },
+      }),
+    });
+
+    // Supplier offers matching water -> should emit a targeted resource_offer update to the demander.
+    const offer = await request('/incidents/incident-zc-demo/resource-reports', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        channel: 'telegram',
+        externalId: supplier,
+        payload: { category: 'water', quantityApprox: '30 bottles', urgency: 'medium', constraints: ['sealed'], reportKind: 'surplus' },
+      }),
+    });
+    expect(offer.status).toBe(200);
+
+    const pull = async (externalId: string) => OperationalUpdatePullResponseSchema.parse(
+      await (await request(`/incidents/incident-zc-demo/cells/connected-telegram/updates?limit=20&channel=telegram&externalId=${externalId}`)).json(),
+    );
+
+    const demanderUpdates = await pull(demander);
+    const matchUpdate = demanderUpdates.updates.find(
+      (update) => update.type === 'resource_offer' && update.reasonCode === 'resource.match.offer_for_open_need',
+    );
+    expect(matchUpdate, 'demander should receive the targeted resource-offer match update').toBeDefined();
+
+    const outsiderUpdates = await pull(outsider);
+    expect(
+      outsiderUpdates.updates.some((update) => update.updateId === matchUpdate?.updateId),
+      'unrelated member must not receive the targeted match update',
+    ).toBe(false);
+
+    // Privacy: targeting must not leak reporter identities into the payload.
+    expect(JSON.stringify(demanderUpdates)).not.toMatch(/telegram-demander-water|telegram-supplier-water/i);
+  });
 });

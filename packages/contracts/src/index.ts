@@ -561,6 +561,17 @@ export const operationalUpdateDeliveryStatuses = ['pending', 'delivered', 'read'
 export const OperationalUpdateDeliveryStatusSchema = z.enum(operationalUpdateDeliveryStatuses);
 export type OperationalUpdateDeliveryStatus = z.infer<typeof OperationalUpdateDeliveryStatusSchema>;
 
+// Slice 21.1 — explica POR QUÉ una operational update llega a un actor concreto.
+// El targeting real (audiencia dirigida) lo emite el backend; este código viaja en el
+// contrato para que Telegram/Web/Mobile puedan renderizar un motivo honesto y no-autoritativo.
+export const operationalUpdateReasonCodes = [
+  'resource.match.offer_for_open_need',
+  'resource.match.need_for_open_offer',
+  'resource.report.cell_broadcast',
+] as const;
+export const OperationalUpdateReasonCodeSchema = z.enum(operationalUpdateReasonCodes);
+export type OperationalUpdateReasonCode = z.infer<typeof OperationalUpdateReasonCodeSchema>;
+
 export const OperationalUpdateActionSchema = z.object({
   type: OperationalUpdateActionTypeSchema,
   label: z.string().min(1).max(80),
@@ -597,6 +608,7 @@ export const OperationalUpdateSchema = z.object({
   subject: TrustSubjectSchema.optional(),
   actions: z.array(OperationalUpdateActionSchema).min(1),
   delivery: OperationalUpdateDeliverySchema.optional(),
+  reasonCode: OperationalUpdateReasonCodeSchema.optional(),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
   expiresAt: z.string().min(1).optional(),

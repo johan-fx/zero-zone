@@ -42,6 +42,7 @@ import {
   OperationalUpdateLinkRequestSchema,
   OperationalUpdateLinkResponseSchema,
   OperationalUpdatePullResponseSchema,
+  OperationalUpdateReasonCodeSchema,
   OperationalEventSchema,
   PendingSignedOperationSchema,
   PrivateWebLinkConsumeRequestSchema,
@@ -73,6 +74,7 @@ import {
   type OperationalUpdateDisputeRequest,
   type OperationalUpdateActionType,
   type OperationalUpdateLinkResponse,
+  type OperationalUpdateReasonCode,
   type OperationalUpdateType,
   type OperationalUpdateUrgency,
   type PermissionSnapshot,
@@ -1313,6 +1315,7 @@ type OperationalUpdateSeed = {
   body?: string;
   source: OperationalUpdate['source'];
   subject?: TrustSubject;
+  reasonCode?: OperationalUpdateReasonCode;
   createdAt: string;
   updatedAt: string;
   metadata?: Record<string, string | number | boolean | null>;
@@ -3425,8 +3428,16 @@ function rowToOperationalUpdate(row: OperationalUpdateRow): OperationalUpdate {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     ...(row.expiresAt ? { expiresAt: row.expiresAt } : {}),
-    metadata: parseJsonObject(row.metadataJson),
+    ...liftReasonCode(parseJsonObject(row.metadataJson)),
   };
+}
+
+// El reasonCode se persiste dentro de metadata_json (evita una columna nueva) pero se
+// expone como campo de primer nivel del contrato; aquí se separa de la metadata pública.
+function liftReasonCode(metadata: Record<string, unknown>): { reasonCode?: OperationalUpdateReasonCode; metadata: Record<string, unknown> } {
+  const { reasonCode, ...rest } = metadata;
+  const parsed = OperationalUpdateReasonCodeSchema.safeParse(reasonCode);
+  return parsed.success ? { reasonCode: parsed.data, metadata: rest } : { metadata: rest };
 }
 
 function defaultOperationalUpdateActions(type: OperationalUpdateType): OperationalUpdate['actions'] {
@@ -3460,7 +3471,14 @@ async function publicOperationalRef(prefix: string, value: string): Promise<stri
   return `${slug(prefix)}_${digest.slice(0, 20)}`;
 }
 
-async function upsertOperationalUpdate(db: D1Database, input: OperationalUpdateSeed): Promise<void> {
+// Slice 21.1 — cuando `targeting` trae actores concretos, la update se entrega SOLO a esos
+// actores (audiencia + delivery con `target_hash` por actor, sin filas NULL de broadcast).
+// Sin `targeting`, se mantiene el broadcast por celda existente (SOS, fallback sin match).
+type OperationalUpdateTargeting = { targets: OperationalUpdateTarget[] };
+type OperationalUpdateTarget = { channel: Channel; targetHash: string };
+
+async function upsertOperationalUpdate(db: D1Database, input: OperationalUpdateSeed, targeting?: OperationalUpdateTargeting): Promise<void> {
+  const metadata = { ...(input.metadata ?? {}), ...(input.reasonCode ? { reasonCode: input.reasonCode } : {}) };
   await db.prepare(
     `INSERT INTO operational_updates (
        update_id, incident_id, cell_id, update_type, urgency, title, summary, body, source_kind, source_entity_id,
@@ -3487,10 +3505,26 @@ async function upsertOperationalUpdate(db: D1Database, input: OperationalUpdateS
     input.subject?.entityType ?? null,
     input.subject?.entityId ?? null,
     input.subject?.displayRef ?? null,
-    JSON.stringify(input.metadata ?? {}),
+    JSON.stringify(metadata),
     input.createdAt,
     input.updatedAt,
   ).run();
+
+  const directedTargets = dedupeTargets(targeting?.targets ?? []);
+  if (directedTargets.length > 0) {
+    for (const target of directedTargets) {
+      const targetSlug = target.targetHash.slice(0, 16);
+      await db.prepare(
+        `INSERT OR IGNORE INTO operational_update_audiences (audience_id, update_id, incident_id, cell_id, channel, role)
+         VALUES (?, ?, ?, ?, ?, NULL)`,
+      ).bind(`aud_${slug(input.updateId)}_${target.channel}_${targetSlug}`, input.updateId, input.incidentId, input.cellId, target.channel).run();
+      await db.prepare(
+        `INSERT OR IGNORE INTO operational_update_deliveries (delivery_id, update_id, incident_id, channel, status, target_hash, attempt_count)
+         VALUES (?, ?, ?, ?, ?, ?, 0)`,
+      ).bind(`del_${slug(input.updateId)}_${target.channel}_${targetSlug}`, input.updateId, input.incidentId, target.channel, 'pending', target.targetHash).run();
+    }
+    return;
+  }
 
   for (const channel of channels) {
     await db.prepare(
@@ -3502,6 +3536,19 @@ async function upsertOperationalUpdate(db: D1Database, input: OperationalUpdateS
        VALUES (?, ?, ?, ?, ?, NULL, 0)`,
     ).bind(`del_${slug(input.updateId)}_${channel}`, input.updateId, input.incidentId, channel, 'pending').run();
   }
+}
+
+function dedupeTargets(targets: OperationalUpdateTarget[]): OperationalUpdateTarget[] {
+  const seen = new Set<string>();
+  const unique: OperationalUpdateTarget[] = [];
+  for (const target of targets) {
+    const key = `${target.channel}:${target.targetHash}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(target);
+    }
+  }
+  return unique;
 }
 
 async function recordOperationalUpdateAction(
@@ -3939,7 +3986,8 @@ async function createConnectedResourceReport(
   const resourceReportId = `rr_${slug(incident.incidentId)}_${slug(request.channel)}_${slug(request.externalId)}_${slug(request.payload.reportKind)}_${slug(request.payload.category)}`;
   const auditEventId = `audit_resource_report_created_${slug(incident.incidentId)}_${resourceReportId}`;
   const nowIso = new Date().toISOString();
-  await insertResourceReport(db, resourceReportId, incident.incidentId, `connected-${request.channel}`, request.payload, request.channel, null, null, nowIso);
+  const reporterTargetHash = await hashString(`${request.channel}:${request.externalId}`);
+  await insertResourceReport(db, resourceReportId, incident.incidentId, `connected-${request.channel}`, request.payload, request.channel, null, null, nowIso, reporterTargetHash);
   await db
     .prepare(
       `INSERT OR IGNORE INTO audit_events (audit_event_id, incident_id, channel_identity_id, incident_membership_id, event_type, payload_json)
@@ -3990,13 +4038,14 @@ async function insertResourceReport(
   sourceOperationId: string | null,
   actorKeyId: string | null,
   timestamp: string,
+  reporterTargetHash: string | null = null,
 ): Promise<void> {
   const state = deriveResourceReportState({ updatedAt: timestamp, reportKind: payload.reportKind, urgency: payload.urgency, constraints: payload.constraints });
   const insert = await db.prepare(
     `INSERT OR IGNORE INTO resource_reports (
        resource_report_id, incident_id, cell_id, work_center_id, category, quantity_approx, urgency, constraints_json,
-       report_kind, freshness, confidence, risk, source_channel, source_operation_id, actor_key_id, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       report_kind, freshness, confidence, risk, source_channel, source_operation_id, actor_key_id, reporter_target_hash, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(
     resourceReportId,
     incidentId,
@@ -4013,6 +4062,7 @@ async function insertResourceReport(
     sourceChannel,
     sourceOperationId,
     actorKeyId,
+    reporterTargetHash,
     timestamp,
     timestamp,
   ).run();
@@ -4020,21 +4070,78 @@ async function insertResourceReport(
   if (insert.meta.changes > 0) {
     const kind = payload.reportKind === 'needed' ? 'resource_need' : 'resource_offer';
     const publicResourceRef = await publicOperationalRef('resource_report', resourceReportId);
-    await upsertOperationalUpdate(db, {
-      updateId: `upd_${publicResourceRef}`,
-      incidentId,
-      cellId,
-      type: kind,
-      urgency: payload.urgency,
-      title: payload.reportKind === 'needed' ? 'Resource need reported' : 'Resource offer reported',
-      summary: `${payload.reportKind === 'needed' ? 'Need' : 'Offer'} reported for ${payload.category}.`,
-      source: { kind: 'resource_report', entityId: publicResourceRef },
-      subject: { entityType: 'resource_report', entityId: publicResourceRef, incidentId, displayRef: payload.category },
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      metadata: { reportKind: payload.reportKind, urgency: payload.urgency },
-    });
+    // Slice 21.1 — resolver contrapartes compatibles (oferta↔demanda) y dirigir la update
+    // solo a sus reportantes. Sin contrapartes con identidad conocida, se degrada a
+    // broadcast por celda (feed) en vez de push dirigido.
+    const match = await resolveResourceMatchTargeting(db, incidentId, resourceReportId, payload.reportKind);
+    await upsertOperationalUpdate(
+      db,
+      {
+        updateId: `upd_${publicResourceRef}`,
+        incidentId,
+        cellId,
+        type: kind,
+        urgency: payload.urgency,
+        title: payload.reportKind === 'needed' ? 'Resource need reported' : 'Resource offer reported',
+        summary: `${payload.reportKind === 'needed' ? 'Need' : 'Offer'} reported for ${payload.category}.`,
+        source: { kind: 'resource_report', entityId: publicResourceRef },
+        subject: { entityType: 'resource_report', entityId: publicResourceRef, incidentId, displayRef: payload.category },
+        reasonCode: match.reasonCode,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        metadata: { reportKind: payload.reportKind, urgency: payload.urgency },
+      },
+      match.targets.length > 0 ? { targets: match.targets } : undefined,
+    );
   }
+}
+
+// Reutiliza el matcher de dominio (categoría + celda/centro) para hallar las contrapartes de
+// un nuevo reporte y devuelve a quién dirigir la update (por `target_hash` del reportante) y
+// el reasonCode honesto. Solo contrapartes con identidad connected conocida son direccionables.
+async function resolveResourceMatchTargeting(
+  db: D1Database,
+  incidentId: string,
+  newResourceReportId: string,
+  reportKind: ResourceReportPayload['reportKind'],
+): Promise<{ reasonCode: OperationalUpdateReasonCode; targets: OperationalUpdateTarget[] }> {
+  const reports = await listResourceReports(db, incidentId);
+  const matches = matchResourceReports(reports);
+  const counterpartyIds = reportKind === 'needed'
+    ? matches.filter((m) => m.need.resourceReportId === newResourceReportId).map((m) => m.surplus.resourceReportId)
+    : matches.filter((m) => m.surplus.resourceReportId === newResourceReportId).map((m) => m.need.resourceReportId);
+
+  if (counterpartyIds.length === 0) {
+    return { reasonCode: 'resource.report.cell_broadcast', targets: [] };
+  }
+
+  const targets = await selectResourceReportTargets(db, incidentId, counterpartyIds);
+  if (targets.length === 0) {
+    // Hubo match, pero las contrapartes no tienen identidad direccionable (p.ej. reportes
+    // materializados por sync mobile sin externalId). No hacemos broadcast: la update queda
+    // sin audiencia dirigida y visible solo por el feed general de celda.
+    return { reasonCode: 'resource.report.cell_broadcast', targets: [] };
+  }
+
+  const reasonCode: OperationalUpdateReasonCode = reportKind === 'needed'
+    ? 'resource.match.need_for_open_offer'
+    : 'resource.match.offer_for_open_need';
+  return { reasonCode, targets };
+}
+
+async function selectResourceReportTargets(db: D1Database, incidentId: string, resourceReportIds: string[]): Promise<OperationalUpdateTarget[]> {
+  const uniqueIds = [...new Set(resourceReportIds)];
+  if (uniqueIds.length === 0) {
+    return [];
+  }
+  const placeholders = uniqueIds.map(() => '?').join(', ');
+  const { results } = await db.prepare(
+    `SELECT source_channel AS channel, reporter_target_hash AS targetHash
+     FROM resource_reports
+     WHERE incident_id = ? AND resource_report_id IN (${placeholders})
+       AND reporter_target_hash IS NOT NULL AND source_channel IS NOT NULL`,
+  ).bind(incidentId, ...uniqueIds).all<{ channel: Channel; targetHash: string }>();
+  return results.map((row) => ({ channel: row.channel, targetHash: row.targetHash }));
 }
 
 async function listResourceReports(db: D1Database, incidentId: string): Promise<ResourceReportSummary[]> {

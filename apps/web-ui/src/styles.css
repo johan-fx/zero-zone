@@ -262,6 +262,16 @@ dd {
   padding: 1rem;
 }
 
+.reason-code-badge {
+  display: inline-block;
+  border: var(--zc-border-width) solid var(--zc-color-border);
+  border-radius: var(--zc-radius-pill);
+  padding: 0.2rem 0.6rem;
+  background: var(--zc-color-surface);
+  color: var(--zc-color-text);
+  font-size: 0.85rem;
+}
+
 .sos-card {
   border-color: var(--zc-color-sos);
 }

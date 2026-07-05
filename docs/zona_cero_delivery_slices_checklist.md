@@ -1316,31 +1316,35 @@ Auditoría de código tras el merge de la Slice 21. Detectada una divergencia en
 
 **Decisión de producto pendiente (gate previo):** confirmar que 21.1 entra en alcance ahora vs. backlog. Si se aparca, la acción mínima honesta es renombrar la capability a "broadcast por celda" y no venderla como "alerta a demandantes".
 
+**Avance 2026-07-05 (implementación en curso).** Verificación posible en este entorno: typecheck limpio en los 6 paquetes (contracts, api, web-ui, telegram, mobile, e2e) + jest mobile 33/33 + 5/5. Pendiente de correr por el usuario en local/CI: vitest de api/web/telegram y Playwright e2e (el sandbox no tiene los bindings nativos de arquitectura).
+
 **Fase 0 — Alinear documentación y contrato**
-- ⬜ Sincerar el checklist de Slice 21 (hecho en este commit: ítems B a 🔴, DoD de match a ❌).
-- ⬜ Definir en PRD/wireflows el matcher como determinista (categoría + constraints + celda/celda adyacente) y cerrar el "Definir alcance" abierto en `zona_cero_persona_channel_wireflows.md` (L145/L170).
-- ⬜ Añadir `reasonCode` de match al contrato `OperationalUpdate` (p. ej. `resource.match.offer_for_open_need`).
+- ✅ Sincerar el checklist de Slice 21 (ítems B a 🔴, DoD de match a ❌).
+- ⬜ Definir en PRD/wireflows el matcher como determinista (categoría + constraints + celda/celda adyacente) y cerrar el "Definir alcance" abierto en `zona_cero_persona_channel_wireflows.md` (L145/L170). *(pendiente decisión de producto)*
+- ✅ Añadir `reasonCode` al contrato `OperationalUpdate` (`operationalUpdateReasonCodes` + campo opcional). `packages/contracts/src/index.ts`.
 
 **Fase 1 — Audiencia dirigida server-side**
-- ⬜ Al crear un `resource_offer`, reutilizar `matchResourceReports` para resolver demandantes con necesidad abierta compatible + actor logístico, y escribir un `target_hash` por actor en `operational_update_audiences` (en vez de `NULL`).
-- ⬜ Simétrico para `resource_need` (dirigir a ofertantes compatibles + logística).
-- ⬜ Mantener toda la resolución en `services/api` (sin duplicar reglas en clientes).
-- ⬜ Fallback seguro: si no hay match, no hacer broadcast automático; degradar a "visible en feed de celda" sin push proactivo.
+- ✅ Al crear un `resource_offer`, reutilizar `matchResourceReports` para resolver demandantes con necesidad compatible y escribir `target_hash` por actor (audiencia+delivery dirigidos). `services/api/src/index.ts` (`resolveResourceMatchTargeting`, `upsertOperationalUpdate` con `targeting`). Migración `0013_resource_report_reporter_target_hash.sql` para persistir el hash del reportante.
+- ✅ Simétrico para `resource_need` (dirige a ofertantes compatibles con `resource.match.need_for_open_offer`).
+- ✅ Resolución 100% en `services/api` (clientes solo muestran `reasonCode`).
+- ✅ Fallback seguro: sin match (o contraparte sin identidad direccionable, p.ej. reporte de sync mobile), `reasonCode = resource.report.cell_broadcast` y sin push dirigido.
+- ⚠️ **Límite de alcance conocido:** solo los reportantes por canal *connected* (Telegram/Web, con `externalId`) son direccionables. Reportes originados en mobile (solo `actorKeyId`, sin `externalId`) caen al fallback. Documentado; resolución de identidad mobile queda para follow-up.
 
-**Fase 2 — Rails de seguridad**
-- ⬜ Dedup + rate-limit por actor para recurso "caliente".
+**Fase 2 — Rails de seguridad** *(NO implementada — siguiente incremento)*
+- ⬜ Dedup + rate-limit por actor para recurso "caliente". *(dedup básico ya existe vía `updateId` determinista)*
 - ⬜ Opt-out/quieting por actor.
-- ⬜ Copy de límite: "posible match, no reserva; coordina antes de moverte". Nunca ubicación exacta por chat; detalle solo vía link firmado one-use.
+- ⬜ Copy de límite en canales (parcial: A/C ya renderizan copy no-autoritativo por `reasonCode`). Nunca ubicación exacta por chat; detalle solo vía link firmado one-use.
 - ⬜ Tope de audiencia / confirmación de coordinador antes de fan-out en urgencia alta (anti-convergencia).
 
 **Fase 3 — Tests y gate**
-- ⬜ E2E local con **dos personas distintas**: demandante (necesidad abierta) + ofertante (publica match) ⇒ assert que el demandante/logística recibe la update dirigida con su `reasonCode` y que un outsider NO la recibe.
-- ⬜ Registrar el escenario `proactive-updates` como **gate en staging real** (`e2e:staging:telegram`), ahora viable porque la Fase 1 produce un `updateId` determinista que el runner puede descubrir.
+- ✅ (autoría) E2E local dos personas: `e2e/proactive-social-updates.spec.ts` — demandante + ofertante ⇒ el demandante recibe la update dirigida con `reasonCode`, el outsider NO. **Pendiente de ejecutar en local** (`pnpm e2e:slice21:proactive-updates`).
+- ✅ (autoría) Test unitario de API: `services/api/src/operational-updates.test.ts` — targeting + no-fuga de identidad. **Pendiente de ejecutar** (`pnpm api:test`).
+- ⬜ Registrar el escenario `proactive-updates` como gate en staging real (`e2e:staging:telegram`).
 
 **Definition of Done 21.1**
-- ⬜ Un `resource_offer` compatible con una necesidad abierta genera update dirigida SOLO al demandante/logística, con `reasonCode` explicable, sin exponer datos sensibles ni conceder permisos.
-- ⬜ Un outsider o actor no-target no recibe ni puede accionar la update (403).
-- ⬜ Rails de anti-saturación (dedup, rate-limit, opt-out, tope de audiencia) activos y con test.
+- 🟡 Un `resource_offer` compatible genera update dirigida SOLO al demandante, con `reasonCode`, sin exponer identidades. *(implementado + typecheck; falta ejecutar tests)*
+- 🟡 Un outsider no-target no la recibe (filtro `target_hash` en `listOperationalUpdates`) ni puede accionarla (403 vía `isOperationalUpdateTargetedToActor`). *(implementado; falta ejecutar tests)*
+- ⬜ Rails de anti-saturación (dedup avanzado, rate-limit, opt-out, tope de audiencia) activos y con test.
 - ⬜ Gate de staging real verde para el escenario proactive-updates dirigido.
 
 ## Gates antes de implementar cada slice

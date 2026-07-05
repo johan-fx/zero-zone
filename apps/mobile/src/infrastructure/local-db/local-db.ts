@@ -1,6 +1,6 @@
 import type { MapPackMetadata } from '@/infrastructure/maps/offline-map-packs';
 import type { SignedOperation } from '@/infrastructure/security/operation-signer';
-import type { OperationalUpdate, OperationalUpdateActionRequest, OperationalUpdateActionType, OperationalUpdateDisputeRequest, SosLocation, SyncConflict, SyncState, TrustStatus, TrustVisibility } from '@zona-cero/contracts';
+import type { OperationalUpdate, OperationalUpdateActionRequest, OperationalUpdateActionType, OperationalUpdateDisputeRequest, OperationalUpdateReasonCode, SosLocation, SyncConflict, SyncState, TrustStatus, TrustVisibility } from '@zona-cero/contracts';
 
 export const zeroZoneSpikeDbName = 'zero_zone_offline_spike';
 
@@ -213,6 +213,7 @@ export type LocalSummaryLocalView = {
 };
 
 export type OperationalUpdateLocalView = OperationalUpdate & {
+  reasonCode?: OperationalUpdateReasonCode;
   readState: 'unread' | 'read';
   lifecycleState: 'active' | 'expired';
   ackState: 'none' | 'pending' | 'confirmed' | 'conflict';
@@ -594,6 +595,7 @@ function createSchema(title: string, primaryKey: string, required: string[]): Lo
       summary: stringProperty,
       body: stringProperty,
       type: stringProperty,
+      reasonCode: stringProperty,
       source: objectProperty,
       subject: objectProperty,
       actions: arrayProperty,

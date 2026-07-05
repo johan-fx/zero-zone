@@ -7,6 +7,7 @@ import {
   WorkCenterCreatePayloadSchema,
   type DisputeCreateRequest,
   type OperationalUpdateActionType,
+  type OperationalUpdateReasonCode,
   type ResourceReportKind,
   type ResourceReportPayload,
   type ResourceReportUrgency,
@@ -896,6 +897,7 @@ const OperationalUpdateRow = memo(function OperationalUpdateRow({
   update: OperationalUpdateLocalView;
 }) {
   const availableActions = new Set(update.actions.map((action) => action.type));
+  const reasonLabel = resolveOperationalUpdateReasonLabel(update.reasonCode);
 
   return (
     <YStack borderTopColor="$borderColor" borderTopWidth={1} gap="$2" pt="$3" testID={`operational_update_${update.updateId}`}>
@@ -910,6 +912,12 @@ const OperationalUpdateRow = memo(function OperationalUpdateRow({
         </YStack>
         <StatusBadge tone={resolveUpdateUrgencyTone(update.urgency)} label={formatCanonicalValue(update.urgency)} />
       </XStack>
+
+      {reasonLabel ? (
+        <Text color="$primary" fontSize="$xs" fontWeight="800" testID={`operational_update_reason_${update.updateId}`}>
+          {reasonLabel}
+        </Text>
+      ) : null}
 
       <Paragraph color="$textMuted" fontSize="$sm" lineHeight={20}>
         {update.summary}
@@ -973,6 +981,19 @@ function resolveMapCoverageTone(coverage: MapRenderState['coverage']) {
   }
 
   return 'info';
+}
+
+// Honest, non-authoritative motive shown so the volunteer understands WHY a backend-prioritized
+// update reached them. The backend owns targeting/priority; the client only materializes and
+// renders this label. Never implies rescue, reservation, or authority.
+const operationalUpdateReasonLabels: Record<OperationalUpdateReasonCode, string> = {
+  'resource.match.offer_for_open_need': 'Coincide con un recurso que pediste',
+  'resource.match.need_for_open_offer': 'Coincide con un recurso que ofreciste',
+  'resource.report.cell_broadcast': 'Novedad de tu celda',
+};
+
+function resolveOperationalUpdateReasonLabel(reasonCode: OperationalUpdateReasonCode | undefined): string | null {
+  return reasonCode ? operationalUpdateReasonLabels[reasonCode] ?? null : null;
 }
 
 function resolveUpdateUrgencyTone(urgency: OperationalUpdateLocalView['urgency']) {

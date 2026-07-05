@@ -610,6 +610,26 @@ describe('telegram channel flows', () => {
     expect(result.responseText).toContain('Social trust does not grant sensitive permissions');
   });
 
+  it('renders an honest, non-authoritative reason line when the update carries a reasonCode', async () => {
+    const ports = createOperationalUpdatePorts();
+    ports.listUpdates = vi.fn().mockResolvedValue({
+      ...operationalUpdatePullResponseFixture,
+      updates: [{ ...operationalUpdateFixture, reasonCode: 'resource.match.offer_for_open_need' }],
+    });
+
+    const result = await handleTelegramOperationalUpdateCommand(telegramUserUpdate('/updates incident-zc-demo connected-telegram'), ports);
+
+    expect(result.responseText).toContain('Why you: it matches a resource you requested');
+    expect(result.responseText).toContain('Possible match, not a reservation');
+  });
+
+  it('omits the reason line when the update has no reasonCode', async () => {
+    const ports = createOperationalUpdatePorts();
+    const result = await handleTelegramOperationalUpdateCommand(telegramUserUpdate('/updates incident-zc-demo connected-telegram'), ports);
+
+    expect(result.responseText).not.toContain('Why you:');
+  });
+
   it('submits operational update actions with Telegram actor context and safe confirmations', async () => {
     const ports = createOperationalUpdatePorts();
 
